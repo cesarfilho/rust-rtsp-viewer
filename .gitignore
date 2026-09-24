@@ -1,0 +1,8 @@
+target
+# Config files that may contain credentials
+config.toml
+*copy*.toml
+cameras_joinville.json
+.env
+node_modules
+*Screenshot*

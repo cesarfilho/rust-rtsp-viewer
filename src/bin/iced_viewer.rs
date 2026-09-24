@@ -1,0 +1,85 @@
+use std::process::ExitCode;
+
+use clap::Parser;
+
+#[derive(Parser)]
+#[command(name = "rust-rtsp-viewer", version, about = "RTSP/HLS viewer with Iced GUI")]
+struct Cli {
+    /// Path to config file
+    #[arg(default_value = "config.toml")]
+    config: String,
+}
+
+fn main() -> ExitCode {
+    env_logger::init();
+    let cli = Cli::parse();
+
+    match run(&cli.config) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("rust-rtsp-viewer: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run(config_path: &str) -> Result<(), String> {
+    let config_str = std::fs::read_to_string(config_path)
+        .map_err(|e| format!("cannot read {config_path}: {e}"))?;
+    let config: rust_rtsp_viewer::config::Config =
+        toml::from_str(&config_str).map_err(|e| format!("cannot parse {config_path}: {e}"))?;
+
+    let mut cameras = config.cameras.clone().unwrap_or_default();
+    if cameras.is_empty() {
+        return Err(format!(
+            "no cameras configured — add [[cameras]] sections to {config_path}"
+        ));
+    }
+    merge_global_camera_defaults(&mut cameras, &config);
+
+    // Initialise GStreamer up front so a broken install fails with a clear
+    // message here instead of panicking mid-construction once the GUI is up.
+    gstreamer::init().map_err(|e| format!("GStreamer init failed: {e}"))?;
+
+    let recording_config = config.recording.map(|r| r.into_config()).unwrap_or_default();
+    let snapshot_config = config.snapshot.map(|s| s.into_config()).unwrap_or_default();
+    let audio_config = config.audio.map(|a| a.into_config()).unwrap_or_default();
+    let theme_name = config.theme.unwrap_or_default();
+    let logs_config = config.logs.unwrap_or_default();
+    let view_config = config.view.unwrap_or_default();
+    let groups: Vec<_> = config
+        .groups
+        .unwrap_or_default()
+        .into_iter()
+        .map(|g| g.into_group())
+        .collect();
+
+    rust_rtsp_viewer::ui::run(
+        cameras,
+        recording_config,
+        snapshot_config,
+        audio_config,
+        theme_name,
+        logs_config,
+        groups,
+        view_config,
+    )
+    .map_err(|e| format!("GUI failed to start: {e}"))
+}
+
+fn merge_global_camera_defaults(
+    cameras: &mut [rust_rtsp_viewer::config::CameraConfig],
+    file_config: &rust_rtsp_viewer::config::Config,
+) {
+    for cam in cameras.iter_mut() {
+        if cam.decoder.is_none() {
+            cam.decoder = file_config.decoder.clone();
+        }
+        if cam.do_retransmission.is_none() {
+            cam.do_retransmission = file_config.do_retransmission;
+        }
+        if cam.latency_ms.is_none() {
+            cam.latency_ms = file_config.latency_ms;
+        }
+    }
+}

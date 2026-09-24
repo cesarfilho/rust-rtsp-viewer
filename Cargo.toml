@@ -1,0 +1,25 @@
+[package]
+name = "rust-rtsp-viewer"
+version = "0.6.0"
+edition = "2024"
+default-run = "rust-rtsp-viewer"
+
+[features]
+default = []
+
+[dependencies]
+gstreamer = "0.20"
+gstreamer-app = "0.20"
+log = "0.4"
+env_logger = "0.10"
+toml = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
+thiserror = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+iced = { version = "0.13", features = ["image", "tokio", "advanced", "canvas"] }
+chrono = { version = "0.4", features = ["clock"] }
+
+[[bin]]
+name = "rust-rtsp-viewer"
+path = "src/bin/iced_viewer.rs"

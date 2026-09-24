@@ -1,0 +1,110 @@
+# rust-rtsp-viewer — exemplo de configuração
+# Copie para config.toml e ajuste conforme necessário.
+#
+# Toda a configuração vem deste arquivo. Não há flags de CLI nem variáveis de
+# ambiente: o único argumento aceito é o caminho do próprio arquivo
+# (`rust-rtsp-viewer /caminho/config.toml`, default `./config.toml`).
+
+# ── Padrões globais das câmeras ───────────────────────────────────────────
+# Cada chave abaixo é um default: qualquer câmera em [[cameras]] pode
+# sobrescrevê-la individualmente.
+
+# Latência de rede em milissegundos (propriedade `latency` do rtspsrc).
+# É o ÚNICO parâmetro de buffering do stream — todo o resto (queue2 do
+# uridecodebin, jitterbuffer, filas internas) é gerenciado pelo GStreamer.
+# Default: 100
+# latency_ms = 100
+
+# Elemento decoder GStreamer (ex.: decodebin, decodebin3, avdec_h264).
+# Cadeias com espaços são permitidas (ex.: "rtph264depay ! h264parse ! avdec_h264").
+# Ignorado quando use_uridecodebin = true.
+# Default: "decodebin"
+# decoder = "decodebin"
+
+# Solicitar retransmissão de pacotes perdidos ao servidor RTSP.
+# Melhora a qualidade em redes instáveis, mas algumas câmeras rejeitam.
+# Default: true
+# do_retransmission = true
+
+# Tema da interface: "cosmic" (default — visual nativo COSMIC/Wayland:
+# grafite, cantos arredondados, hairlines, sombras), "opencode", "dark",
+# "light" ou "amoled".
+# theme = "cosmic"
+
+# ── Snapshot (tecla s / F12) ──────────────────────────────────────────────
+# [snapshot]
+# dir = "~/Pictures/rust-rtsp-viewer"   # diretório de saída
+# quality = 92                          # 1–100; controla o esforço de
+#                                       # compressão PNG (PNG é sem perdas):
+#                                       # <50 rápido, 50–89 padrão, >=90 máximo
+# burst_count = 1                       # frames por disparo (1 = simples,
+#                                       # máx 50; intervalo fixo de 100 ms)
+
+# ── Gravação (tecla r) ────────────────────────────────────────────────────
+# A gravação usa splitmuxsink: os segmentos giram automaticamente ao atingir
+# o limite de duração ou de tamanho, o que vier primeiro, e cada arquivo é
+# finalizado corretamente ao parar.
+# [recording]
+# dir = "~/Videos/rust-rtsp-viewer"     # diretório de saída
+# max_segment_duration_secs = 600       # duração máxima por segmento (10–86400)
+# max_segment_size_bytes = 1073741824   # tamanho máximo (1 MiB – 16 GiB)
+# container = "mkv"                     # "mkv" (padrão) ou "mp4"
+#                                       # mkv sobrevive a queda de energia; mp4 não
+
+# ── Áudio (tecla m alterna mute) ──────────────────────────────────────────
+# O áudio roda em uma pipeline separada, por câmera, iniciada sob demanda.
+# [audio]
+# enabled = true   # false desabilita completamente o áudio na interface
+# volume = 0.8     # volume padrão (0.0–1.0) quando a câmera não define o seu
+
+# ── Modo de visualização ──────────────────────────────────────────────────
+# Valores INICIAIS. Os ajustes feitos na interface (menu de densidade,
+# paginação, carrossel, ordem das câmeras) são salvos em
+# ~/.local/state/rust-rtsp-viewer/view.toml e têm prioridade na próxima
+# execução — apague esse arquivo para voltar aos valores abaixo.
+# [view]
+# mode = "auto"           # "auto" (todas numa página, células equilibradas)
+#                         # ou uma grade fixa: "2x2", "3x3", "4x4" — a grade
+#                         # fixa é o que liga a paginação (setas ‹ ›, [ ],
+#                         # PageUp/PageDown).
+# rotate_enabled = false  # iniciar com o carrossel de páginas ligado (tecla c)
+# rotate_secs = 10        # tempo em cada página, em segundos (3–300; +/- na toolbar)
+# pause_hidden = true     # só decodifica as câmeras da página visível (+ a
+#                         # próxima como prefetch); pausa o resto. false mantém
+#                         # todas as pipelines ativas (troca de página instantânea,
+#                         # mais CPU/rede).
+# stagger_ms = 200        # intervalo entre o início de cada pipeline no arranque
+#                         # e nas trocas de página (evita congelar abrindo uma
+#                         # dúzia de streams de uma vez). 0 = o mais rápido possível.
+# layout = "grid"         # "grid" ou "flex" (uma grande + tira de miniaturas)
+
+# ── Câmeras ───────────────────────────────────────────────────────────────
+# Pelo menos uma [[cameras]] é obrigatória. Todas são abertas em grade.
+
+[[cameras]]
+url = "rtsp://admin:senha@192.168.1.100:554/cam/realmonitor?channel=1&subtype=0"
+name = "frente"           # alias curto (opcional)
+label = "Garagem"         # nome exibido na sidebar (opcional)
+audio_volume = 0.8        # volume desta câmera (0.0–1.0); ausente = usa [audio].volume
+# latency_ms = 100        # override da latência global (opcional)
+# decoder = "decodebin"   # override do decoder global (opcional)
+# use_uridecodebin = false # força uridecodebin; auto-detectado por http:// e https://
+# do_retransmission = true # override do retransmission global (opcional)
+
+[[cameras]]
+url = "https://exemplo.com/stream.m3u8"
+name = "riojardim"
+label = "Rio Jardim Sofia"
+# HLS/HTTP já ativa uridecodebin3 automaticamente pelo esquema da URL.
+
+# ── Grupos de câmeras (opcional) ──────────────────────────────────────────
+# Cada [[groups]] vira um chip de filtro na sidebar; ao selecioná-lo, a lista
+# e a grade mostram só as câmeras do grupo. `cameras` são índices 0-based em
+# [[cameras]] (a primeira câmera é 0). Um índice inválido ou grupos que se
+# sobrepõem fazem o conjunto inteiro ser ignorado (com aviso no log).
+# [[groups]]
+# name = "Rua"
+# cameras = [0, 1]
+# [[groups]]
+# name = "Fundos"
+# cameras = [2]

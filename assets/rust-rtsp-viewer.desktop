@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=StreamView
+GenericName=RTSP/HLS Camera Viewer
+Comment=Low-latency multi-camera RTSP and HLS viewer
+Exec=rust-rtsp-viewer %U
+Icon=rust-rtsp-viewer
+Terminal=false
+Categories=AudioVideo;Video;Player;Network;
+Keywords=rtsp;hls;camera;cctv;stream;viewer;surveillance;
+StartupNotify=true
+StartupWMClass=rust-rtsp-viewer
