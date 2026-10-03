@@ -12,8 +12,7 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
   - The decoder is named `video_decoder` so decode-time probes can find it.
   - `postdec_queue` is a plain `queue` at GStreamer defaults — it only
     decouples threads. **No app-side buffering knobs**: stream caching is
-    entirely GStreamer's (`rtspsrc latency`, `uridecodebin`/`queue2`). There is
-    no `cache_seconds`.
+    entirely GStreamer's (`rtspsrc latency`, `uridecodebin`/`queue2`).
   - For `uridecodebin3` (HLS/HTTP) the source replaces `rtspsrc → decoder`, and
     the dynamic pad links into `postdec_queue`.
 - **Recording branch** — attached to the `tee` **only while recording**:
@@ -21,9 +20,11 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
   - Built by `GStreamerBridge::start_recording`, removed by `stop_recording`.
   - Never leave it wired up while idle: that burns a core per camera encoding
     frames nobody keeps.
-  - `stop_recording` blocks the tee pad, unlinks, pushes EOS through the
-    branch, waits for the EOS probe, then sets the elements to Null and
-    releases the tee request pad. Skipping the EOS leaves an unplayable file.
+  - `stop_recording` detaches the branch with an idle probe on the tee pad
+    (unlink + EOS into the branch) and finalises it on a worker thread: wait
+    for the EOS probe, set the elements to Null, release the tee request pad.
+    `stop_recording_blocking` is the synchronous form. Skipping the EOS leaves
+    an unplayable file.
   - `splitmuxsink` handles `max_segment_duration_secs` / `max_segment_size_bytes`.
 - **Audio**: standalone audio-only pipeline per camera, started on demand by
   `infrastructure::audio::build_audio_pipeline_for_url`.
@@ -64,6 +65,7 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
 | `metrics.rs` | `Metrics` (atomic), `PacketStats`, `StreamInfo` |
 | `motion.rs` | frame-difference motion detection |
 | `multi_stream.rs` | main/sub stream selection |
+| `notify.rs` | `NotifyConfig`, `message_for`, `cooldown_elapsed` — desktop-notification policy |
 | `ptz.rs` | `PtzCommand` |
 | `recording.rs` | `RecordingConfig`, `RecordingState`, `generate_filename` |
 | `redact.rs` | `mask_credentials` — strip passwords before logging |
@@ -102,7 +104,7 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
 | `theme.rs` | themes + `contrast_ratio` / `readable_on`; a test enforces WCAG targets per theme |
 | `grid.rs` | grid layout calculator |
 | `sidebar/` | `cameras` (row = pip + name + fps sparkline; controls on hover; `⋯` opens `menu::command_menu`), `info` (Inspector: header + Stream/Rede cards + diagnostics + "Avançado" expander), `diagnostics`, `timeline`; `mod::sparkline` (canvas-free bar chart) |
-| `view/` | `mod` (focus-mode composition, pointer tracking, dismiss backdrops), `menu` (`command_menu` — the ONE menu surface, used by the toolbar `⋯` and right-click), `grid_layout`, `flex_layout` (+ `spotlight_view`), `toolbar` (+ `chrome_rail`, `health_meter`, `density_segments`, `overflow_menu_layer`), `cell_overlay` (name chip / status pip / placeholder), `overlays` (`context_menu_layer` renders `menu::command_menu` at `App.pointer_pos`), `style` |
+| `view/` | `mod` (focus-mode composition, pointer tracking, dismiss backdrops), `menu` (`command_menu` — the ONE menu surface, used by the toolbar `⋯` and right-click), `grid_layout`, `flex_layout` (+ `spotlight_view`), `toolbar` (+ `chrome_rail`, `health_meter`, `density_segments`, `overflow_menu_layer`), `cell_overlay` (name chip / status pip / placeholder), `overlays` (`context_menu_layer` renders `menu::command_menu` at the `ContextMenu.anchor` captured when the menu opens; placement via `pinned`), `style` |
 
 ## CLI
 
@@ -110,15 +112,17 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
 rust-rtsp-viewer [CONFIG_PATH]      # default: ./config.toml
 ```
 
-All configuration is in the TOML file. There are no CLI flags and no
-environment variables — anything claiming otherwise is stale documentation.
+All configuration is in the TOML file. The only other inputs are clap's
+`--help` / `--version` and `RUST_LOG` (read by `env_logger::init()` for log
+verbosity).
 
 ## Config (`config.toml`)
 
 See `config.toml.example` for the annotated reference. Top-level keys
 (`latency_ms`, `decoder`, `do_retransmission`) are defaults that each
-`[[cameras]]` entry may override. Sections: `[snapshot]`, `[recording]`,
-`[audio]`, `[logs]`, `[view]` (grid density/pagination/carousel/lazy-decode/
+`[[cameras]]` entry may override; `theme` picks the theme. Sections:
+`[snapshot]`, `[recording]` (incl. `on_motion`), `[audio]`, `[logs]`,
+`[notifications]`, `[motion]` (detector tuning), `[view]` (grid density/pagination/carousel/lazy-decode/
 staggered start — *initial* values; runtime tweaks persist to
 `view_state::path()` and win), and `[[groups]]` (named camera groups — `name` +
 0-based `cameras` indices — that become sidebar/grid filter chips).
@@ -128,7 +132,7 @@ staggered start — *initial* values; runtime tweaks persist to
 ```bash
 cargo build           # zero warnings expected
 cargo clippy --all-targets -- -D warnings
-cargo test            # 375 unit tests, all green (MSRV 1.88: let-chains)
+cargo test            # all green (MSRV 1.88: let-chains)
 ```
 
 `cargo test --doc` currently fails on this machine with
@@ -141,7 +145,8 @@ muxer finalised them. They take ~6s.
 
 System deps: `libgstreamer1.0-dev`, `libgstreamer-plugins-base1.0-dev`,
 `gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good`,
-`gstreamer1.0-plugins-bad`, `gstreamer1.0-libav` (Ubuntu 24.04).
+`gstreamer1.0-plugins-bad`, `gstreamer1.0-plugins-ugly` (`x264enc`, needed by the
+recording tests), `gstreamer1.0-libav` (Ubuntu 24.04).
 
 ## Key bindings
 
@@ -172,8 +177,8 @@ System deps: `libgstreamer1.0-dev`, `libgstreamer-plugins-base1.0-dev`,
 toolbar + sidebar and paint the video edge-to-edge; a floating reveal rail
 (`toolbar::chrome_rail`) appears when `chrome_revealed` (pointer at the top edge,
 via `subscription`'s `listen_with`, or any keypress) and auto-hides after
-`CHROME_REVEAL_SECS`. The bottom status bar is gone — its data lives in the
-toolbar's right cluster and the `⋯` overflow menu.
+`CHROME_REVEAL_SECS`. Status data lives in the toolbar's right cluster and the
+`⋯` overflow menu.
 
 ## Things to remember
 
@@ -185,8 +190,8 @@ toolbar's right cluster and the `⋯` overflow menu.
   identifies a subscription by its closure *type*, so a captured
   "search is focused" flag would be frozen at first subscribe. The
   subscription forwards `Message::KeyPressed` and `handle_key` decides.
-- **Quitting is behind `Ctrl+Q`.** A bare `q` used to quit even while the user
-  was typing in the sidebar search box.
+- **Quitting is behind `Ctrl+Q`**, so a stray `q` typed into the sidebar search
+  box cannot quit.
 - **Rates must come from deltas.** `bytes_counter` and `frame_count` are
   cumulative; dividing a running total by a short interval is how the bitrate
   readout ended up orders of magnitude too high.
@@ -204,8 +209,8 @@ toolbar's right cluster and the `⋯` overflow menu.
 - **Mutex poisoning**: recover with `unwrap_or_else(|e| e.into_inner())`.
 - **`Container::align_top(x)` / `align_left(x)` set the container's *height /
   width*, not a margin** (iced 0.13). Using them as "x px from the edge" squeezes
-  the content into an x-pixel box — the context menu used to resize with the
-  pointer. Use `view::pinned(el, Horizontal, Vertical, padding)` (layer-sized
+  the content into an x-pixel box (a menu opened at the pointer then resizes as
+  the pointer moves). Use `view::pinned(el, Horizontal, Vertical, padding)` (layer-sized
   container + padding; it does not capture events).
 - **Icon glyphs need `icons::FONT`** (`text(g).font(icons::FONT)`). The system
   fallback lacks many Geometric Shapes and renders empty boxes. Prose stays on

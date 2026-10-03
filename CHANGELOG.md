@@ -6,6 +6,14 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 
 ## [Unreleased]
 
+## [0.7.1]
+
+### 🔧 Alterado
+
+- `AGENTS.md` revisado contra o código: variáveis de ambiente (`RUST_LOG`), seções
+  de configuração (`[notifications]`, `[motion]`), descrição de `stop_recording`,
+  âncora do menu de contexto, pacote `gstreamer1.0-plugins-ugly` e tabela de domínio.
+
 ## [0.7.0]
 
 ### ✨ Adicionado
