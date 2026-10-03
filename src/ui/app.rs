@@ -75,6 +75,11 @@ pub struct App {
     /// Whether each camera's video pipeline is currently running. Kept in
     /// lockstep with the other per-camera vecs.
     pub active_stream: Vec<bool>,
+    /// Camera briefly connected only to grab one preview frame for the flex
+    /// thumbnail strip, and when it started.
+    pub preview_cam: Option<(usize, Instant)>,
+    /// Cameras whose preview attempt is over (frame grabbed or timed out).
+    pub preview_done: Vec<bool>,
     /// When each camera's pipeline was last (re)started, used to show
     /// `CONNECTING` during the initial hand-shake. `None` once it has gone
     /// live or was never started.
@@ -118,6 +123,34 @@ pub struct App {
     pub search_focused: bool,
     /// In-flight burst capture, advanced by the frame tick.
     pub pending_burst: Option<PendingBurst>,
+    /// Motion zones per camera (empty = the whole frame counts).
+    pub zones: Vec<crate::domain::zones::ZoneConfig>,
+    /// Everything persisted to `zones.toml`, so saving one camera keeps the rest.
+    pub zones_file: crate::infrastructure::zone_state::ZonesFile,
+    /// Zone editor session, `Some` while the user is drawing.
+    pub zone_edit: Option<ZoneEdit>,
+    pub motion_config: crate::domain::motion::MotionConfig,
+    /// Previous sampled frame per camera, for frame differencing.
+    pub prev_motion_frames: Vec<Option<iced::advanced::image::Bytes>>,
+    /// Whether motion was active at the last sample (events fire on the rising edge).
+    pub motion_active: Vec<bool>,
+    /// `[recording] on_motion` / `motion_post_roll_secs`.
+    pub motion_recording: bool,
+    pub motion_post_roll_secs: u32,
+    /// Last instant motion was seen per camera (drives the post-roll).
+    pub last_motion_at: Vec<Option<Instant>>,
+    /// True for recordings the motion trigger started, so it never stops a manual one.
+    pub auto_recording: Vec<bool>,
+    pub notify: crate::domain::notify::NotifyConfig,
+    /// Last desktop notification per (camera, event kind), for the cooldown.
+    pub notify_last: std::collections::HashMap<(usize, &'static str), Instant>,
+}
+
+/// A zone being drawn on one camera. Vertices are only committed to
+/// `App.zones` when the user finishes the polygon.
+pub struct ZoneEdit {
+    pub camera_idx: usize,
+    pub temp_vertices: Vec<crate::domain::zones::Point>,
 }
 
 /// A multi-frame snapshot burst in progress. Frames are captured one per
@@ -141,6 +174,7 @@ pub fn new_app(
     logs_config: crate::config::LogsConfigFile,
     groups: Vec<crate::domain::groups::CameraGroup>,
     view_config: crate::config::ViewConfigFile,
+    notify_config: crate::domain::notify::NotifyConfig,
 ) -> (App, Task<Message>) {
     let _ = gstreamer::init();
 
@@ -304,6 +338,14 @@ pub fn new_app(
     {
         sidebar.active_group = Some(g);
     }
+    let motion_recording = recording_config.on_motion;
+    let motion_post_roll_secs = recording_config.motion_post_roll_secs;
+    let zones_file = crate::infrastructure::zone_state::load();
+    let zones: Vec<crate::domain::zones::ZoneConfig> = sidebar
+        .cameras
+        .iter()
+        .map(|c| zones_file.zone_config_for(&c.name))
+        .collect();
     view.sanitize(count);
     sidebar.order = view.order.clone();
 
@@ -333,6 +375,8 @@ pub fn new_app(
             start_queue,
             next_start_at: Instant::now(),
             active_stream: vec![false; count],
+            preview_cam: None,
+            preview_done: vec![false; count],
             connecting_since: vec![None; count],
             is_recording: false,
             audio_states: vec![AudioState::Muted; count],
@@ -362,6 +406,18 @@ pub fn new_app(
             camera_enabled: vec![true; count],
             search_focused: false,
             pending_burst: None,
+            zones,
+            zones_file,
+            zone_edit: None,
+            motion_config: crate::domain::motion::MotionConfig::default(),
+            prev_motion_frames: vec![None; count],
+            motion_active: vec![false; count],
+            motion_recording,
+            motion_post_roll_secs,
+            last_motion_at: vec![None; count],
+            auto_recording: vec![false; count],
+            notify: notify_config,
+            notify_last: std::collections::HashMap::new(),
         },
         // iced 0.13's `window::Settings` has no "start maximized" flag, so ask
         // the compositor to maximize the window as soon as it exists. `size`

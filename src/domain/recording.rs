@@ -120,6 +120,10 @@ pub struct RecordingConfig {
     pub max_segment_size_bytes: u64,
     /// Container / muxer.
     pub container: Container,
+    /// Record automatically while motion is detected.
+    pub on_motion: bool,
+    /// Keep recording this long after the last motion. Range: 3s ..= 1h.
+    pub motion_post_roll_secs: u32,
 }
 
 impl Default for RecordingConfig {
@@ -129,7 +133,43 @@ impl Default for RecordingConfig {
             max_segment_duration_secs: DEFAULT_MAX_SEGMENT_DURATION_SECS,
             max_segment_size_bytes: DEFAULT_MAX_SEGMENT_SIZE_BYTES,
             container: Container::default(),
+            on_motion: false,
+            motion_post_roll_secs: DEFAULT_MOTION_POST_ROLL_SECS,
         }
+    }
+}
+
+pub const DEFAULT_MOTION_POST_ROLL_SECS: u32 = 15;
+
+/// What the motion-triggered recorder should do this sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotionRecAction {
+    None,
+    Start,
+    Stop,
+}
+
+/// Decide whether to start or stop an event recording.
+///
+/// * Motion while idle → start.
+/// * Only a recording *we* started (`auto_started`) is ever stopped, and only
+///   once `secs_since_motion` reaches the post-roll — a manual recording is
+///   never cut short by a quiet scene.
+pub fn motion_recording_action(
+    is_recording: bool,
+    auto_started: bool,
+    motion_active: bool,
+    secs_since_motion: u64,
+    post_roll_secs: u32,
+) -> MotionRecAction {
+    if motion_active && !is_recording {
+        MotionRecAction::Start
+    } else if is_recording && auto_started && !motion_active
+        && secs_since_motion >= u64::from(post_roll_secs)
+    {
+        MotionRecAction::Stop
+    } else {
+        MotionRecAction::None
     }
 }
 
@@ -507,6 +547,27 @@ mod tests {
     use super::*;
 
     // --- Container ---
+
+    #[test]
+    fn motion_starts_recording_when_idle() {
+        assert_eq!(motion_recording_action(false, false, true, 0, 15), MotionRecAction::Start);
+    }
+
+    #[test]
+    fn motion_stops_only_after_post_roll() {
+        assert_eq!(motion_recording_action(true, true, false, 14, 15), MotionRecAction::None);
+        assert_eq!(motion_recording_action(true, true, false, 15, 15), MotionRecAction::Stop);
+    }
+
+    #[test]
+    fn motion_never_stops_a_manual_recording() {
+        assert_eq!(motion_recording_action(true, false, false, 999, 15), MotionRecAction::None);
+    }
+
+    #[test]
+    fn motion_keeps_recording_while_active() {
+        assert_eq!(motion_recording_action(true, true, true, 999, 15), MotionRecAction::None);
+    }
 
     #[test]
     fn container_default_is_mkv() {

@@ -6,6 +6,7 @@ pub mod grid_layout;
 pub mod flex_layout;
 pub mod overlays;
 
+use iced::alignment::{Horizontal, Vertical};
 use iced::{Element, Length};
 
 use super::app::{App, ViewFocus, TOOLBAR_HEIGHT};
@@ -50,12 +51,12 @@ pub fn view(app: &App) -> Element<'_, Message> {
         layers = layers.push(menu);
     }
     if !app.toasts.is_empty() {
-        layers = layers.push(
-            overlays::toast_overlay(app)
-                .align_bottom(40.0)
-                .align_right(16.0)
-                .width(Length::Shrink),
-        );
+        layers = layers.push(pinned(
+            overlays::toast_overlay(app),
+            Horizontal::Right,
+            Vertical::Bottom,
+            iced::Padding { top: 0.0, right: 8.0, bottom: 32.0, left: 0.0 },
+        ));
     }
     layers.into()
 }
@@ -110,6 +111,29 @@ fn immersive_layout(app: &App, bg_color: iced::Color) -> Element<'_, Message> {
     with_reveal_rail(app, fill_bg(video_area, bg_color))
 }
 
+/// Pin `el` against an edge/corner of the layer it is stacked on, `pad` away.
+///
+/// Do not use `Container::align_top(x)` / `align_left(x)` for this: in iced 0.13
+/// their argument is the container's *height/width*, not a margin. Used as
+/// "x pixels from the edge" they shrink the container to `x` pixels and the
+/// content spills out of it (a menu that resizes with the pointer, badges that
+/// land off-screen). A layer-sized container with padding is the correct form;
+/// it does not capture events, so layers underneath still receive them.
+pub(super) fn pinned<'a>(
+    el: impl Into<Element<'a, Message>>,
+    h: iced::alignment::Horizontal,
+    v: iced::alignment::Vertical,
+    pad: impl Into<iced::Padding>,
+) -> Element<'a, Message> {
+    iced::widget::container(el)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(h)
+        .align_y(v)
+        .padding(pad)
+        .into()
+}
+
 /// A transparent, full-window click target that emits `msg` — used to dismiss
 /// an open menu when the user clicks outside it.
 fn dismiss_backdrop<'a>(msg: Message) -> Element<'a, Message> {
@@ -143,9 +167,12 @@ fn with_reveal_rail<'a>(app: &'a App, base: Element<'a, Message>) -> Element<'a,
     }
     iced::widget::stack![
         base,
-        iced::widget::container(toolbar::chrome_rail(app))
-            .width(Length::Fill)
-            .align_top(0)
+        pinned(
+            toolbar::chrome_rail(app),
+            Horizontal::Left,
+            Vertical::Top,
+            0.0,
+        )
     ]
     .into()
 }

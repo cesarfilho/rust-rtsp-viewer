@@ -139,6 +139,7 @@ fn view_controls(app: &App, compact: bool) -> Element<'_, Message> {
             } else {
                 "\u{21BB}".to_string()
             })
+            .font(crate::ui::icons::FONT)
             .size(Theme::TEXT_BODY),
             if rotate_on { Intent::Selected } else { Intent::Ghost },
             Message::ToggleRotate,
@@ -147,7 +148,7 @@ fn view_controls(app: &App, compact: bool) -> Element<'_, Message> {
         if rotate_on && !compact {
             nav = nav
                 .push(pill(
-                    iced::widget::text("\u{2212}").size(12),
+                    iced::widget::text("\u{2212}").font(crate::ui::icons::FONT).size(12),
                     Intent::Ghost,
                     Message::RotateIntervalStep(false),
                     theme,
@@ -237,7 +238,7 @@ pub fn toolbar(app: &App) -> Element<'_, Message> {
     let wide = app.window_size.width >= 820.0;
 
     let hamburger = pill(
-        iced::widget::text("\u{2630}").size(14),
+        iced::widget::text("\u{2630}").font(crate::ui::icons::FONT).size(14),
         if app.sidebar.visible {
             Intent::Selected
         } else {
@@ -288,7 +289,9 @@ pub fn toolbar(app: &App) -> Element<'_, Message> {
 
     let rec_badge: Element<'_, Message> = if app.is_recording {
         iced::widget::container(
-            iced::widget::text("REC").size(Theme::TEXT_CAPTION).color(iced::Color::WHITE),
+            iced::widget::text("REC")
+                .size(Theme::TEXT_CAPTION)
+                .color(Theme::readable_on(Theme::color_from_hex(colors.accent_red))),
         )
         .padding([2, 6])
         .style(move |_: &iced::Theme| iced::widget::container::Style {
@@ -305,7 +308,7 @@ pub fn toolbar(app: &App) -> Element<'_, Message> {
     };
 
     let overflow = pill(
-        iced::widget::text("\u{22EF}").size(15),
+        iced::widget::text("\u{22EF}").font(crate::ui::icons::FONT).size(15),
         if app.show_overflow_menu {
             Intent::Selected
         } else {
@@ -339,7 +342,7 @@ pub fn chrome_rail(app: &App) -> Element<'_, Message> {
     let colors = theme.colors();
 
     let exit = pill(
-        iced::widget::text("\u{2922} sair").size(Theme::TEXT_BODY),
+        iced::widget::text("\u{2715} sair").font(crate::ui::icons::FONT).size(Theme::TEXT_BODY),
         Intent::Ghost,
         Message::ExitFocus,
         theme,
@@ -404,9 +407,11 @@ pub fn overflow_menu_layer(app: &App) -> Option<Element<'_, Message>> {
         return None;
     }
     Some(
-        iced::widget::container(super::menu::command_menu(app, None))
-            .align_top(TOOLBAR_H as u16 + 4)
-            .align_right(8.0)
-            .into(),
+        super::pinned(
+            super::menu::command_menu(app, None),
+            iced::alignment::Horizontal::Right,
+            iced::alignment::Vertical::Top,
+            iced::Padding { top: TOOLBAR_H + 4.0, right: 8.0, bottom: 0.0, left: 0.0 },
+        ),
     )
 }

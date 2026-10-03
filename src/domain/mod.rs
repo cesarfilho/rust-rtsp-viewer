@@ -22,4 +22,5 @@ pub mod streaming;
 pub mod timelapse;
 pub mod timeline;
 pub mod view;
+pub mod notify;
 pub mod zones;

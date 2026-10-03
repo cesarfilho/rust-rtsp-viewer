@@ -50,6 +50,15 @@
 # max_segment_size_bytes = 1073741824   # tamanho máximo (1 MiB – 16 GiB)
 # container = "mkv"                     # "mkv" (padrão) ou "mp4"
 #                                       # mkv sobrevive a queda de energia; mp4 não
+# on_motion = false                     # grava sozinho enquanto há movimento
+# motion_post_roll_secs = 15            # segue gravando N s após o último movimento (3–3600)
+#                                       # as zonas de movimento se desenham pelo menu da câmera
+
+# ── Notificações de desktop (movimento e câmera offline) ─────────────────
+# Usa o comando `notify-send` (libnotify).
+# [notifications]
+# enabled = false
+# cooldown_secs = 60    # intervalo mínimo entre avisos do mesmo tipo por câmera (>= 5)
 
 # ── Áudio (tecla m alterna mute) ──────────────────────────────────────────
 # O áudio roda em uma pipeline separada, por câmera, iniciada sob demanda.

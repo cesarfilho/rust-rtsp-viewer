@@ -43,6 +43,8 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
   group, layout, sidebar) are saved to
   `~/.local/state/rust-rtsp-viewer/view.toml` by `update::persist_view` and
   layered over `[view]` at startup in `new_app`.
+- **Motion**: `update::detect_camera_motion` samples each live camera at ~2 Hz (every 5th tick), diffs against the previous frame with `domain::motion::detect_motion` (filtered by `App.zones`), and logs `EventType::Motion` on the rising edge. While `zone_edit` is set, `handle_key` routes Enter/Backspace/Esc to the editor and blocks other shortcuts.
+- **Event recording / notifications**: `[recording] on_motion` makes `update::drive_motion_recording` start a recording on motion and stop it `motion_post_roll_secs` after the last motion (`domain::recording::motion_recording_action`; it only stops recordings it started, tracked in `App.auto_recording`). `push_event` also calls `notify_desktop` (`[notifications]`, `notify-send`, per-camera/kind cooldown) for Motion and Offline events. No pre-roll: that would need encoded video buffered in memory at all times.
 - **Tick**: `iced::time::every(100ms)` → `Message::FrameUpdate`, which drives
   frame reads, FPS, bitrate, VU decay, toast expiry, burst capture, timeline
   events, and reconnect checks.
@@ -80,6 +82,7 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
 | `reconnect.rs` | `ReconnectState` (FPS watchdog + backoff decision) |
 | `recording_paths.rs` | directory creation helpers |
 | `view_state.rs` | `ViewStateFile` load/save (`~/.local/state/.../view.toml`) |
+| `zone_state.rs` | `ZonesFile` load/save (`.../zones.toml`), zones keyed by camera name (never URL) |
 
 ### UI (`src/ui/` — Iced frontend)
 
@@ -93,7 +96,7 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
 | `bridge.rs` | `GStreamerBridge` — bus, metrics, frame state, recording lifecycle |
 | `pipeline.rs` | `start_rtsp`/`start_hls`/`start_file`, recording branch, probes |
 | `video_widget.rs` | `iced::widget::image` integration |
-| `zone_editor.rs` | zone editor canvas — compiled, **not yet wired to any view** |
+| `zone_editor.rs` | zone editor canvas, drawn over the spotlight (`flex_layout::spotlight_view`) while `App.zone_edit` is `Some`; opened from the camera menu (`Message::EditZones`). Coordinates map onto the letterboxed video rect |
 | `theme.rs` | themes |
 | `grid.rs` | grid layout calculator |
 | `sidebar/` | `cameras` (row = pip + name + fps sparkline; controls on hover; `⋯` opens `menu::command_menu`), `info` (Inspector: header + Stream/Rede cards + diagnostics + "Avançado" expander), `diagnostics`, `timeline`; `mod::sparkline` (canvas-free bar chart) |
@@ -122,7 +125,7 @@ staggered start — *initial* values; runtime tweaks persist to
 
 ```bash
 cargo build           # zero warnings expected
-cargo test            # 310 unit tests, all green
+cargo test            # 362 unit tests, all green
 ```
 
 `cargo test --doc` currently fails on this machine with

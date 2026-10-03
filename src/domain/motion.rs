@@ -90,8 +90,8 @@ fn rgba_luma(r: u8, g: u8, b: u8) -> u32 {
 /// 4. `motion_level` = changed_pixels / total_sampled.
 /// 5. `motion_active` = motion_level > contour_area.
 ///
-/// If `zone_config` is provided and has active zones, only changed pixels
-/// inside those zones are counted toward the motion level.
+/// If `zone_config` is provided and has active zones, only pixels inside
+/// those zones are sampled: `motion_level` is the changed fraction of the zone.
 pub fn detect_motion(
     prev: &[u8],
     curr: &[u8],
@@ -108,7 +108,7 @@ pub fn detect_motion(
     let threshold = config.threshold as i64;
     let mut changed: u64 = 0;
     let mut total: u64 = 0;
-    let has_zones = zone_config.map(|z| !z.zones.is_empty()).unwrap_or(false);
+    let active_zones = zone_config.filter(|z| z.has_active());
 
     let mut row = 0;
     while row < height {
@@ -120,26 +120,22 @@ pub fn detect_motion(
                 let prev_luma = rgba_luma(prev[idx], prev[idx + 1], prev[idx + 2]) as i64;
                 let curr_luma = rgba_luma(curr[idx], curr[idx + 1], curr[idx + 2]) as i64;
                 let diff = (curr_luma - prev_luma).unsigned_abs() as i64;
-                let pixel_changed = diff > threshold;
 
-                // Apply zone filtering: only count pixels inside active zones.
-                if has_zones {
-                    if pixel_changed {
-                        let norm_x = col as f64 / width as f64;
-                        let norm_y = row as f64 / height as f64;
-                        if zone_config.unwrap().is_motion_allowed(
-                            crate::domain::zones::Point::new(norm_x, norm_y),
-                        ) {
-                            changed += 1;
-                        }
-                    }
+                // With zones, only pixels inside them are sampled at all, so
+                // the level is "fraction of the zone that changed". Counting
+                // outside pixels in `total` would make a small zone unable to
+                // ever reach `contour_area`.
+                let in_scope = active_zones.is_none_or(|zones| {
+                    zones.is_motion_allowed(crate::domain::zones::Point::new(
+                        col as f64 / width as f64,
+                        row as f64 / height as f64,
+                    ))
+                });
+                if in_scope {
                     total += 1;
-                } else {
-                    // No zones — count all changed pixels.
-                    if pixel_changed {
+                    if diff > threshold {
                         changed += 1;
                     }
-                    total += 1;
                 }
             }
             col += stride;
@@ -339,6 +335,34 @@ mod tests {
         };
         let result = detect_motion(&a, &b, 64, 64, &config, Some(&zone_config)).unwrap();
         assert!(result.motion_level > 0.15, "zone should pass motion: {}", result.motion_level);
+    }
+
+    #[test]
+    fn small_zone_fully_changed_triggers_motion() {
+        // Zone covers ~1% of the frame; if it changes entirely the level must
+        // be measured against the zone, not the whole frame.
+        let a = make_frame(100, 100, 0);
+        let mut b = make_frame(100, 100, 0);
+        for y in 0..10 {
+            for x in 0..10 {
+                b[(y * 100 + x) * 4] = 255;
+            }
+        }
+        let config = MotionConfig {
+            sample_stride: 1,
+            ..MotionConfig::default()
+        };
+        let zone_config = ZoneConfig {
+            zones: vec![MotionZone::new("corner", vec![
+                Point::new(0.0, 0.0),
+                Point::new(0.1, 0.0),
+                Point::new(0.1, 0.1),
+                Point::new(0.0, 0.1),
+            ])],
+        };
+        let r = detect_motion(&a, &b, 100, 100, &config, Some(&zone_config)).unwrap();
+        assert!(r.motion_active, "level {}", r.motion_level);
+        assert!(r.total_sampled < 10_000);
     }
 
     #[test]

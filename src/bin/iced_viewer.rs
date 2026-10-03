@@ -47,6 +47,7 @@ fn run(config_path: &str) -> Result<(), String> {
     let theme_name = config.theme.unwrap_or_default();
     let logs_config = config.logs.unwrap_or_default();
     let view_config = config.view.unwrap_or_default();
+    let notify_config = config.notifications.map(|n| n.into_config()).unwrap_or_default();
     let groups: Vec<_> = config
         .groups
         .unwrap_or_default()
@@ -63,6 +64,7 @@ fn run(config_path: &str) -> Result<(), String> {
         logs_config,
         groups,
         view_config,
+        notify_config,
     )
     .map_err(|e| format!("GUI failed to start: {e}"))
 }

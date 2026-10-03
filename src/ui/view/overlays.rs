@@ -16,8 +16,7 @@ pub fn toast_overlay(app: &App) -> iced::widget::Container<'_, Message> {
         let label = iced::widget::text(&toast.message)
             .color(toast_text_color)
             .size(12);
-        toast_col = toast_col.push(
-            iced::widget::container(label)
+        let card = iced::widget::container(label)
                 .padding(iced::Padding::from([8, 14]))
                 .style(move |_: &iced::Theme| iced::widget::container::Style {
                     background: Some(iced::Background::Color(toast_bg)),
@@ -32,8 +31,16 @@ pub fn toast_overlay(app: &App) -> iced::widget::Container<'_, Message> {
                         blur_radius: 24.0,
                     },
                     ..iced::widget::container::Style::default()
-                }),
-        );
+                });
+        let card: Element<'_, Message> = match &toast.open_dir {
+            Some(dir) => iced::widget::button(card)
+                .padding(0)
+                .on_press(Message::OpenDir(dir.clone()))
+                .style(|_, _| iced::widget::button::Style::default())
+                .into(),
+            None => card.into(),
+        };
+        toast_col = toast_col.push(card);
     }
     iced::widget::container(toast_col)
         .width(Length::Shrink)
@@ -76,6 +83,7 @@ pub fn help_overlay<'a>(app: &App, main_content: Element<'a, Message>) -> Elemen
         row("F2", "Mostrar / ocultar a sidebar"),
         row("F3", "Alternar aba da sidebar"),
         row("/", "Filtrar câmeras"),
+        row("Enter / Backspace", "Zonas de movimento: concluir / desfazer"),
         row("Esc", "Voltar: spotlight \u{2192} imersivo \u{2192} menu \u{2192} busca"),
         row("?", "Mostrar / ocultar esta ajuda"),
         row("Ctrl+Q", "Sair"),
@@ -110,25 +118,58 @@ pub fn help_overlay<'a>(app: &App, main_content: Element<'a, Message>) -> Elemen
 pub fn context_menu_layer(app: &App) -> Option<Element<'_, Message>> {
     let ctx = app.context_menu.as_ref()?;
 
-    // Rough menu extent for edge-clamping. Height varies with the camera
-    // section; ~420 covers the tallest case.
-    let menu_w = super::menu::MENU_WIDTH + 8.0;
-    let menu_h = 420.0_f32;
-    let x = app
-        .pointer_pos
-        .x
-        .min((app.window_size.width - menu_w).max(0.0))
-        .max(0.0);
-    let y = app
-        .pointer_pos
-        .y
-        .min((app.window_size.height - menu_h).max(0.0))
-        .max(0.0);
+    let origin = menu_origin(
+        ctx.anchor,
+        app.window_size,
+        super::menu::MENU_WIDTH + 8.0,
+        MENU_MAX_HEIGHT,
+    );
+    let (x, y) = (origin.x, origin.y);
 
     Some(
-        iced::widget::container(super::menu::command_menu(app, Some(ctx.camera_idx)))
-            .align_top(y)
-            .align_left(x)
-            .into(),
+        super::pinned(
+            super::menu::command_menu(app, Some(ctx.camera_idx)),
+            iced::alignment::Horizontal::Left,
+            iced::alignment::Vertical::Top,
+            iced::Padding { top: y, right: 0.0, bottom: 0.0, left: x },
+        ),
     )
+}
+
+/// Tallest the command menu gets (camera section included), used to keep it
+/// on-screen when opened near the bottom edge.
+const MENU_MAX_HEIGHT: f32 = 500.0;
+
+/// Top-left corner for a menu opened at `anchor`: at the pointer, pulled back
+/// just enough to stay inside the window.
+fn menu_origin(anchor: iced::Point, window: iced::Size, w: f32, h: f32) -> iced::Point {
+    iced::Point::new(
+        anchor.x.min((window.width - w).max(0.0)).max(0.0),
+        anchor.y.min((window.height - h).max(0.0)).max(0.0),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const WIN: iced::Size = iced::Size { width: 1000.0, height: 800.0 };
+
+    #[test]
+    fn menu_opens_at_the_anchor_when_it_fits() {
+        let p = menu_origin(iced::Point::new(100.0, 50.0), WIN, 256.0, 500.0);
+        assert_eq!((p.x, p.y), (100.0, 50.0));
+    }
+
+    #[test]
+    fn menu_is_pulled_back_from_the_right_and_bottom_edges() {
+        let p = menu_origin(iced::Point::new(990.0, 790.0), WIN, 256.0, 500.0);
+        assert_eq!((p.x, p.y), (744.0, 300.0));
+    }
+
+    #[test]
+    fn menu_larger_than_window_pins_to_origin() {
+        let p = menu_origin(iced::Point::new(10.0, 10.0), iced::Size::new(100.0, 100.0), 256.0, 500.0);
+        assert_eq!((p.x, p.y), (0.0, 0.0));
+    }
 }

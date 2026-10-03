@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// A 2D point in normalized coordinates (0.0..=1.0).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -60,6 +60,11 @@ impl MotionZone {
         inside
     }
 
+    /// Whether this zone can ever match a point: enabled and a real polygon.
+    pub fn is_active(&self) -> bool {
+        self.enabled && self.vertices.len() >= 3
+    }
+
     /// Number of vertices.
     pub fn vertex_count(&self) -> usize {
         self.vertices.len()
@@ -71,21 +76,47 @@ impl MotionZone {
     }
 }
 
+/// Absolute polygon area in normalized units (the whole frame is 1.0), via the
+/// shoelace formula. Near-zero means collinear/duplicate points.
+pub fn polygon_area(vertices: &[Point]) -> f64 {
+    if vertices.len() < 3 {
+        return 0.0;
+    }
+    let mut twice = 0.0;
+    for (i, a) in vertices.iter().enumerate() {
+        let b = vertices[(i + 1) % vertices.len()];
+        twice += a.x * b.y - b.x * a.y;
+    }
+    twice.abs() / 2.0
+}
+
 /// TOML mirror for a zone entry.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MotionZoneFile {
     pub name: String,
     pub vertices: Vec<PointFile>,
     pub enabled: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PointFile {
     pub x: f64,
     pub y: f64,
 }
 
 impl MotionZoneFile {
+    pub fn from_zone(zone: &MotionZone) -> Self {
+        Self {
+            name: zone.name.clone(),
+            vertices: zone
+                .vertices
+                .iter()
+                .map(|p| PointFile { x: p.x, y: p.y })
+                .collect(),
+            enabled: Some(zone.enabled),
+        }
+    }
+
     pub fn into_zone(self) -> MotionZone {
         MotionZone {
             name: self.name,
@@ -107,12 +138,17 @@ impl ZoneConfig {
     /// Check if a point is inside any active zone.
     /// If no zones are defined, returns true (all motion counts).
     pub fn is_motion_allowed(&self, point: Point) -> bool {
-        if self.zones.is_empty() {
+        if !self.has_active() {
             return true;
         }
-        self.zones.iter()
-            .filter(|z| z.enabled)
-            .any(|z| z.contains(point))
+        self.zones.iter().any(|z| z.is_active() && z.contains(point))
+    }
+
+    /// Whether any zone actually restricts detection. Zones that are disabled
+    /// or have fewer than 3 vertices never match, so counting them as
+    /// "restricting" would leave the camera with nothing to sample.
+    pub fn has_active(&self) -> bool {
+        self.zones.iter().any(MotionZone::is_active)
     }
 
     /// Filter a list of changed pixel coordinates to only those
@@ -246,5 +282,24 @@ mod tests {
         assert_eq!(z.name, "Driveway");
         assert_eq!(z.vertices.len(), 3);
         assert!(!z.enabled);
+    }
+
+    #[test]
+    fn polygon_area_of_unit_square_and_degenerate_shapes() {
+        let sq = [Point::new(0.0, 0.0), Point::new(1.0, 0.0), Point::new(1.0, 1.0), Point::new(0.0, 1.0)];
+        assert!((polygon_area(&sq) - 1.0).abs() < 1e-9);
+        let line = [Point::new(0.1, 0.1), Point::new(0.5, 0.5), Point::new(0.9, 0.9)];
+        assert!(polygon_area(&line) < 1e-9);
+        assert_eq!(polygon_area(&line[..2]), 0.0);
+    }
+
+    #[test]
+    fn disabled_or_degenerate_zones_do_not_restrict_detection() {
+        let mut off = square_zone();
+        off.enabled = false;
+        let two = MotionZone::new("two", vec![Point::new(0.1, 0.1), Point::new(0.2, 0.2)]);
+        let cfg = ZoneConfig { zones: vec![off, two] };
+        assert!(!cfg.has_active());
+        assert!(cfg.is_motion_allowed(Point::new(0.9, 0.9)));
     }
 }

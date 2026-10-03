@@ -79,6 +79,24 @@ pub enum Message {
     BlurSearch,
     /// A raw key press, resolved against the current focus state in `update`.
     KeyPressed(iced::keyboard::Key, iced::keyboard::Modifiers),
+    /// Open a folder in the file manager (clickable toasts).
+    OpenDir(std::path::PathBuf),
+    /// A timeline row was clicked — jump to that camera.
+    EventClicked(usize),
+    /// Open the motion-zone editor on a camera (spotlights it).
+    EditZones(usize),
+    /// A vertex clicked on the editor canvas, normalized to the video frame.
+    ZoneVertex(f64, f64),
+    /// Swallows a click so it does not fall through to the layer below.
+    Noop,
+    /// Close the polygon being drawn and store it as a zone (`Enter`).
+    ZoneFinish,
+    /// Drop the last vertex, or the last zone when no polygon is open (`Backspace`).
+    ZoneUndo,
+    /// Remove every zone of the camera being edited.
+    ZoneClear,
+    /// Leave the editor, discarding any unfinished polygon (`Esc`).
+    ZoneCancel,
     /// A snapshot PNG finished encoding+writing on a background task.
     /// `sequence` is 1 for a lone snapshot / the first burst frame.
     SnapshotSaved {

@@ -37,7 +37,7 @@ impl CameraStatus {
             CameraStatus::Offline => "OFFLINE",
             CameraStatus::Reconnecting => "RECONNECTING",
             CameraStatus::Recording => "RECORDING",
-            CameraStatus::Disabled => "DISABLED",
+            CameraStatus::Disabled => "DESATIVADA",
             CameraStatus::Connecting => "CONNECTING",
             CameraStatus::Paused => "PAUSED",
         }
@@ -94,6 +94,8 @@ pub enum Message {
     ShowRowMenu(usize),
     /// Expand / collapse the Inspector's "Avançado" block.
     ToggleInfoAdvanced,
+    /// A timeline row was clicked.
+    EventClicked(usize),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -234,7 +236,7 @@ mod tests {
         assert_eq!(CameraStatus::Offline.label(), "OFFLINE");
         assert_eq!(CameraStatus::Reconnecting.label(), "RECONNECTING");
         assert_eq!(CameraStatus::Recording.label(), "RECORDING");
-        assert_eq!(CameraStatus::Disabled.label(), "DISABLED");
+        assert_eq!(CameraStatus::Disabled.label(), "DESATIVADA");
     }
 
     #[test]

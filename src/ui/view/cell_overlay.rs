@@ -52,7 +52,7 @@ fn action_btn<'a>(glyph: &'a str, msg: Message, active: bool, danger: bool) -> E
     } else {
         iced::Color::from_rgb(0.92, 0.92, 0.94)
     };
-    button(text(glyph).size(13).color(fg))
+    button(text(glyph).font(crate::ui::icons::FONT).size(13).color(fg))
         .padding(iced::Padding::from([3, 6]))
         .on_press(msg)
         .style(move |_, status| button::Style {
@@ -115,6 +115,68 @@ pub fn cell_actions(app: &App, idx: usize, selected: bool) -> Element<'_, Messag
         .into()
 }
 
+/// Every per-camera feature as an icon button, for the spotlight bar: the
+/// icons are visible as soon as the camera opens, each with a tooltip naming
+/// the action and its shortcut. Toggle state (recording, audio, zones) shows as
+/// a highlighted button.
+pub fn feature_actions(app: &App, idx: usize) -> Element<'_, Message> {
+    let is_recording = app
+        .sidebar
+        .cameras
+        .get(idx)
+        .is_some_and(|c| c.status == CameraStatus::Recording);
+    let is_audio = app.audio_states.get(idx).is_some_and(|s| s.is_audible());
+    let zone_count = app
+        .zones
+        .get(idx)
+        .map_or(0, |z| z.zones.iter().filter(|z| z.is_active()).count());
+    let editing_zones = app.zone_edit.as_ref().is_some_and(|e| e.camera_idx == idx);
+
+    let zones_tip = match zone_count {
+        0 => "Zonas de movimento".to_string(),
+        n => format!("Zonas de movimento ({n})"),
+    };
+    let items: [(&str, String, Message, bool, bool); 4] = [
+        ("\u{25C9}", "Snapshot  (s)".into(), Message::Snapshot, false, false),
+        (
+            "\u{25CF}",
+            if is_recording { "Parar gravação  (r)" } else { "Gravar  (r)" }.into(),
+            Message::ToggleRecording,
+            is_recording,
+            is_recording,
+        ),
+        (
+            "\u{266A}",
+            if is_audio { "Silenciar  (m)" } else { "Ouvir áudio  (m)" }.into(),
+            Message::ToggleAudio,
+            is_audio,
+            false,
+        ),
+        (
+            "\u{2B21}",
+            zones_tip,
+            Message::EditZones(idx),
+            zone_count > 0 || editing_zones,
+            false,
+        ),
+    ];
+
+    let mut r = row![].spacing(2);
+    for (glyph, tip, msg, active, danger) in items {
+        r = r.push(
+            iced::widget::tooltip(
+                action_btn(glyph, msg, active, danger),
+                container(text(tip).size(Theme::TEXT_CAPTION))
+                    .padding(iced::Padding::from([3, 8]))
+                    .style(container::rounded_box),
+                iced::widget::tooltip::Position::Top,
+            )
+            .gap(6),
+        );
+    }
+    r.into()
+}
+
 /// A compact name chip for the bottom-left of a live tile: a status pip, the
 /// name, and `· NN fps` only when the tile is selected or hovered. No
 /// edge-to-edge band — just a small rounded label.
@@ -161,6 +223,7 @@ pub fn placeholder_cell(
     colors: ThemeColors,
     name: String,
     status: &CameraStatus,
+    detail: Option<String>,
 ) -> Element<'static, Message> {
     let (glyph, label, tint) = match status {
         CameraStatus::Connecting => (
@@ -192,7 +255,7 @@ pub fn placeholder_cell(
     let ring = Theme::color_from_hex(colors.border);
     container(
         iced::widget::column![
-            container(text(glyph).size(20).color(tint))
+            container(text(glyph).font(crate::ui::icons::FONT).size(20).color(tint))
                 .width(40)
                 .height(40)
                 .center_x(Length::Fill)
@@ -210,6 +273,9 @@ pub fn placeholder_cell(
                 .color(Theme::color_from_hex(colors.text_secondary)),
             text(label)
                 .size(Theme::TEXT_CAPTION)
+                .color(Theme::color_from_hex(colors.text_tertiary)),
+            text(detail.unwrap_or_default())
+                .size(Theme::TEXT_CAPTION - 1)
                 .color(Theme::color_from_hex(colors.text_tertiary)),
         ]
         .spacing(Theme::SPACE_2)

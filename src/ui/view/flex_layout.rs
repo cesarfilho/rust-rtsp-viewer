@@ -1,3 +1,4 @@
+use iced::alignment::{Horizontal, Vertical};
 use iced::{Element, Length};
 
 use super::super::app::App;
@@ -30,7 +31,12 @@ pub fn spotlight_view(app: &App, idx: usize) -> Element<'_, Message> {
     let picture: Element<'_, Message> = if is_live && idx < app.videos.len() {
         app.videos[idx].view().map(|_| Message::FrameUpdate)
     } else {
-        cell_overlay::placeholder_cell(colors, name.clone(), &status)
+        cell_overlay::placeholder_cell(
+            colors,
+            name.clone(),
+            &status,
+            app.backoff_states.get(idx).and_then(|b| b.status_detail()),
+        )
     };
     let picture = iced::widget::container(picture)
         .width(Length::Fill)
@@ -56,6 +62,8 @@ pub fn spotlight_view(app: &App, idx: usize) -> Element<'_, Message> {
                 .size(Theme::TEXT_CAPTION)
                 .color(iced::Color::from_rgb(0.7, 0.7, 0.75)),
             iced::widget::horizontal_space(),
+            cell_overlay::feature_actions(app, idx),
+            iced::widget::horizontal_space().width(Theme::SPACE_3),
             nav_btn("\u{2039}", Message::SpotlightStep(false)),
             nav_btn("\u{203A}", Message::SpotlightStep(true)),
             nav_btn("\u{2715}", Message::ExitFocus),
@@ -67,15 +75,81 @@ pub fn spotlight_view(app: &App, idx: usize) -> Element<'_, Message> {
     .padding(iced::Padding::from([6, 12]))
     .style(|_: &iced::Theme| super::style::caption_scrim());
 
-    iced::widget::stack![picture, iced::widget::container(bar).align_bottom(0)]
+    let mut layers = iced::widget::stack![picture]
         .width(Length::Fill)
-        .height(Length::Fill)
+        .height(Length::Fill);
+    if let Some(edit) = app.zone_edit.as_ref().filter(|e| e.camera_idx == idx) {
+        layers = layers.push(zone_editor_layer(app, idx, edit));
+        layers = layers.push(super::pinned(
+            iced::widget::mouse_area(zone_editor_bar(edit)).on_press(Message::Noop),
+            Horizontal::Center,
+            Vertical::Top,
+            0.0,
+        ));
+    }
+    layers
+        .push(super::pinned(
+            iced::widget::mouse_area(bar).on_press(Message::Noop),
+            Horizontal::Left,
+            Vertical::Bottom,
+            0.0,
+        ))
         .into()
+}
+
+/// Canvas over the picture that captures clicks while zones are being drawn.
+fn zone_editor_layer<'a>(
+    app: &'a App,
+    idx: usize,
+    edit: &'a super::super::app::ZoneEdit,
+) -> Element<'a, Message> {
+    let (_, w, h, _) = app.bridges[idx]
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .read_frame();
+    let program = crate::ui::zone_editor::ZoneEditorProgram {
+        zones: app.zones.get(idx).map(|c| c.zones.clone()).unwrap_or_default(),
+        adding_mode: true,
+        temp_vertices: edit.temp_vertices.clone(),
+        video_width: w as f32,
+        video_height: h as f32,
+    };
+    crate::ui::zone_editor::zone_editor_widget_element(program)
+        .map(|m| match m {
+            crate::ui::zone_editor::ZoneEditorMessage::VertexAdded(x, y) => Message::ZoneVertex(x, y),
+            crate::ui::zone_editor::ZoneEditorMessage::CloseRequested => Message::ZoneFinish,
+        })
+}
+
+/// Hint + actions for the zone editor, pinned to the top of the picture.
+fn zone_editor_bar(edit: &super::super::app::ZoneEdit) -> Element<'_, Message> {
+    let hint = if edit.temp_vertices.is_empty() {
+        "Clique no vídeo para marcar os cantos da zona".to_string()
+    } else {
+        format!("{} ponto(s) · Enter ou clique no 1º ponto conclui", edit.temp_vertices.len())
+    };
+    iced::widget::container(
+        iced::widget::row![
+            iced::widget::text(hint)
+                .size(Theme::TEXT_CAPTION)
+                .color(iced::Color::from_rgb(0.95, 0.95, 0.97)),
+            nav_btn("Concluir", Message::ZoneFinish),
+            nav_btn("Desfazer", Message::ZoneUndo),
+            nav_btn("Limpar", Message::ZoneClear),
+            nav_btn("Sair", Message::ZoneCancel),
+        ]
+        .spacing(Theme::SPACE_3)
+        .align_y(iced::Alignment::Center),
+    )
+    .padding(iced::Padding::from([6, 12]))
+    .style(|_: &iced::Theme| super::style::caption_scrim())
+    .into()
 }
 
 fn nav_btn(glyph: &str, msg: Message) -> Element<'_, Message> {
     iced::widget::button(
         iced::widget::text(glyph.to_string())
+            .font(crate::ui::icons::FONT)
             .size(15)
             .color(iced::Color::from_rgb(0.92, 0.92, 0.94)),
     )
@@ -100,7 +174,7 @@ fn nav_btn(glyph: &str, msg: Message) -> Element<'_, Message> {
 
 pub fn flex_layout(app: &App) -> Element<'_, Message> {
     if app.videos.is_empty() {
-        return iced::widget::container(iced::widget::text("No cameras configured"))
+        return iced::widget::container(iced::widget::text("Nenhuma câmera configurada"))
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)
@@ -140,12 +214,13 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
         iced::widget::container(
             iced::widget::column![
                 iced::widget::text("\u{26A0}")
+                    .font(crate::ui::icons::FONT)
                     .color(iced::Color::from_rgba(0.5, 0.5, 0.5, 0.6))
                     .size(32),
                 iced::widget::text(cam_name)
                     .color(Theme::color_from_hex(colors.text))
                     .size(14),
-                iced::widget::text("DISABLED")
+                iced::widget::text("DESATIVADA")
                     .color(iced::Color::from_rgba(0.5, 0.5, 0.5, 0.6))
                     .size(11),
             ]
@@ -185,6 +260,7 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
     let main: Element<'_, Message> = if is_audio_main {
         let badge = iced::widget::container(
             iced::widget::text("\u{266A} AUD")
+                .font(crate::ui::icons::FONT)
                 .color(iced::Color::from_rgb(0.0, 0.0, 0.0))
                 .size(10),
         )
@@ -200,9 +276,10 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
             ..iced::widget::container::Style::default()
         });
 
-        iced::widget::stack![main_cell, badge
-            .align_top(4.0)
-            .align_left(4.0)]
+        iced::widget::stack![
+            main_cell,
+            super::pinned(badge, Horizontal::Left, Vertical::Top, 4.0)
+        ]
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -232,9 +309,28 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
             1.0
         };
 
-        let thumb_cell = iced::widget::container(
-            app.videos[i].view().map(move |_| Message::FlexMainSelected(i)),
-        )
+        // Only the main camera streams in flex; the others show one grabbed frame.
+        let has_frame = app.bridges[i]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .capture_frame()
+            .is_some();
+        let thumb_pic: Element<'_, Message> = if has_frame || app.active_stream.get(i).copied().unwrap_or(false) {
+            app.videos[i].view().map(move |_| Message::FlexMainSelected(i))
+        } else {
+            let name = app.sidebar.cameras.get(i).map(|c| c.name.clone()).unwrap_or_default();
+            iced::widget::container(
+                iced::widget::text(name)
+                    .size(Theme::TEXT_CAPTION)
+                    .color(Theme::color_from_hex(colors.text_secondary)),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .into()
+        };
+        let thumb_cell = iced::widget::container(thumb_pic)
         .width(160.0)
         .height(90.0)
         .style(move |_: &iced::Theme| iced::widget::container::Style {
@@ -250,6 +346,7 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
         let thumb_inner: Element<'_, Message> = if is_audio_thumb {
             let badge = iced::widget::container(
                 iced::widget::text("\u{266A}")
+                    .font(crate::ui::icons::FONT)
                     .color(iced::Color::from_rgb(0.0, 0.0, 0.0))
                     .size(8),
             )
@@ -265,9 +362,10 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
                 ..iced::widget::container::Style::default()
             });
 
-            iced::widget::stack![thumb_cell, badge
-                .align_top(2.0)
-                .align_left(2.0)]
+            iced::widget::stack![
+                thumb_cell,
+                super::pinned(badge, Horizontal::Left, Vertical::Top, 2.0)
+            ]
             .width(160.0)
             .height(90.0)
             .into()
@@ -281,8 +379,13 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
         thumb_col = thumb_col.push(thumb);
     }
 
-    let thumbs = iced::widget::container(thumb_col)
-        .width(170.0)
+    // Scrolls when there are more thumbnails than fit the window height.
+    let thumb_scroll = iced::widget::scrollable(thumb_col.padding(iced::Padding::ZERO.right(8.0)))
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+    let thumbs = iced::widget::container(thumb_scroll)
+        .width(180.0)
         .height(Length::Fill)
         .padding(6)
         .style(move |_: &iced::Theme| iced::widget::container::Style {

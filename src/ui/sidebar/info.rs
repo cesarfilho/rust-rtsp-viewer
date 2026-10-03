@@ -86,7 +86,7 @@ pub(super) fn info_view(sidebar: &Sidebar, colors: ThemeColors, theme: Theme) ->
     let badge = container(
         text(cam.status.label_pt())
             .size(Theme::TEXT_CAPTION - 1)
-            .color(iced::Color::BLACK),
+            .color(Theme::readable_on(status_c)),
     )
     .padding(iced::Padding::from([1, 6]))
     .style(move |_: &iced::Theme| container::Style {
@@ -209,7 +209,7 @@ pub(super) fn info_view(sidebar: &Sidebar, colors: ThemeColors, theme: Theme) ->
     body = body.push(
         button(
             row![
-                text(chevron).size(Theme::TEXT_CAPTION).color(secondary),
+                text(chevron).font(crate::ui::icons::FONT).size(Theme::TEXT_CAPTION).color(secondary),
                 text("Avançado").size(Theme::TEXT_CAPTION).color(secondary),
             ]
             .spacing(6),

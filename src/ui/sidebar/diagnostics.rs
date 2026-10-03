@@ -35,14 +35,16 @@ pub(super) fn diagnostics_view(sidebar: &Sidebar, colors: ThemeColors) -> Elemen
                     Severity::Stalled => theme::Theme::color_from_hex(colors.accent_red),
                 };
                 hints_col = hints_col.push(
-                    text(format!(
-                        "[{}] {}: {}",
-                        hint.severity.glyph(),
-                        hint.metric,
-                        hint.cause
-                    ))
-                    .color(sev_color)
-                    .size(10),
+                    row![
+                        text(format!("[{}]", hint.severity.glyph()))
+                            .font(crate::ui::icons::FONT)
+                            .color(sev_color)
+                            .size(10),
+                        text(format!("{}: {}", hint.metric, hint.cause))
+                            .color(sev_color)
+                            .size(10),
+                    ]
+                    .spacing(4),
                 );
             }
 
@@ -61,7 +63,7 @@ pub(super) fn diagnostics_view(sidebar: &Sidebar, colors: ThemeColors) -> Elemen
                 .into()
         } else {
             scrollable(
-                column![text("Camera not found").color(text_secondary)]
+                column![text("Câmera não encontrada").color(text_secondary)]
                     .padding(iced::Padding::from([4, 8]))
                     .width(Length::Fill),
             )
@@ -70,7 +72,7 @@ pub(super) fn diagnostics_view(sidebar: &Sidebar, colors: ThemeColors) -> Elemen
         }
     } else {
         scrollable(
-            column![text("Select a camera").color(text_secondary)]
+            column![text("Selecione uma câmera").color(text_secondary)]
                 .padding(iced::Padding::from([4, 8]))
                 .width(Length::Fill),
         )

@@ -84,7 +84,7 @@ pub(super) fn cameras_view(sidebar: &Sidebar, colors: ThemeColors) -> Element<'_
     let icon_btn = move |glyph: &'static str, msg: Option<Message>| {
         let on = msg.is_some();
         let fg = if on { text_secondary } else { placeholder_color };
-        let mut b = button(text(glyph).size(10).color(fg))
+        let mut b = button(text(glyph).font(crate::ui::icons::FONT).size(10).color(fg))
             .padding(iced::Padding::from([1, 4]))
             .style(move |_, s| button::Style {
                 background: match s {

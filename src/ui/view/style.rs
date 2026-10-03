@@ -156,7 +156,7 @@ pub fn pill(theme: Theme, intent: Intent) -> impl Fn(&iced::Theme, button::Statu
                 accent,
             ),
             Intent::Primary => (accent, on_accent),
-            Intent::Danger => (danger, Color::WHITE),
+            Intent::Danger => (danger, Theme::readable_on(danger)),
         };
         let bg = match status {
             button::Status::Active | button::Status::Disabled => base_bg,

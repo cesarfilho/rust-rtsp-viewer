@@ -35,7 +35,7 @@ fn menu_row<'a>(
         Theme::color_from_hex(colors.text_secondary)
     };
     let mut r = row![
-        container(text(icon).size(Theme::TEXT_BODY).color(icon_color)).width(18),
+        container(text(icon).font(crate::ui::icons::FONT).size(Theme::TEXT_BODY).color(icon_color)).width(18),
         text(label).size(Theme::TEXT_BODY),
         iced::widget::horizontal_space(),
     ]
@@ -210,6 +210,7 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
                     false,
                 ))
                 .push(menu_row(theme, "\u{266A}", "Áudio", Some("m"), Message::ToggleAudio, false))
+                .push(menu_row(theme, "\u{2B21}", "Zonas de movimento", None, Message::EditZones(idx), false))
                 .push(menu_row(
                     theme,
                     "\u{25D0}",

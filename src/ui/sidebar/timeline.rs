@@ -1,5 +1,5 @@
 use iced::{Element, Length};
-use iced::widget::{column, container, row, scrollable, text};
+use iced::widget::{button, column, container, row, scrollable, text};
 
 use crate::ui::theme::{self, ThemeColors};
 
@@ -13,6 +13,7 @@ pub(super) fn timeline_view<'a>(sidebar: &'a Sidebar, timeline: &'a crate::domai
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    let hover_bg = theme::Theme::color_from_hex(colors.surface_hover);
     let window = 3600u64;
     let from = now.saturating_sub(window);
 
@@ -24,7 +25,7 @@ pub(super) fn timeline_view<'a>(sidebar: &'a Sidebar, timeline: &'a crate::domai
 
     if events.is_empty() {
         return column![
-            text("No events in the last hour").color(text_secondary).size(12),
+            text("Nenhum evento na última hora").color(text_secondary).size(12),
         ]
         .width(Length::Fill)
         .padding(8)
@@ -69,10 +70,25 @@ pub(super) fn timeline_view<'a>(sidebar: &'a Sidebar, timeline: &'a crate::domai
         .spacing(6)
         .align_y(iced::Alignment::Center);
 
-        event_rows = event_rows.push(row_content);
+        event_rows = event_rows.push(
+            button(row_content)
+                .width(Length::Fill)
+                .padding(iced::Padding::from([3, 4]))
+                .on_press(Message::EventClicked(event.camera_idx))
+                .style(move |_, status| button::Style {
+                    background: match status {
+                        button::Status::Hovered | button::Status::Pressed => {
+                            Some(iced::Background::Color(hover_bg))
+                        }
+                        _ => None,
+                    },
+                    text_color,
+                    ..button::Style::default()
+                }),
+        );
     }
 
-    let header = text(format!("{} events (last hour)", events.len()))
+    let header = text(format!("{} eventos (última hora) · clique para abrir a câmera", events.len()))
         .color(text_color)
         .size(11);
 

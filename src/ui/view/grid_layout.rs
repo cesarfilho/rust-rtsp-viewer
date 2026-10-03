@@ -1,3 +1,4 @@
+use iced::alignment::{Horizontal, Vertical};
 use iced::{Element, Length};
 
 use super::super::app::App;
@@ -22,7 +23,7 @@ fn clickable<'a>(cell: impl Into<Element<'a, Message>>, idx: usize) -> Element<'
 }
 
 fn small_badge<'a>(label: String, bg: iced::Color, fg: iced::Color) -> Element<'a, Message> {
-    iced::widget::container(iced::widget::text(label).size(10).color(fg))
+    iced::widget::container(iced::widget::text(label).font(crate::ui::icons::FONT).size(10).color(fg))
         .padding(iced::Padding::from([1, 4]))
         .style(move |_: &iced::Theme| iced::widget::container::Style {
             background: Some(iced::Background::Color(bg)),
@@ -38,6 +39,7 @@ fn small_badge<'a>(label: String, bg: iced::Color, fg: iced::Color) -> Element<'
 pub fn grid_layout(app: &App, sidebar_width: f32, available_height: f32) -> Element<'_, Message> {
     let colors = app.theme.colors();
     let border_color = Theme::color_from_hex(colors.border);
+    let slot_bg = Theme::color_from_hex(colors.surface);
     let video_bg = iced::Color::from_rgb(0.0, 0.0, 0.0);
     let gutter_bg = Theme::color_from_hex(colors.background);
     let tile_radius: iced::border::Radius = Theme::RADIUS_MD.into();
@@ -72,9 +74,7 @@ pub fn grid_layout(app: &App, sidebar_width: f32, available_height: f32) -> Elem
                             .width(Length::Fill)
                             .height(Length::Fill)
                             .style(move |_: &iced::Theme| iced::widget::container::Style {
-                                background: Some(iced::Background::Color(iced::Color::from_rgba(
-                                    1.0, 1.0, 1.0, 0.015,
-                                ))),
+                                background: Some(iced::Background::Color(slot_bg)),
                                 border: iced::Border {
                                     color: border_color,
                                     width: 1.0,
@@ -130,7 +130,12 @@ pub fn grid_layout(app: &App, sidebar_width: f32, available_height: f32) -> Elem
             let inner: Element<'_, Message> = if has_picture && idx < app.videos.len() {
                 app.videos[idx].view().map(|_| Message::FrameUpdate)
             } else {
-                cell_overlay::placeholder_cell(colors, name.clone(), &status)
+                cell_overlay::placeholder_cell(
+            colors,
+            name.clone(),
+            &status,
+            app.backoff_states.get(idx).and_then(|b| b.status_detail()),
+        )
             };
             let base = iced::widget::container(inner)
                 .width(Length::Fill)
@@ -150,36 +155,31 @@ pub fn grid_layout(app: &App, sidebar_width: f32, available_height: f32) -> Elem
             // Top-left: audio / recording badges.
             let mut tl = iced::widget::row![].spacing(3);
             if is_audio {
-                tl = tl.push(small_badge(
-                    "\u{266A}".into(),
-                    Theme::color_from_hex(colors.accent_green),
-                    iced::Color::BLACK,
-                ));
+                let green = Theme::color_from_hex(colors.accent_green);
+                tl = tl.push(small_badge("\u{266A}".into(), green, Theme::readable_on(green)));
             }
             if is_recording {
                 let e = app.bridges[idx]
                     .lock()
                     .map(|b| b.recording_elapsed_secs())
                     .unwrap_or(0);
+                let red = Theme::color_from_hex(colors.accent_red);
                 tl = tl.push(small_badge(
                     format!("REC {:02}:{:02}:{:02}", e / 3600, (e % 3600) / 60, e % 60),
-                    Theme::color_from_hex(colors.accent_red),
-                    iced::Color::WHITE,
+                    red,
+                    Theme::readable_on(red),
                 ));
             }
-            stack = stack.push(
-                iced::widget::container(tl)
-                    .align_top(4.0)
-                    .align_left(4.0),
-            );
+            stack = stack.push(super::pinned(tl, Horizontal::Left, Vertical::Top, 4.0));
 
             // Top-right: on-cell actions when selected or hovered.
             if is_selected || is_hovered {
-                stack = stack.push(
-                    iced::widget::container(cell_overlay::cell_actions(app, idx, is_selected))
-                        .align_top(4.0)
-                        .align_right(4.0),
-                );
+                stack = stack.push(super::pinned(
+                    cell_overlay::cell_actions(app, idx, is_selected),
+                    Horizontal::Right,
+                    Vertical::Top,
+                    4.0,
+                ));
             }
 
             // Bottom-left: compact name chip. fps only when the tile is the
@@ -187,16 +187,12 @@ pub fn grid_layout(app: &App, sidebar_width: f32, available_height: f32) -> Elem
             if has_picture {
                 let show_fps = if is_selected || is_hovered { Some(fps) } else { None };
                 let pip = cell_overlay::status_pip_color(colors, &status);
-                stack = stack.push(
-                    iced::widget::container(cell_overlay::name_chip(
-                        name.clone(),
-                        pip,
-                        show_fps,
-                        is_selected,
-                    ))
-                    .align_bottom(6.0)
-                    .align_left(6.0),
-                );
+                stack = stack.push(super::pinned(
+                    cell_overlay::name_chip(name.clone(), pip, show_fps, is_selected),
+                    Horizontal::Left,
+                    Vertical::Bottom,
+                    6.0,
+                ));
             }
 
             stack = stack.width(Length::Fill).height(Length::Fill);

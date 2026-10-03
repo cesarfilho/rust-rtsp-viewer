@@ -11,6 +11,7 @@ pub(crate) mod message;
 pub(crate) mod app;
 pub(crate) mod subscription;
 pub(crate) mod view;
+pub(crate) mod icons;
 
 pub(crate) use app::App;
 pub(crate) use message::Message;
@@ -35,6 +36,7 @@ pub fn run(
     logs_config: crate::config::LogsConfigFile,
     groups: Vec<crate::domain::groups::CameraGroup>,
     view_config: crate::config::ViewConfigFile,
+    notify_config: crate::domain::notify::NotifyConfig,
 ) -> iced::Result {
     let window = iced::window::Settings {
         size: iced::Size::new(1280.0, 720.0),
@@ -50,6 +52,7 @@ pub fn run(
 
     iced::application("StreamView", update, view)
         .window(window)
+        .font(icons::FONT_BYTES)
         .centered()
         .theme(|app: &App| app.theme.to_iced())
         .subscription(subscription)
@@ -63,6 +66,7 @@ pub fn run(
                 logs_config,
                 groups,
                 view_config,
+                notify_config,
             )
         })
 }

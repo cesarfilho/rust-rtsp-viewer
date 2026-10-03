@@ -74,6 +74,10 @@ pub struct GStreamerBridge {
     /// restarts recording could race the (now off-thread) teardown of the
     /// previous branch and collide on the fixed element names.
     pub(crate) recording_seq: u64,
+    /// Off-thread recording finalisers still draining EOS. `stop()` joins them
+    /// before the pipeline goes to `Null`, otherwise the muxer is torn down
+    /// mid-trailer and the last segment is truncated.
+    pub(crate) finalisers: Vec<std::thread::JoinHandle<()>>,
     /// Monotonic nanoseconds at which the pipeline last left `Playing`.
     /// 0 = currently connected (or never connected).
     pub(crate) disconnect_mono_ns: AtomicU64,
@@ -129,6 +133,7 @@ impl GStreamerBridge {
             recording_config: RecordingConfig::default(),
             recording: None,
             recording_seq: 0,
+            finalisers: Vec::new(),
             disconnect_mono_ns: AtomicU64::new(0),
             logger: None,
         })
@@ -452,6 +457,10 @@ impl GStreamerBridge {
             && let Err(e) = self.stop_recording_blocking() {
                 self.camera_log("WARN", &format!("Failed to finalise recording: {e}"));
             }
+        // A `stop_recording()` issued just before this may still be draining.
+        for handle in self.finalisers.drain(..) {
+            let _ = handle.join();
+        }
         if let Some(pipeline) = self.pipeline.take() {
             self.camera_log("INFO", "pipeline → Null (stop)");
             let _ = pipeline.set_state(gst::State::Null);

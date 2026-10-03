@@ -32,6 +32,28 @@ pub struct Config {
     /// `[view]` — how the grid is presented: density, pagination, carousel,
     /// lazy decoding, staggered startup.
     pub view: Option<ViewConfigFile>,
+    /// `[notifications]` — desktop alerts for motion and offline cameras.
+    pub notifications: Option<NotificationsConfigFile>,
+}
+
+/// Flat mirror of the `[notifications]` section.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct NotificationsConfigFile {
+    /// Send desktop notifications (needs `notify-send`). Default: false.
+    pub enabled: Option<bool>,
+    /// Minimum seconds between notifications of one kind per camera (>= 5). Default: 60.
+    pub cooldown_secs: Option<u64>,
+}
+
+impl NotificationsConfigFile {
+    pub fn into_config(self) -> crate::domain::notify::NotifyConfig {
+        let mut c = crate::domain::notify::NotifyConfig::default();
+        if let Some(e) = self.enabled { c.enabled = e; }
+        if let Some(s) = self.cooldown_secs {
+            c.cooldown_secs = s.max(crate::domain::notify::MIN_COOLDOWN_SECS);
+        }
+        c
+    }
 }
 
 /// Flat mirror of the `[view]` section. These are the *initial* values; the
@@ -183,6 +205,10 @@ pub struct RecordingConfigFile {
     pub max_segment_size_bytes: Option<u64>,
     /// Container: "mkv" (default) or "mp4".
     pub container: Option<String>,
+    /// Record automatically while motion is detected. Default: false.
+    pub on_motion: Option<bool>,
+    /// Seconds to keep recording after the last motion (3..=3600). Default: 15.
+    pub motion_post_roll_secs: Option<u32>,
 }
 
 /// Flat mirror of `domain::audio::AudioConfig`
@@ -210,6 +236,10 @@ impl RecordingConfigFile {
         if let Some(dir) = self.dir { config.dir = dir; }
         if let Some(d) = self.max_segment_duration_secs { config.max_segment_duration_secs = d; }
         if let Some(s) = self.max_segment_size_bytes { config.max_segment_size_bytes = s; }
+        if let Some(m) = self.on_motion { config.on_motion = m; }
+        if let Some(p) = self.motion_post_roll_secs {
+            config.motion_post_roll_secs = p.clamp(3, 3600);
+        }
         if let Some(c) = self.container {
             config.container = match c.to_lowercase().as_str() {
                 "mp4" => Container::Mp4,

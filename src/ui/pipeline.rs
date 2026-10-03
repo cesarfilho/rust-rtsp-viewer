@@ -421,47 +421,71 @@ impl GStreamerBridge {
                 .map_err(|e| format!("Failed to add recording element: {e}"))?;
         }
 
-        queue
-            .link(&convert)
-            .map_err(|e| format!("recording_queue → rec_convert link failed: {e}"))?;
-        convert
-            .link(&encoder)
-            .map_err(|e| format!("rec_convert → encoder link failed: {e}"))?;
+        let tee_pad_slot = std::cell::RefCell::new(None::<gst::Pad>);
+        let attach = || -> Result<Arc<AtomicBool>, String> {
+            queue
+                .link(&convert)
+                .map_err(|e| format!("recording_queue → rec_convert link failed: {e}"))?;
+            convert
+                .link(&encoder)
+                .map_err(|e| format!("rec_convert → encoder link failed: {e}"))?;
 
-        let enc_src = encoder
-            .static_pad("src")
-            .ok_or("encoder has no src pad")?;
-        let mux_pad = sink
-            .request_pad_simple("video")
-            .ok_or("splitmuxsink refused a video pad")?;
-        enc_src
-            .link(&mux_pad)
-            .map_err(|e| format!("encoder → splitmuxsink link failed: {e}"))?;
+            let enc_src = encoder
+                .static_pad("src")
+                .ok_or("encoder has no src pad")?;
+            let mux_pad = sink
+                .request_pad_simple("video")
+                .ok_or("splitmuxsink refused a video pad")?;
+            enc_src
+                .link(&mux_pad)
+                .map_err(|e| format!("encoder → splitmuxsink link failed: {e}"))?;
 
-        // Watch for EOS so teardown knows when the file has been finalised.
-        let eos_seen = Arc::new(AtomicBool::new(false));
-        let flag = eos_seen.clone();
-        mux_pad.add_probe(gst::PadProbeType::EVENT_DOWNSTREAM, move |_pad, info| {
-            if let Some(gst::PadProbeData::Event(ref ev)) = info.data
-                && ev.type_() == gst::EventType::Eos {
-                    flag.store(true, Ordering::Relaxed);
+            // Watch for EOS so teardown knows when the file has been finalised.
+            let eos_seen = Arc::new(AtomicBool::new(false));
+            let flag = eos_seen.clone();
+            mux_pad.add_probe(gst::PadProbeType::EVENT_DOWNSTREAM, move |_pad, info| {
+                if let Some(gst::PadProbeData::Event(ref ev)) = info.data
+                    && ev.type_() == gst::EventType::Eos {
+                        flag.store(true, Ordering::Relaxed);
+                    }
+                gst::PadProbeReturn::Ok
+            });
+
+            // Bring the branch up before data reaches it.
+            for el in elements.iter().rev() {
+                el.sync_state_with_parent()
+                    .map_err(|e| format!("Failed to start recording element: {e}"))?;
+            }
+
+            let tee_pad = tee
+                .request_pad_simple("src_%u")
+                .ok_or("tee refused a src pad")?;
+            // Park it first so the error path can release it even if linking fails.
+            *tee_pad_slot.borrow_mut() = Some(tee_pad.clone());
+            let queue_sink = queue.static_pad("sink").ok_or("queue has no sink pad")?;
+            tee_pad
+                .link(&queue_sink)
+                .map_err(|e| format!("tee → recording_queue link failed: {e}"))?;
+
+            Ok(eos_seen)
+        };
+        let eos_seen = match attach() {
+            Ok(flag) => flag,
+            Err(e) => {
+                // Don't leave a half-wired branch (or a tee request pad) behind.
+                for el in &elements {
+                    let _ = el.set_state(gst::State::Null);
+                    let _ = pipeline.remove(el);
                 }
-            gst::PadProbeReturn::Ok
-        });
-
-        // Bring the branch up before data reaches it.
-        for el in elements.iter().rev() {
-            el.sync_state_with_parent()
-                .map_err(|e| format!("Failed to start recording element: {e}"))?;
-        }
-
-        let tee_pad = tee
-            .request_pad_simple("src_%u")
-            .ok_or("tee refused a src pad")?;
-        let queue_sink = queue.static_pad("sink").ok_or("queue has no sink pad")?;
-        tee_pad
-            .link(&queue_sink)
-            .map_err(|e| format!("tee → recording_queue link failed: {e}"))?;
+                if let Some(pad) = tee_pad_slot.borrow_mut().take() {
+                    tee.release_request_pad(&pad);
+                }
+                return Err(e);
+            }
+        };
+        let tee_pad = tee_pad_slot
+            .into_inner()
+            .ok_or("tee pad missing after attach")?;
 
         log::info!(
             "Recording started: {} (segments: {}s / {} bytes)",
@@ -542,7 +566,10 @@ impl GStreamerBridge {
         let Some(pipeline) = self.pipeline.clone() else {
             return Ok(());
         };
-        std::thread::spawn(move || Self::finalise_recording_branch(branch, pipeline));
+        self.finalisers.retain(|h| !h.is_finished());
+        self.finalisers.push(std::thread::spawn(move || {
+            Self::finalise_recording_branch(branch, pipeline)
+        }));
         Ok(())
     }
 
@@ -1006,6 +1033,50 @@ mod tests {
         }
 
         bridge.stop();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `stop_recording()` hands teardown to a worker thread; a `stop()` right
+    /// behind it (page flip, reconnect, quit) must wait for that worker
+    /// instead of nulling the pipeline under the muxer.
+    #[test]
+    fn stop_right_after_async_stop_recording_still_finalises() {
+        let _ = gst::init();
+
+        let dir = std::env::temp_dir().join(format!("rrv-rec-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let desc = "videotestsrc is-live=true \
+             ! video/x-raw,width=320,height=240,framerate=30/1 \
+             ! videoconvert name=converter \
+             ! capsfilter name=filter caps=\"video/x-raw,format=RGBA\" \
+             ! appsink name=display_sink sync=false emit-signals=true max-buffers=2 drop=true";
+        let pipeline = gst::parse_launch(desc)
+            .unwrap()
+            .downcast::<gst::Pipeline>()
+            .unwrap();
+
+        let mut bridge = GStreamerBridge::new(320, 240).unwrap();
+        bridge.recording_config.dir = dir.clone();
+        setup_appsink(&pipeline, &mut bridge).unwrap();
+        insert_tee(&pipeline).unwrap();
+        bridge.pipeline = Some(pipeline);
+        bridge.start_playing().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+
+        bridge.start_recording().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        bridge.stop_recording().unwrap();
+        bridge.stop(); // immediately, while the worker is still draining
+
+        let segments: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "mkv"))
+            .collect();
+        assert_eq!(segments.len(), 1, "got {segments:?}");
+        assert!(file_is_playable(&segments[0]), "segment truncated by early stop()");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

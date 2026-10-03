@@ -16,10 +16,15 @@ pub const VU_PEAK_DECAY_MS: u128 = 1200;
 pub struct Toast {
     pub message: String,
     pub shown_at: Instant,
+    /// Folder a click on the toast opens (snapshot saved, …).
+    pub open_dir: Option<std::path::PathBuf>,
 }
 
 pub struct ContextMenu {
     pub camera_idx: usize,
+    /// Where the menu opened. Captured once: reading the live pointer position
+    /// at render time made the menu follow the mouse.
+    pub anchor: iced::Point,
 }
 
 pub struct BackoffState {
@@ -57,6 +62,26 @@ impl BackoffState {
         self.next_attempt = None;
     }
 
+    /// Human-readable retry status for the tile placeholder, e.g.
+    /// `tentativa 3 · próxima em 4s`. `None` while nothing has failed yet.
+    pub fn status_detail(&self) -> Option<String> {
+        if self.consecutive_failures == 0 {
+            return None;
+        }
+        let attempt = self.consecutive_failures;
+        Some(match self.next_attempt {
+            Some(t) => {
+                let secs = t.saturating_duration_since(Instant::now()).as_secs_f32().ceil() as u64;
+                if secs == 0 {
+                    format!("tentativa {attempt} · reconectando agora")
+                } else {
+                    format!("tentativa {attempt} · próxima em {secs}s")
+                }
+            }
+            None => format!("tentativa {attempt}"),
+        })
+    }
+
     pub fn is_due(&self) -> bool {
         match self.next_attempt {
             Some(t) => Instant::now() >= t,
@@ -66,12 +91,30 @@ impl BackoffState {
 }
 
 pub fn is_expired(toast: &Toast) -> bool {
-    toast.shown_at.elapsed().as_secs() >= TOAST_DURATION_SECS
+    // Clickable toasts stay up longer so there is time to aim at them.
+    let ttl = if toast.open_dir.is_some() { TOAST_DURATION_SECS * 2 } else { TOAST_DURATION_SECS };
+    toast.shown_at.elapsed().as_secs() >= ttl
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_detail_none_until_first_failure() {
+        assert!(BackoffState::new().status_detail().is_none());
+    }
+
+    #[test]
+    fn status_detail_reports_attempt_and_countdown() {
+        let mut b = BackoffState::new();
+        b.record_failure();
+        b.record_failure();
+        let d = b.status_detail().unwrap();
+        assert!(d.starts_with("tentativa 2 · próxima em "), "{d}");
+        b.next_attempt = Some(Instant::now() - std::time::Duration::from_secs(1));
+        assert_eq!(b.status_detail().unwrap(), "tentativa 2 · reconectando agora");
+    }
 
     #[test]
     fn backoff_initial_state() {
@@ -160,6 +203,7 @@ mod tests {
         let t = Toast {
             message: "test".into(),
             shown_at: Instant::now(),
+            open_dir: None,
         };
         assert!(!is_expired(&t));
     }
@@ -169,13 +213,19 @@ mod tests {
         let t = Toast {
             message: "test".into(),
             shown_at: Instant::now() - std::time::Duration::from_secs(TOAST_DURATION_SECS + 1),
+            open_dir: None,
         };
+
         assert!(is_expired(&t));
+
+        let clickable = Toast { open_dir: Some("/tmp".into()), ..t };
+        assert!(!is_expired(&clickable));
     }
 
     #[test]
     fn context_menu_holds_camera_idx() {
-        let cm = ContextMenu { camera_idx: 3 };
+        let cm = ContextMenu { camera_idx: 3, anchor: iced::Point::new(10.0, 20.0) };
         assert_eq!(cm.camera_idx, 3);
+        assert_eq!(cm.anchor, iced::Point::new(10.0, 20.0));
     }
 }

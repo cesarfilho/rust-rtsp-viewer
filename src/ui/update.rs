@@ -32,6 +32,68 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
     match message {
         Message::FrameUpdate => update_frame(app),
         Message::KeyPressed(key, modifiers) => handle_key(app, key, modifiers),
+        Message::OpenDir(dir) => {
+            crate::infrastructure::notify::open_dir(&dir);
+            Task::none()
+        }
+        Message::EventClicked(idx) => {
+            if idx < app.videos.len() {
+                app.sidebar.selected = Some(idx);
+                app.flex_main_idx = idx;
+                note_interaction(app);
+                sync_active_streams(app);
+            }
+            Task::none()
+        }
+        Message::EditZones(idx) => {
+            if idx >= app.videos.len() {
+                return Task::none();
+            }
+            app.context_menu = None;
+            app.zone_edit = Some(super::app::ZoneEdit {
+                camera_idx: idx,
+                temp_vertices: Vec::new(),
+            });
+            toast(app, "Zonas: clique para marcar os pontos · Enter conclui · Esc sai");
+            update(app, Message::EnterSpotlight(idx))
+        }
+        Message::Noop => Task::none(),
+        Message::ZoneVertex(x, y) => {
+            if let Some(edit) = app.zone_edit.as_mut() {
+                let p = crate::domain::zones::Point::new(x, y);
+                // A double-click would otherwise stack two identical vertices.
+                let duplicate = edit
+                    .temp_vertices
+                    .last()
+                    .is_some_and(|l| (l.x - p.x).hypot(l.y - p.y) < MIN_VERTEX_GAP);
+                if !duplicate {
+                    edit.temp_vertices.push(p);
+                }
+            }
+            Task::none()
+        }
+        Message::ZoneFinish => {
+            finish_zone(app);
+            Task::none()
+        }
+        Message::ZoneUndo => {
+            undo_zone(app);
+            Task::none()
+        }
+        Message::ZoneClear => {
+            if let Some(idx) = app.zone_edit.as_ref().map(|e| e.camera_idx) {
+                if let Some(cfg) = app.zones.get_mut(idx) {
+                    cfg.zones.clear();
+                }
+                persist_zones(app, idx);
+                toast(app, "Zonas removidas: o quadro inteiro conta");
+            }
+            Task::none()
+        }
+        Message::ZoneCancel => {
+            app.zone_edit = None;
+            Task::none()
+        }
         Message::ThemeChanged(t) => {
             app.theme = t;
             Task::none()
@@ -46,6 +108,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::FlexMainSelected(idx) => {
             if idx < app.videos.len() {
                 app.flex_main_idx = idx;
+                sync_active_streams(app);
             }
             Task::none()
         }
@@ -112,12 +175,16 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                     // Only the lone snapshot / first burst frame toasts on
                     // success; the burst reports its own "complete" toast.
                     if sequence == 1 && app.pending_burst.is_none() {
-                        toast(app, format!("Snapshot: {name}"));
+                        app.toasts.push(Toast {
+                            message: format!("Snapshot: {name} · clique para abrir a pasta"),
+                            shown_at: Instant::now(),
+                            open_dir: path.parent().map(std::path::Path::to_path_buf),
+                        });
                     }
                 }
                 Err(e) => {
-                    log::warn!("Snapshot failed: {e}");
-                    toast(app, format!("Snapshot failed: {e}"));
+                    log::warn!("Falha no snapshot: {e}");
+                    toast(app, format!("Falha no snapshot: {e}"));
                 }
             }
             Task::none()
@@ -136,6 +203,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::CycleLayout => {
             app.layout_mode = app.layout_mode.next();
+            sync_active_streams(app);
             persist_view(app);
             Task::none()
         }
@@ -151,6 +219,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 );
                 app.sidebar.selected = Some(idx);
                 app.flex_main_idx = idx;
+                sync_active_streams(app);
                 if double {
                     return update(app, Message::EnterSpotlight(idx));
                 }
@@ -230,6 +299,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::SpotlightStep(forward) => {
+            app.zone_edit = None;
             if let super::app::ViewFocus::Spotlight(cur) = app.focus {
                 let ordered = ordered_visible_cameras(app);
                 if let Some(pos) = ordered.iter().position(|&i| i == cur) {
@@ -249,6 +319,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ExitFocus => {
+            app.zone_edit = None;
             app.focus = super::app::ViewFocus::Normal;
             app.show_overflow_menu = false;
             sync_active_streams(app);
@@ -290,7 +361,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::ShowContextMenu(idx) => {
             if idx < app.videos.len() {
                 app.sidebar.selected = Some(idx);
-                app.context_menu = Some(super::state::ContextMenu { camera_idx: idx });
+                app.context_menu = Some(super::state::ContextMenu { camera_idx: idx, anchor: app.pointer_pos });
             }
             Task::none()
         }
@@ -333,6 +404,18 @@ fn handle_key(
         };
     }
 
+    // While drawing zones the keyboard belongs to the editor: Enter closes the
+    // polygon, Backspace undoes, Esc leaves. Nothing else may fire (`f` would
+    // otherwise drop out of the spotlight the editor is drawn on).
+    if app.zone_edit.is_some() {
+        match key.as_ref() {
+            Key::Named(Named::Enter) => return update(app, Message::ZoneFinish),
+            Key::Named(Named::Backspace) => return update(app, Message::ZoneUndo),
+            Key::Named(Named::Escape) => return update(app, Message::ZoneCancel),
+            _ => {}
+        }
+    }
+
     // Function keys and Escape are unambiguous — a text field never wants
     // them — so they work regardless of focus.
     match key.as_ref() {
@@ -372,7 +455,11 @@ fn handle_key(
 
     // Everything below is a bare single-key shortcut. While the search box
     // has the keyboard, those keystrokes belong to it.
-    if app.search_focused || modifiers.control() || modifiers.alt() {
+    if app.search_focused
+        || app.zone_edit.is_some()
+        || modifiers.control()
+        || modifiers.alt()
+    {
         return Task::none();
     }
 
@@ -416,8 +503,9 @@ fn handle_key(
                 .next()
                 .is_some_and(|ch| ch.is_ascii_digit() && ch != '0') =>
         {
-            let n = c.chars().next().unwrap().to_digit(10).unwrap() as usize;
-            update(app, Message::SelectCamera(n - 1))
+            // Guard above guarantees a 1-9 digit; `map_or` keeps this panic-free.
+            let n = c.chars().next().and_then(|ch| ch.to_digit(10)).map_or(0, |d| d as usize);
+            update(app, Message::SelectCamera(n.saturating_sub(1)))
         }
         _ => Task::none(),
     }
@@ -438,7 +526,127 @@ fn shutdown(app: &mut App) {
     }
 }
 
+/// Closest two consecutive vertices may be, in normalized units (1% of the frame).
+const MIN_VERTEX_GAP: f64 = 0.01;
+/// Smallest polygon worth saving (0.05% of the frame).
+const MIN_ZONE_AREA: f64 = 0.0005;
+
+/// Commit the polygon being drawn as a new zone of the edited camera.
+fn finish_zone(app: &mut App) {
+    let Some(edit) = app.zone_edit.as_mut() else {
+        return;
+    };
+    if edit.temp_vertices.len() < 3 {
+        toast(app, "Uma zona precisa de pelo menos 3 pontos");
+        return;
+    }
+    if crate::domain::zones::polygon_area(&edit.temp_vertices) < MIN_ZONE_AREA {
+        toast(app, "Zona sem área: os pontos estão alinhados ou repetidos");
+        return;
+    }
+    let idx = edit.camera_idx;
+    let vertices = std::mem::take(&mut edit.temp_vertices);
+    if let Some(cfg) = app.zones.get_mut(idx) {
+        let name = format!("Zona {}", cfg.zones.len() + 1);
+        cfg.zones.push(crate::domain::zones::MotionZone::new(name, vertices));
+    }
+    persist_zones(app, idx);
+    toast(app, "Zona salva");
+}
+
+/// Backspace: drop the last vertex; with no open polygon, the last saved zone.
+fn undo_zone(app: &mut App) {
+    let Some(edit) = app.zone_edit.as_mut() else {
+        return;
+    };
+    if edit.temp_vertices.pop().is_some() {
+        return;
+    }
+    let idx = edit.camera_idx;
+    if app.zones.get_mut(idx).is_some_and(|c| c.zones.pop().is_some()) {
+        persist_zones(app, idx);
+    }
+}
+
+fn persist_zones(app: &mut App, idx: usize) {
+    let (Some(cam), Some(cfg)) = (app.sidebar.cameras.get(idx), app.zones.get(idx)) else {
+        return;
+    };
+    app.zones_file.set(&cam.name, cfg);
+    crate::infrastructure::zone_state::save(&app.zones_file);
+}
+
+/// Sample the camera's latest frame and compare it with the previous sample.
+/// Called at ~2 Hz per live camera; logs a timeline event on the rising edge.
+fn detect_camera_motion(app: &mut App, i: usize) {
+    if !app.motion_config.enabled
+        || !matches!(
+            app.sidebar.cameras[i].status,
+            sidebar::CameraStatus::Live | sidebar::CameraStatus::Recording
+        )
+    {
+        app.prev_motion_frames[i] = None;
+        app.motion_active[i] = false;
+        return;
+    }
+    let frame = app.bridges[i]
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .capture_frame();
+    let Some((curr, width, height)) = frame else {
+        return;
+    };
+    let zones = app.zones.get(i).filter(|z| z.has_active());
+    let result = app.prev_motion_frames[i].as_ref().and_then(|prev| {
+        crate::domain::motion::detect_motion(
+            prev,
+            &curr,
+            width as usize,
+            height as usize,
+            &app.motion_config,
+            zones,
+        )
+    });
+    app.prev_motion_frames[i] = Some(curr);
+    let Some(result) = result else {
+        return;
+    };
+    if result.motion_active && !app.motion_active[i] {
+        push_event(
+            app,
+            i,
+            EventType::Motion,
+            Some(format!("{:.1}% do quadro", result.motion_level * 100.0)),
+        );
+    }
+    app.motion_active[i] = result.motion_active;
+}
+
+/// Fire a desktop notification for motion / offline events, at most once per
+/// cooldown per camera and kind.
+fn notify_desktop(app: &mut App, camera_idx: usize, kind: EventType, detail: Option<&str>) {
+    if !app.notify.enabled {
+        return;
+    }
+    let name = app
+        .sidebar
+        .cameras
+        .get(camera_idx)
+        .map_or_else(|| format!("Câmera {}", camera_idx + 1), |c| c.name.clone());
+    let Some((title, body)) = crate::domain::notify::message_for(kind, &name, detail) else {
+        return;
+    };
+    let key = (camera_idx, kind.label());
+    let since = app.notify_last.get(&key).map(|t| t.elapsed().as_secs());
+    if !crate::domain::notify::cooldown_elapsed(since, app.notify.cooldown_secs) {
+        return;
+    }
+    app.notify_last.insert(key, Instant::now());
+    crate::infrastructure::notify::send(&title, &body);
+}
+
 fn push_event(app: &mut App, camera_idx: usize, kind: EventType, description: Option<String>) {
+    notify_desktop(app, camera_idx, kind, description.as_deref());
     let mut event = TimelineEvent::new(now_unix_secs(), camera_idx, kind);
     if let Some(d) = description {
         event = event.with_description(d);
@@ -450,6 +658,7 @@ fn toast(app: &mut App, message: impl Into<String>) {
     app.toasts.push(Toast {
         message: message.into(),
         shown_at: Instant::now(),
+        open_dir: None,
     });
 }
 
@@ -496,8 +705,22 @@ fn desired_active_cameras(app: &App) -> Vec<usize> {
         .filter(|&i| app.camera_enabled[i])
         .collect();
 
-    if !app.pause_hidden || app.layout_mode == LayoutMode::Flex {
+    if !app.pause_hidden {
         return enabled_all;
+    }
+
+    // Flex shows one live camera; the thumbnail strip stays paused until a
+    // thumbnail is picked, so only the camera on screen holds a connection.
+    if app.layout_mode == LayoutMode::Flex {
+        let mut hot = app.flex_main_idx.min(app.bridges.len().saturating_sub(1));
+        if let super::app::ViewFocus::Spotlight(idx) = app.focus {
+            hot = idx;
+        }
+        let preview = app.preview_cam.map(|(i, _)| i);
+        return enabled_all
+            .into_iter()
+            .filter(|&i| i == hot || Some(i) == preview)
+            .collect();
     }
 
     let ordered = ordered_visible_cameras(app);
@@ -612,6 +835,49 @@ fn sync_active_streams(app: &mut App) {
     }
 }
 
+/// Flex thumbnails are stills: connect each non-main camera just long enough
+/// to grab one frame, then pause it again. One camera at a time, and only
+/// once the launch queue is empty so it never competes with the main stream.
+fn drive_previews(app: &mut App) {
+    const PREVIEW_TIMEOUT_SECS: u64 = 10;
+    if app.layout_mode != LayoutMode::Flex || !app.pause_hidden {
+        return;
+    }
+    if let Some((i, since)) = app.preview_cam {
+        let got = app.bridges[i]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .capture_frame()
+            .is_some();
+        if got || since.elapsed().as_secs() >= PREVIEW_TIMEOUT_SECS {
+            app.preview_done[i] = true;
+            app.preview_cam = None;
+            if i != app.flex_main_idx {
+                pause_stream(app, i);
+            }
+        }
+        return;
+    }
+    if !app.start_queue.is_empty() || Instant::now() < app.next_start_at {
+        return;
+    }
+    let next = (0..app.bridges.len()).find(|&i| {
+        app.camera_enabled[i]
+            && !app.active_stream[i]
+            && !app.preview_done[i]
+            && app.bridges[i]
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .capture_frame()
+                .is_none()
+    });
+    if let Some(i) = next {
+        app.preview_cam = Some((i, Instant::now()));
+        start_stream(app, i);
+        app.next_start_at = Instant::now() + app.stagger;
+    }
+}
+
 /// Start at most one queued camera per `stagger`.
 fn drain_start_queue(app: &mut App) {
     if app.start_queue.is_empty() || Instant::now() < app.next_start_at {
@@ -686,6 +952,7 @@ fn update_frame(app: &mut App) -> Task<Message> {
     // should be running for the current page, then start at most one queued
     // camera this tick (staggered so a dozen feeds don't connect at once).
     advance_carousel(app);
+    drive_previews(app);
     sync_active_streams(app);
     drain_start_queue(app);
 
@@ -811,6 +1078,11 @@ fn update_frame(app: &mut App) -> Task<Message> {
 
         if needs_reconnect {
             reconnect_camera(app, i, &cam_label);
+        }
+
+        if poll_slow_metrics {
+            detect_camera_motion(app, i);
+            drive_motion_recording(app, i);
         }
 
         // Pull VU levels off the audio pipeline's bus (no GLib loop → no watch).
@@ -1039,11 +1311,8 @@ fn grab_snapshot_job(
 fn encode_and_write_snapshot(job: SnapshotJob) -> Result<std::path::PathBuf, String> {
     use image::ImageEncoder;
 
-    let rgb_pixels: Vec<u8> = job
-        .rgba
-        .chunks_exact(4)
-        .flat_map(|p| [p[0], p[1], p[2]])
-        .collect();
+    let (pixels, _) = job.rgba.as_chunks::<4>();
+    let rgb_pixels: Vec<u8> = pixels.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
 
     std::fs::create_dir_all(&job.dir)
         .map_err(|e| format!("cannot create {}: {e}", job.dir.display()))?;
@@ -1089,7 +1358,7 @@ fn snapshot_task(job: SnapshotJob, camera_idx: usize) -> Task<Message> {
 
 fn update_snapshot(app: &mut App) -> Task<Message> {
     let Some(idx) = app.sidebar.selected else {
-        toast(app, "Select a camera first");
+        toast(app, "Selecione uma câmera primeiro");
         return Task::none();
     };
     if idx >= app.bridges.len() {
@@ -1102,14 +1371,14 @@ fn update_snapshot(app: &mut App) -> Task<Message> {
     let job = match grab_snapshot_job(app, idx, timestamp, 1) {
         Ok(job) => job,
         Err(e) => {
-            log::warn!("Snapshot failed: {e}");
-            toast(app, format!("Snapshot failed: {e}"));
+            log::warn!("Falha no snapshot: {e}");
+            toast(app, format!("Falha no snapshot: {e}"));
             return Task::none();
         }
     };
 
     if burst_count > 1 {
-        toast(app, format!("Burst 1/{burst_count}"));
+        toast(app, format!("Rajada 1/{burst_count}"));
         app.pending_burst = Some(PendingBurst {
             camera_idx: idx,
             timestamp,
@@ -1154,7 +1423,7 @@ fn advance_burst(app: &mut App) -> Task<Message> {
 
     if burst.remaining == 0 {
         app.pending_burst = None;
-        toast(app, format!("Burst complete: {total} frames"));
+        toast(app, format!("Rajada concluída: {total} quadros"));
     }
 
     task
@@ -1162,42 +1431,88 @@ fn advance_burst(app: &mut App) -> Task<Message> {
 
 fn update_recording(app: &mut App) -> Task<Message> {
     let Some(idx) = app.sidebar.selected else {
-        toast(app, "Select a camera first");
+        toast(app, "Selecione uma câmera primeiro");
         return Task::none();
     };
     if idx >= app.bridges.len() {
         return Task::none();
     }
 
-    let result = {
-        let mut bridge = app.bridges[idx].lock().unwrap_or_else(|e| e.into_inner());
-        bridge.toggle_recording()
-    };
-
-    match result {
-        Ok(is_recording) => {
-            app.is_recording = is_recording;
-            if idx < app.sidebar.cameras.len() {
-                app.sidebar.cameras[idx].status = if is_recording {
-                    sidebar::CameraStatus::Recording
-                } else {
-                    sidebar::CameraStatus::Live
-                };
-            }
-            let (kind, msg) = if is_recording {
-                (EventType::RecordingStart, "Recording started")
-            } else {
-                (EventType::RecordingStop, "Recording stopped")
-            };
-            push_event(app, idx, kind, None);
-            toast(app, msg);
-        }
+    match toggle_camera_recording(app, idx) {
+        Ok(true) => toast(app, "Gravação iniciada"),
+        Ok(false) => toast(app, "Gravação parada"),
         Err(e) => {
             log::error!("Recording toggle failed: {e}");
-            toast(app, format!("Recording failed: {e}"));
+            toast(app, format!("Falha na gravação: {e}"));
         }
     }
     Task::none()
+}
+
+/// Flip a camera's recording state and mirror it into the sidebar and the
+/// timeline. Shared by the `r` key and the motion trigger.
+fn toggle_camera_recording(app: &mut App, idx: usize) -> Result<bool, String> {
+    let is_recording = {
+        let mut bridge = app.bridges[idx].lock().unwrap_or_else(|e| e.into_inner());
+        bridge.toggle_recording()?
+    };
+    app.is_recording = is_recording;
+    if idx < app.sidebar.cameras.len() {
+        app.sidebar.cameras[idx].status = if is_recording {
+            sidebar::CameraStatus::Recording
+        } else {
+            sidebar::CameraStatus::Live
+        };
+    }
+    let kind = if is_recording {
+        EventType::RecordingStart
+    } else {
+        EventType::RecordingStop
+    };
+    push_event(app, idx, kind, None);
+    Ok(is_recording)
+}
+
+/// `[recording] on_motion`: start recording on motion, stop after the
+/// post-roll of quiet. Runs right after each motion sample.
+fn drive_motion_recording(app: &mut App, i: usize) {
+    if !app.motion_recording {
+        return;
+    }
+    let is_recording = app.bridges[i]
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_recording();
+    if !is_recording {
+        // Stopped by the user (or a reconnect): the trigger no longer owns it.
+        app.auto_recording[i] = false;
+    }
+    if app.motion_active[i] {
+        app.last_motion_at[i] = Some(Instant::now());
+    }
+    let quiet = app.last_motion_at[i].map_or(u64::MAX, |t| t.elapsed().as_secs());
+    let action = crate::domain::recording::motion_recording_action(
+        is_recording,
+        app.auto_recording[i],
+        app.motion_active[i],
+        quiet,
+        app.motion_post_roll_secs,
+    );
+    match action {
+        crate::domain::recording::MotionRecAction::None => {}
+        crate::domain::recording::MotionRecAction::Start => {
+            match toggle_camera_recording(app, i) {
+                Ok(_) => app.auto_recording[i] = true,
+                Err(e) => log::warn!("Motion recording could not start on camera {i}: {e}"),
+            }
+        }
+        crate::domain::recording::MotionRecAction::Stop => {
+            if let Err(e) = toggle_camera_recording(app, i) {
+                log::warn!("Motion recording could not stop on camera {i}: {e}");
+            }
+            app.auto_recording[i] = false;
+        }
+    }
 }
 
 /// Push a volume value to a running audio pipeline, if there is one.
@@ -1230,11 +1545,11 @@ fn spawn_audio(app: &mut App, idx: usize, volume: f32) {
 
 fn update_audio(app: &mut App) -> Task<Message> {
     if !app.audio_config.enabled {
-        toast(app, "Audio is disabled in config.toml");
+        toast(app, "Áudio desativado no config.toml");
         return Task::none();
     }
     let Some(idx) = app.sidebar.selected else {
-        toast(app, "Select a camera first");
+        toast(app, "Selecione uma câmera primeiro");
         return Task::none();
     };
     if idx >= app.audio_states.len() {
@@ -1266,7 +1581,7 @@ fn update_audio(app: &mut App) -> Task<Message> {
 
 fn update_volume(app: &mut App, up: bool) -> Task<Message> {
     if !app.audio_config.enabled {
-        toast(app, "Audio is disabled in config.toml");
+        toast(app, "Áudio desativado no config.toml");
         return Task::none();
     }
     let Some(idx) = app.sidebar.selected else {
@@ -1305,6 +1620,9 @@ fn update_sidebar(app: &mut App, msg: super::sidebar::Message) -> Task<Message> 
             // the flag and the real `text_input` focus can't drift apart.
             return update(app, Message::BlurSearch);
         }
+        super::sidebar::Message::EventClicked(idx) => {
+            return update(app, Message::EventClicked(idx));
+        }
         super::sidebar::Message::CameraClicked(idx) => {
             app.sidebar.selected = Some(idx);
             app.flex_main_idx = idx;
@@ -1332,7 +1650,7 @@ fn update_sidebar(app: &mut App, msg: super::sidebar::Message) -> Task<Message> 
         }
         super::sidebar::Message::ShowRowMenu(idx) => {
             app.sidebar.selected = Some(idx);
-            app.context_menu = Some(super::state::ContextMenu { camera_idx: idx });
+            app.context_menu = Some(super::state::ContextMenu { camera_idx: idx, anchor: app.pointer_pos });
         }
         super::sidebar::Message::ToggleInfoAdvanced => {
             app.sidebar.info_advanced = !app.sidebar.info_advanced;

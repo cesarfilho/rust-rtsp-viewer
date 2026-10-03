@@ -72,14 +72,14 @@ impl Theme {
                 border_strong: "#ffffff2b",
                 text: "#e7e7ec",
                 text_secondary: "#a2a2ad",
-                text_tertiary: "#6c6c77",
+                text_tertiary: "#777783",
                 on_accent: "#0a0f1c",
                 accent_blue: "#5b9dff",
                 accent_green: "#4ade80",
                 accent_red: "#f87171",
                 accent_amber: "#fbbf24",
                 status_live: "#4ade80",
-                status_offline: "#6c6c77",
+                status_offline: "#777783",
                 status_reconnecting: "#fbbf24",
                 status_disabled: "#4b4b54",
             },
@@ -92,7 +92,7 @@ impl Theme {
                 border_strong: "#333333",
                 text: "#d4d4d4",
                 text_secondary: "#888888",
-                text_tertiary: "#525252",
+                text_tertiary: "#707070",
                 on_accent: "#0a0a0a",
                 accent_blue: "#60a5fa",
                 accent_green: "#22c55e",
@@ -112,16 +112,16 @@ impl Theme {
                 border_strong: "#bbbbbb",
                 text: "#1a1a1a",
                 text_secondary: "#555555",
-                text_tertiary: "#999999",
+                text_tertiary: "#707070",
                 on_accent: "#ffffff",
                 accent_blue: "#2563eb",
-                accent_green: "#16a34a",
-                accent_red: "#dc2626",
-                accent_amber: "#d97706",
-                status_live: "#22c55e",
-                status_offline: "#9ca3af",
-                status_reconnecting: "#f59e0b",
-                status_disabled: "#6b7280",
+                accent_green: "#15803d",
+                accent_red: "#c81e1e",
+                accent_amber: "#b45309",
+                status_live: "#15803d",
+                status_offline: "#6b7280",
+                status_reconnecting: "#b45309",
+                status_disabled: "#9ca3af",
             },
             Theme::Amoled => ThemeColors {
                 background: "#000000",
@@ -132,7 +132,7 @@ impl Theme {
                 border_strong: "#222222",
                 text: "#d4d4d4",
                 text_secondary: "#888888",
-                text_tertiary: "#525252",
+                text_tertiary: "#707070",
                 on_accent: "#000000",
                 accent_blue: "#60a5fa",
                 accent_green: "#22c55e",
@@ -149,19 +149,19 @@ impl Theme {
                 surface_hover: "#303030",
                 surface_elevated: "#2b2b2b",
                 border: "#4b4c5c",
-                border_strong: "#5c9cf5",
+                border_strong: "#70718a",
                 text: "#e0e0e0",
-                text_secondary: "#6a6a6a",
-                text_tertiary: "#4b4c5c",
+                text_secondary: "#a0a0ab",
+                text_tertiary: "#858592",
                 on_accent: "#10131a",
                 accent_blue: "#5c9cf5",
                 accent_green: "#7fd88f",
-                accent_red: "#e06c75",
+                accent_red: "#e5757e",
                 accent_amber: "#f5a742",
                 status_live: "#7fd88f",
-                status_offline: "#6a6a6a",
+                status_offline: "#8a8a95",
                 status_reconnecting: "#f5a742",
-                status_disabled: "#4b4c5c",
+                status_disabled: "#5f6070",
             },
         }
     }
@@ -178,6 +178,31 @@ impl Theme {
             Color::from_rgb(byte(0), byte(2), byte(4))
         } else {
             Color::BLACK
+        }
+    }
+
+    /// WCAG relative luminance of an sRGB colour (alpha ignored).
+    fn luminance(c: Color) -> f32 {
+        let lin = |v: f32| {
+            if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+    }
+
+    /// WCAG contrast ratio between two colours (1.0 – 21.0).
+    pub fn contrast_ratio(a: Color, b: Color) -> f32 {
+        let (la, lb) = (Self::luminance(a), Self::luminance(b));
+        (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+    }
+
+    /// Black or white, whichever reads better on `bg`. For text/glyphs on a
+    /// status-coloured badge, whose fill changes with the theme (a fixed
+    /// white-on-red is fine on Light but only ~2.8:1 on Cosmic's soft red).
+    pub fn readable_on(bg: Color) -> Color {
+        if Self::contrast_ratio(Color::BLACK, bg) >= Self::contrast_ratio(Color::WHITE, bg) {
+            Color::BLACK
+        } else {
+            Color::WHITE
         }
     }
 
@@ -291,5 +316,54 @@ mod tests {
     #[test]
     fn all_themes_returns_five() {
         assert_eq!(Theme::all().len(), 5);
+    }
+
+    fn ratio(a: &str, b: &str) -> f32 {
+        Theme::contrast_ratio(Theme::color_from_hex(a), Theme::color_from_hex(b))
+    }
+
+    /// Every theme must keep text and accents legible on the surfaces they are
+    /// painted on. Thresholds: body/secondary text and accents 4.5:1 (WCAG AA),
+    /// tertiary hints 3.3:1, status pips 3:1.
+    #[test]
+    fn every_theme_meets_contrast_targets() {
+        for &t in Theme::all() {
+            let c = t.colors();
+            let surfaces = [c.background, c.surface, c.surface_elevated, c.surface_hover];
+            for bg in surfaces {
+                assert!(ratio(c.text, bg) >= 7.0, "{t}: text on {bg}");
+                assert!(ratio(c.text_secondary, bg) >= 4.5, "{t}: secondary on {bg}");
+            }
+            for bg in [c.background, c.surface, c.surface_elevated] {
+                assert!(ratio(c.text_tertiary, bg) >= 3.3, "{t}: tertiary on {bg}");
+            }
+            for bg in [c.surface, c.surface_elevated] {
+                for (name, fg) in [
+                    ("blue", c.accent_blue),
+                    ("green", c.accent_green),
+                    ("red", c.accent_red),
+                    ("amber", c.accent_amber),
+                ] {
+                    assert!(ratio(fg, bg) >= 4.5, "{t}: accent {name} on {bg}");
+                }
+                for (name, fg) in [
+                    ("live", c.status_live),
+                    ("offline", c.status_offline),
+                    ("reconnecting", c.status_reconnecting),
+                ] {
+                    assert!(ratio(fg, bg) >= 3.0, "{t}: status {name} on {bg}");
+                }
+            }
+            assert!(ratio(c.on_accent, c.accent_blue) >= 4.5, "{t}: on_accent");
+        }
+    }
+
+    #[test]
+    fn readable_on_picks_the_higher_contrast_ink() {
+        assert_eq!(Theme::readable_on(Color::BLACK), Color::WHITE);
+        assert_eq!(Theme::readable_on(Color::WHITE), Color::BLACK);
+        // Cosmic's soft red: dark ink wins over white.
+        let red = Theme::color_from_hex(Theme::Cosmic.colors().accent_red);
+        assert_eq!(Theme::readable_on(red), Color::BLACK);
     }
 }
