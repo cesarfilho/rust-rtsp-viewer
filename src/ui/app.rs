@@ -175,6 +175,7 @@ pub fn new_app(
     groups: Vec<crate::domain::groups::CameraGroup>,
     view_config: crate::config::ViewConfigFile,
     notify_config: crate::domain::notify::NotifyConfig,
+    motion_config: crate::domain::motion::MotionConfig,
 ) -> (App, Task<Message>) {
     let _ = gstreamer::init();
 
@@ -409,7 +410,7 @@ pub fn new_app(
             zones,
             zones_file,
             zone_edit: None,
-            motion_config: crate::domain::motion::MotionConfig::default(),
+            motion_config,
             prev_motion_frames: vec![None; count],
             motion_active: vec![false; count],
             motion_recording,

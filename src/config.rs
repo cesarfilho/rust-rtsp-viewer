@@ -34,6 +34,9 @@ pub struct Config {
     pub view: Option<ViewConfigFile>,
     /// `[notifications]` — desktop alerts for motion and offline cameras.
     pub notifications: Option<NotificationsConfigFile>,
+    /// `[motion]` — frame-difference detector tuning (`enabled`, `threshold`,
+    /// `contour_area`, `sample_stride`).
+    pub motion: Option<crate::domain::motion::MotionConfigFile>,
 }
 
 /// Flat mirror of the `[notifications]` section.
@@ -471,5 +474,59 @@ mod tests {
         assert_eq!(resolve_camera_alias("cam9", &fixture()), None);
         assert_eq!(resolve_camera_alias("0", &fixture()), None);
         assert_eq!(resolve_camera_alias("", &fixture()), None);
+    }
+
+    #[test]
+    fn parses_motion_notifications_and_auto_recording_sections() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [motion]
+            threshold = 40
+            contour_area = 0.02
+            sample_stride = 0
+
+            [notifications]
+            enabled = true
+            cooldown_secs = 1
+
+            [recording]
+            on_motion = true
+            motion_post_roll_secs = 1
+
+            [[cameras]]
+            url = "rtsp://host/stream"
+            "#,
+        )
+        .expect("config should parse");
+
+        let motion = cfg.motion.expect("[motion] must be read").into_config();
+        assert_eq!(motion.threshold, 40);
+        assert!((motion.contour_area - 0.02).abs() < 1e-9);
+        assert_eq!(motion.sample_stride, 1, "stride 0 would never advance the scan");
+
+        let notify = cfg.notifications.expect("[notifications]").into_config();
+        assert!(notify.enabled);
+        assert_eq!(notify.cooldown_secs, 5, "cooldown has a floor");
+
+        let rec = cfg.recording.expect("[recording]").into_config();
+        assert!(rec.on_motion);
+        assert_eq!(rec.motion_post_roll_secs, 3, "post-roll has a floor");
+    }
+
+    #[test]
+    fn omitted_motion_section_keeps_detector_defaults() {
+        let cfg: Config = toml::from_str("[[cameras]]\nurl = \"rtsp://h/s\"\n").unwrap();
+        assert!(cfg.motion.is_none());
+        let d = crate::domain::motion::MotionConfig::default();
+        assert!(d.enabled && d.sample_stride >= 1);
+    }
+
+    /// The annotated reference file is documentation users copy from; it must
+    /// keep parsing as the schema evolves.
+    #[test]
+    fn example_config_parses() {
+        let cfg: Config = toml::from_str(include_str!("../config.toml.example"))
+            .expect("config.toml.example must stay valid");
+        assert!(cfg.cameras.is_some_and(|c| !c.is_empty()));
     }
 }

@@ -60,6 +60,17 @@
 # enabled = false
 # cooldown_secs = 60    # intervalo mínimo entre avisos do mesmo tipo por câmera (>= 5)
 
+# ── Detecção de movimento ────────────────────────────────────────────────
+# Compara quadros a ~2 Hz por câmera ao vivo e registra "Movimento" na timeline
+# na borda de subida. Desenhe zonas pelo menu da câmera (clique direito →
+# "Zonas de movimento"): com zonas ativas, só o que muda dentro delas conta e
+# `contour_area` passa a ser a fração da *zona*, não do quadro.
+# [motion]
+# enabled = true        # false desliga a detecção (e o gatilho on_motion/avisos)
+# threshold = 25        # diferença de luma por pixel que conta como mudança (1–255)
+# contour_area = 0.005  # fração de pixels mudados para declarar movimento (0.0–1.0)
+# sample_stride = 8     # amostra 1 pixel a cada N em cada eixo (1–32; maior = mais leve)
+
 # ── Áudio (tecla m alterna mute) ──────────────────────────────────────────
 # O áudio roda em uma pipeline separada, por câmera, iniciada sob demanda.
 # [audio]

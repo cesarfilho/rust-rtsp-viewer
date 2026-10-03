@@ -6,6 +6,39 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 
 ## [Unreleased]
 
+## [0.7.0]
+
+### ✨ Adicionado
+
+- **Zonas de movimento no editor**: linhas até o cursor, fechar clicando no 1º
+  ponto, cursor de mira; recusa zonas sem área e vértices duplicados; zonas por
+  câmera em `zones.toml`.
+- **`[motion]` configurável** (`enabled`, `threshold`, `contour_area`,
+  `sample_stride`) — a seção existia no código mas nunca era lida.
+- **Notificações de desktop** (`[notifications]`) para movimento e câmera offline,
+  com cooldown por câmera/tipo; gravação automática por movimento
+  (`[recording] on_motion`).
+- **Ícones das funções no spotlight** (snapshot, gravar, áudio, zonas) com tooltip.
+- **Fonte de ícones embutida** (DejaVu Sans) — acaba com os quadrados vazios.
+- `LICENSE` (AGPL-3.0-or-later), `THIRD_PARTY_NOTICES.md`, `SECURITY.md`, CI.
+
+### 🐛 Corrigido
+
+- **Movimento com zonas**: o nível era medido sobre o quadro inteiro, então uma
+  zona pequena nunca atingia `contour_area`; zonas desativadas/degeneradas
+  desligavam a detecção.
+- **Gravação**: `stop()` agora aguarda o finalizador assíncrono (segmento não é
+  mais truncado) e `start_recording` desfaz os elementos/pad do `tee` em falha.
+- **Menus**: `Container::align_*` define tamanho no iced 0.13; o menu mudava de
+  tamanho e seguia o mouse. Novo helper `pinned` (também corrige badges, toasts e
+  barras). Cliques nas barras do spotlight não atravessam para o editor de zonas.
+- **Temas**: contraste revisado (OpenCode, Light, Dark, AMOLED, Cosmic) com teste
+  de regressão; texto sobre emblemas coloridos escolhe preto/branco.
+
+### 🔧 Alterado
+
+- MSRV documentado corretamente: Rust **1.88** (let-chains), não 1.85.
+
 ### 🛡️ Estabilidade
 
 - **Mutex poisoning não é mais panic**: todos os `.lock().unwrap()` em

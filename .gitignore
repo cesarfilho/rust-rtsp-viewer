@@ -6,3 +6,5 @@ cameras_joinville.json
 .env
 node_modules
 *Screenshot*
+# Local tool settings (may hold credentials)
+.claude/settings.local.json

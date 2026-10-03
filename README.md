@@ -1,6 +1,10 @@
 # rust-rtsp-viewer
 
-Visualizador de streams RTSP/HLS construído em Rust com **Iced** + **GStreamer**. Suporta grade multi-câmera, painel lateral de métricas ao vivo, reconexão automática com backoff, gravação por segmentos, snapshots e áudio por câmera.
+[![Licença: AGPL-3.0-or-later](https://img.shields.io/badge/licen%C3%A7a-AGPL--3.0--or--later-blue.svg)](LICENSE)
+
+Visualizador de streams RTSP/HLS construído em Rust com **Iced** + **GStreamer**. Suporta grade multi-câmera, painel lateral de métricas ao vivo, reconexão automática com backoff, gravação por segmentos, snapshots e áudio por câmera, **detecção de movimento com zonas poligonais**, gravação e **notificações de desktop disparadas por movimento**, e cinco temas com contraste verificado por teste.
+
+Plataforma-alvo: **Linux** (Wayland/X11; integração com COSMIC/GNOME).
 
 ---
 
@@ -8,7 +12,7 @@ Visualizador de streams RTSP/HLS construído em Rust com **Iced** + **GStreamer*
 
 ### Pré-requisitos
 
-- Rust 1.85+ (edition 2024)
+- Rust 1.88+ (edition 2024)
 - GStreamer 1.20+ com os seguintes plugins:
 
 ```bash
@@ -20,10 +24,11 @@ sudo apt install \
   gstreamer1.0-plugins-base \
   gstreamer1.0-plugins-good \
   gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly \
   gstreamer1.0-libav
 
 # Arch Linux
-sudo pacman -S gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav
+sudo pacman -S gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly gst-libav
 
 # macOS
 brew install gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav
@@ -109,7 +114,23 @@ container               = "mkv"
 [audio]
 enabled = true
 volume  = 0.8
+
+# Grava sozinho enquanto há movimento (e 15 s depois do último)
+# on_motion / motion_post_roll_secs ficam dentro de [recording]
+
+[notifications]          # notify-send (libnotify)
+enabled       = true
+cooldown_secs = 60       # no mínimo 5
+
+[motion]                 # ajuste fino do detector (todos opcionais)
+threshold     = 25       # diferença de luma por pixel (1–255)
+contour_area  = 0.005    # fração mudada que declara movimento
+sample_stride = 8        # 1 pixel a cada N (1–32)
 ```
+
+`config.toml.example` traz todas as opções comentadas. **Não versione o seu
+`config.toml`**: as URLs RTSP costumam conter a senha da câmera (veja
+[SECURITY.md](SECURITY.md)).
 
 ### Campos por câmera
 
@@ -136,8 +157,13 @@ Alterne entre os modos com `Tab`.
 Na grade, **clique** em uma célula para selecionar a câmera, **duplo-clique**
 (ou `f` / `Enter`) para abrir o *spotlight*, e **clique direito** para o menu de
 ações. Ao selecionar ou passar o mouse numa célula, uma fileira de ícones
-(`📷 ⏺ ♪ ⤢`) aparece no canto — as ações antes ficavam numa barra acima da grade
-que roubava altura de vídeo.
+(`◉ ● ♪ ▣`: snapshot, gravar, áudio, spotlight) aparece no canto — as ações antes
+ficavam numa barra acima da grade que roubava altura de vídeo. No *spotlight* a
+barra inferior mostra todas as funções da câmera (snapshot, gravar, áudio e
+zonas de movimento), com tooltip e atalho, e destaca o que está ligado.
+
+Os ícones usam a fonte **DejaVu Sans embutida** no binário (`assets/fonts/`),
+então não dependem das fontes instaladas no sistema.
 
 ### Maximização de vídeo
 
@@ -189,6 +215,45 @@ Todos esses ajustes são lembrados entre execuções em
 `~/.local/state/rust-rtsp-viewer/view.toml`. As pipelines sobem de forma
 escalonada no arranque (`[view] stagger_ms`), então a janela abre na hora e
 cada célula mostra `CONECTANDO…` até o stream ligar.
+
+### Movimento, zonas e notificações
+
+A cada ~0,5 s cada câmera ao vivo tem o quadro comparado com o anterior
+(diferença de luma, subamostrada). O evento **Movimento** entra na *timeline*
+da sidebar apenas na **borda de subida** (movimento contínuo gera um evento só);
+um stream congelado não gera movimento, e câmeras pausadas, offline ou
+reconectando não são analisadas. A timeline é global (últimos 200 eventos da
+última hora, com o nome da câmera; clicar abre a câmera).
+
+**Zonas de movimento** — clique direito na câmera → *Zonas de movimento*
+(ou o ícone `⬡` na barra do spotlight):
+
+| Ação | Como |
+|------|------|
+| Marcar um canto | clique no vídeo |
+| Concluir a zona | `Enter`, botão *Concluir*, ou clique no 1º ponto |
+| Desfazer | `Backspace` (sem polígono aberto, remove a última zona) |
+| Limpar tudo / sair | botão *Limpar* · `Esc` |
+
+Com zonas ativas, **só o que muda dentro delas conta**, e `contour_area` passa a
+ser a fração *da zona*. Zonas desativadas ou com menos de 3 pontos não restringem
+nada; zonas sem área (pontos alinhados) são recusadas. As zonas ficam em
+`~/.local/state/rust-rtsp-viewer/zones.toml`, **por nome da câmera** (nunca pela
+URL, que carrega credenciais) — câmeras com o mesmo nome compartilham zonas.
+
+`[recording] on_motion = true` grava automaticamente enquanto há movimento e
+para `motion_post_roll_secs` depois do último (só para gravações que ele mesmo
+iniciou). Não há pré-roll. `[notifications] enabled = true` dispara
+`notify-send` para movimento e câmera offline, com intervalo mínimo por
+câmera/tipo.
+
+### Temas
+
+`Cosmic` (padrão), `Dark`, `Light`, `AMOLED` e `OpenCode`, no menu `⋯`. Todas as
+paletas passam em `ui::theme::tests::every_theme_meets_contrast_targets`
+(texto ≥ 7:1, texto secundário e acentos ≥ 4,5:1, dicas ≥ 3,3:1, indicadores de
+estado ≥ 3:1). Texto sobre emblemas coloridos usa `Theme::readable_on` para
+escolher preto ou branco.
 
 ### Indicadores visuais
 
@@ -269,6 +334,7 @@ src/
 │   ├── metrics.rs              — Metrics (contadores atômicos)
 │   ├── motion.rs               — detecção de movimento por diferença de frames
 │   ├── multi_stream.rs         — seleção main/sub stream
+│   ├── notify.rs               — política de notificações (cooldown, textos)
 │   ├── ptz.rs                  — comandos PTZ
 │   ├── recording.rs            — RecordingConfig, RecordingState
 │   ├── redact.rs               — mascaramento de credenciais em logs
@@ -279,8 +345,11 @@ src/
 │   └── zones.rs                — zonas poligonais de detecção
 ├── infrastructure/             — GStreamer, I/O
 │   ├── audio.rs                — AudioController, build_audio_pipeline
+│   ├── notify.rs               — notify-send / xdg-open
 │   ├── reconnect.rs            — watchdog de FPS + lógica de backoff
-│   └── recording_paths.rs      — criação de diretórios
+│   ├── recording_paths.rs      — criação de diretórios
+│   ├── view_state.rs           — view.toml (densidade, carrossel, ordem…)
+│   └── zone_state.rs           — zones.toml (zonas por nome de câmera)
 └── ui/                         — frontend Iced
     ├── app.rs                  — struct App, new_app(), PendingBurst
     ├── state.rs                — Toast, BackoffState, ContextMenu
@@ -290,8 +359,9 @@ src/
     ├── bridge.rs               — GStreamerBridge (bus, métricas, frames, gravação)
     ├── pipeline.rs             — start_rtsp/hls/file, branch de gravação, sondas
     ├── video_widget.rs         — integração com iced::widget::image
-    ├── zone_editor.rs          — canvas do editor de zonas (ainda não conectado)
-    ├── theme.rs                — temas
+    ├── zone_editor.rs          — canvas do editor de zonas (spotlight)
+    ├── icons.rs                — fonte de ícones embutida (DejaVu Sans)
+    ├── theme.rs                — temas + contraste (WCAG)
     ├── grid.rs                 — cálculo da grade
     ├── sidebar/                — cameras, info, diagnostics, timeline
     └── view/                   — composição (grid, flex, toolbar, status, overlays)
@@ -313,8 +383,39 @@ src/
    para sondar, então a métrica fica vazia para HLS/DASH.
 5. **Image quality usa RGBA**: Amostragem de luma via pesos BT.601 sobre RGBA
    em vez do plano Y nativo (custa uma conversão e trunca ~1 unidade).
-6. **Editor de zonas não conectado**: `ui/zone_editor.rs` e `domain/{zones,motion}.rs`
-   compilam e são testados, mas ainda não têm ponto de entrada na interface.
+6. **Zonas por nome de câmera**: câmeras com o mesmo nome compartilham zonas, e
+   não há como apagar/renomear/desativar uma zona específica pela interface
+   (só desfazer a última ou limpar todas).
+7. **Movimento sem pré-roll**: a gravação por movimento começa quando o movimento
+   é detectado; não há vídeo anterior ao gatilho.
+8. **Timeline global**: sem filtro por câmera; janela fixa de 1 h.
+
+---
+
+## Desenvolvimento
+
+```bash
+cargo build                              # zero warnings
+cargo clippy --all-targets -- -D warnings
+cargo test                               # 375 testes
+```
+
+Os testes de gravação (`ui::pipeline`) rodam pipelines GStreamer reais
+(`videotestsrc`), gravam arquivos de verdade e os reproduzem até o EOS para
+provar que o muxer os finalizou (~6 s; exigem `x264enc`, do pacote
+`gstreamer1.0-plugins-ugly`). `cargo test --doc` pode falhar em instalações
+com `rustdoc` quebrado — não é problema do código. A CI (`.github/workflows`)
+roda clippy e os testes a cada push. Convenções e armadilhas do código estão em
+[AGENTS.md](AGENTS.md).
+
+---
+
+## Licença
+
+Distribuído sob a **GNU Affero General Public License v3.0 ou posterior**
+(`AGPL-3.0-or-later`) — veja [LICENSE](LICENSE). Quem executar uma versão
+modificada como serviço de rede deve oferecer o código-fonte correspondente aos
+usuários. Fontes e dependências de terceiros: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ---
 

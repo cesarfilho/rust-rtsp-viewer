@@ -37,6 +37,7 @@ pub fn run(
     groups: Vec<crate::domain::groups::CameraGroup>,
     view_config: crate::config::ViewConfigFile,
     notify_config: crate::domain::notify::NotifyConfig,
+    motion_config: crate::domain::motion::MotionConfig,
 ) -> iced::Result {
     let window = iced::window::Settings {
         size: iced::Size::new(1280.0, 720.0),
@@ -67,6 +68,7 @@ pub fn run(
                 groups,
                 view_config,
                 notify_config,
+                motion_config,
             )
         })
 }

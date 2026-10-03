@@ -79,6 +79,7 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
 | File | Responsibility |
 |------|---------------|
 | `audio.rs` | `AudioController`, `build_audio_pipeline_for_url`, level bus watch |
+| `notify.rs` | `notify-send` / `xdg-open` (best-effort, child reaped on a thread) |
 | `reconnect.rs` | `ReconnectState` (FPS watchdog + backoff decision) |
 | `recording_paths.rs` | directory creation helpers |
 | `view_state.rs` | `ViewStateFile` load/save (`~/.local/state/.../view.toml`) |
@@ -97,7 +98,8 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
 | `pipeline.rs` | `start_rtsp`/`start_hls`/`start_file`, recording branch, probes |
 | `video_widget.rs` | `iced::widget::image` integration |
 | `zone_editor.rs` | zone editor canvas, drawn over the spotlight (`flex_layout::spotlight_view`) while `App.zone_edit` is `Some`; opened from the camera menu (`Message::EditZones`). Coordinates map onto the letterboxed video rect |
-| `theme.rs` | themes |
+| `icons.rs` | embedded DejaVu Sans (`icons::FONT`) for icon glyphs |
+| `theme.rs` | themes + `contrast_ratio` / `readable_on`; a test enforces WCAG targets per theme |
 | `grid.rs` | grid layout calculator |
 | `sidebar/` | `cameras` (row = pip + name + fps sparkline; controls on hover; `⋯` opens `menu::command_menu`), `info` (Inspector: header + Stream/Rede cards + diagnostics + "Avançado" expander), `diagnostics`, `timeline`; `mod::sparkline` (canvas-free bar chart) |
 | `view/` | `mod` (focus-mode composition, pointer tracking, dismiss backdrops), `menu` (`command_menu` — the ONE menu surface, used by the toolbar `⋯` and right-click), `grid_layout`, `flex_layout` (+ `spotlight_view`), `toolbar` (+ `chrome_rail`, `health_meter`, `density_segments`, `overflow_menu_layer`), `cell_overlay` (name chip / status pip / placeholder), `overlays` (`context_menu_layer` renders `menu::command_menu` at `App.pointer_pos`), `style` |
@@ -125,7 +127,8 @@ staggered start — *initial* values; runtime tweaks persist to
 
 ```bash
 cargo build           # zero warnings expected
-cargo test            # 362 unit tests, all green
+cargo clippy --all-targets -- -D warnings
+cargo test            # 375 unit tests, all green (MSRV 1.88: let-chains)
 ```
 
 `cargo test --doc` currently fails on this machine with
@@ -199,6 +202,28 @@ toolbar's right cluster and the `⋯` overflow menu.
   between the image `Handle` and the snapshot buffer. Do not go back to
   `Vec<u8>` + `.clone()`: that was two extra 8 MiB copies per 1080p frame.
 - **Mutex poisoning**: recover with `unwrap_or_else(|e| e.into_inner())`.
+- **`Container::align_top(x)` / `align_left(x)` set the container's *height /
+  width*, not a margin** (iced 0.13). Using them as "x px from the edge" squeezes
+  the content into an x-pixel box — the context menu used to resize with the
+  pointer. Use `view::pinned(el, Horizontal, Vertical, padding)` (layer-sized
+  container + padding; it does not capture events).
+- **Icon glyphs need `icons::FONT`** (`text(g).font(icons::FONT)`). The system
+  fallback lacks many Geometric Shapes and renders empty boxes. Prose stays on
+  the default font. DejaVu has no `⤢` (U+2922) — check coverage before adding a glyph.
+- **Colours on themable surfaces come from `ThemeColors`.** Hard-coded
+  light-on-dark is fine only over video / the caption scrim. For text on a
+  status-coloured badge use `Theme::readable_on(bg)`. New palette values must keep
+  `every_theme_meets_contrast_targets` green.
+- **Motion zones**: `ZoneConfig::has_active()` (enabled and ≥ 3 vertices) decides
+  whether detection is restricted; with active zones only in-zone pixels are
+  sampled, so `motion_level` is the changed fraction *of the zone*. `[motion]` is
+  read from config (`Config.motion` → `App.motion_config`).
+- **`GStreamerBridge::stop()` joins `finalisers`** — the threads spawned by
+  `stop_recording()` — before setting the pipeline to `Null`, otherwise the muxer
+  is torn down mid-trailer. `start_recording` undoes its partial wiring on error.
+- **Never commit local tool settings or `config.toml`**: they hold camera
+  passwords (`.claude/settings.local.json` is git-ignored). Scan `git ls-files`
+  before publishing.
 - **HLS/HTTP sources** auto-detect via URL scheme → `uridecodebin3` (handles fMP4/CMAF HLS, not just MPEG-TS).
 
 ## Adding new features

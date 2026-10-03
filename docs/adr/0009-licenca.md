@@ -19,7 +19,7 @@ AGPL-3.0-or-later (a confirmar o "or-later" se preferir apenas 3.0). Motivos: ma
 compatível com embarcar modelos YOLO da Ultralytics (AGPL — verificar a licença do modelo escolhido).
 
 ## Consequências / a fazer
-- Adicionar `LICENSE` (texto oficial da AGPL-3.0, obtido de gnu.org) na raiz e `license = "AGPL-3.0-or-later"` no `Cargo.toml` — ainda **não feito**.
+- Adicionar `LICENSE` (texto oficial da AGPL-3.0, obtido de gnu.org) na raiz e `license = "AGPL-3.0-or-later"` no `Cargo.toml` — **feito** (v0.7.0).
 - Dependências permissivas (MIT/Apache-2.0) e LGPL (GStreamer) são compatíveis; `cargo-deny` no CI deve barrar dependências incompatíveis (ex.: licenças só-proprietárias).
 - Cabeçalho SPDX nos arquivos é opcional; definir se será adotado.
 - Copyleft forte reduz contribuições de quem quer usar em produto fechado; é uma escolha consciente do dono.

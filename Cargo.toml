@@ -2,6 +2,13 @@
 name = "rust-rtsp-viewer"
 version = "0.7.0"
 edition = "2024"
+rust-version = "1.88"
+description = "Visualizador RTSP/HLS de baixa latência com grade multi-câmera, gravação, zonas de movimento e GUI Iced + GStreamer"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/cesarfilho/rust-rtsp-viewer"
+readme = "README.md"
+keywords = ["rtsp", "hls", "gstreamer", "iced", "cctv"]
+categories = ["multimedia::video", "gui"]
 default-run = "rust-rtsp-viewer"
 
 [features]
