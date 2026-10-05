@@ -73,19 +73,19 @@ Gate M2: 16 câmeras dentro do orçamento do baseline. Risco principal: 2.3.
 ## M2.5 — Motor sem janela, em Docker (0.10.x) — ADR 0010
 O NVR grava e detecta com a janela fechada. **Vem antes do M3**: gravação, SQLite, retenção e IA
 passam a viver no daemon; construí-las dentro de `update.rs` e migrar depois custa muito mais.
-| # | Tarefa | Critério de saída | Tam. |
-|---|---|---|---|
-| 2.5.1 | Desacoplar o iced do motor: `Handle`/`Bytes` fora de `bridge`/`pipeline` (hoje ~5 pontos) | `bridge` e `pipeline` compilam sem `iced` | P | [x] 2026-10-05 — também moveu `CameraStatus` para `domain/` e separou `sample_status`/`CameraInfo::apply`; guarda em `tests/engine_isolation.rs` |
-| 2.5.2 | Extrair a orquestração de `ui/update.rs` (reconexão, backoff, fila de partida, movimento, gravação por evento, notificações, eventos) para um módulo de motor sem `App` | o cliente atual usa o motor e todos os testes seguem verdes | G |
-| 2.5.3 | Workspace Cargo: `rrv-core` (domain + motor), `rrv-daemon`, cliente | `cargo build --workspace`; mesmo comportamento | M |
-| 2.5.4 | Vídeo ao vivo do daemon para o cliente (**D5**; medir antes com 0.3); porta RTSP local publicada pelo container | cliente mostra 16 câmeras com 1 sessão RTSP por câmera | G |
-| 2.5.5 | IPC por socket Unix (`0600`): comandos, eventos, versão do protocolo | cliente liga/desliga gravação, edita zonas, recebe eventos | G |
-| 2.5.6 | `rrv-daemon` headless (binário sem iced), com shutdown limpo (finaliza segmentos) | grava e detecta sem janela; SIGTERM fecha os arquivos | M |
-| 2.5.7 | Cliente com estados de daemon (conectado, iniciando, ausente → motor embutido) e **spec de UX** (`docs/specs/ux-daemon.md`) | UX escrita antes do código; contraste testado | M |
-| 2.5.8 | Segredos fora do `config.toml` (Docker secrets/variáveis; keyring no cliente — antecipa 5.3) | senha fora do `config.toml`, do IPC e da imagem | M |
-| 2.5.9 | **Docker**: `Dockerfile` multi-estágio (usuário não-root, GStreamer + x264), `compose.yaml` (`restart: unless-stopped`, `network_mode: host`, volumes `/data` `/state`, config `:ro`, `TZ`), `healthcheck` e build da imagem no CI | `docker compose up -d` sobe o NVR; `kill -9` no processo o reinicia sem segmento corrompido | M |
-| 2.5.10 | GPU no container: VA-API por `/dev/dri` (Intel) agora; NVIDIA só com **D6** | `Decoder` no Inspector mostra GPU dentro do container | M |
-| 2.5.11 | Notificação com a janela fechada: webhook/MQTT de saída (antecipa 5.4) | aviso de movimento chega sem a janela aberta | M |
+| # | Tarefa | Critério de saída | Tam. | Estado |
+|---|---|---|---|---|
+| 2.5.1 | Desacoplar o iced do motor: `Handle`/`Bytes` fora de `bridge`/`pipeline` (hoje ~5 pontos) | `bridge` e `pipeline` compilam sem `iced` | P | [x] também moveu `CameraStatus` para `domain/` e separou `sample_status`/`CameraInfo::apply`; guarda em `tests/engine_isolation.rs` |
+| 2.5.2 | Extrair a orquestração de `ui/update.rs` (reconexão, backoff, fila de partida, movimento, gravação por evento, notificações, eventos) para um módulo de motor sem `App` | o cliente atual usa o motor e todos os testes seguem verdes | G | [ ] |
+| 2.5.3 | Workspace Cargo: `rrv-core` (domain + motor), `rrv-daemon`, cliente | `cargo build --workspace`; mesmo comportamento | M | [ ] |
+| 2.5.4 | Vídeo ao vivo do daemon para o cliente (**D5**; medir antes com 0.3); porta RTSP local publicada pelo container | cliente mostra 16 câmeras com 1 sessão RTSP por câmera | G | [ ] |
+| 2.5.5 | IPC por socket Unix (`0600`): comandos, eventos, versão do protocolo | cliente liga/desliga gravação, edita zonas, recebe eventos | G | [ ] |
+| 2.5.6 | `rrv-daemon` headless (binário sem iced), com shutdown limpo (finaliza segmentos) | grava e detecta sem janela; SIGTERM fecha os arquivos | M | [ ] |
+| 2.5.7 | Cliente com estados de daemon (conectado, iniciando, ausente → motor embutido) e **spec de UX** (`docs/specs/ux-daemon.md`) | UX escrita antes do código; contraste testado | M | [ ] |
+| 2.5.8 | Segredos fora do `config.toml` (Docker secrets/variáveis; keyring no cliente — antecipa 5.3) | senha fora do `config.toml`, do IPC e da imagem | M | [ ] |
+| 2.5.9 | **Docker**: `Dockerfile` multi-estágio (usuário não-root, GStreamer + x264), `compose.yaml` (`restart: unless-stopped`, `network_mode: host`, volumes `/data` `/state`, config `:ro`, `TZ`), `healthcheck` e build da imagem no CI | `docker compose up -d` sobe o NVR; `kill -9` no processo o reinicia sem segmento corrompido | M | [ ] |
+| 2.5.10 | GPU no container: VA-API por `/dev/dri` (Intel) agora; NVIDIA só com **D6** | `Decoder` no Inspector mostra GPU dentro do container | M | [ ] |
+| 2.5.11 | Notificação com a janela fechada: webhook/MQTT de saída (antecipa 5.4) | aviso de movimento chega sem a janela aberta | M | [ ] |
 
 Gate M2.5: fechar a janela não interrompe uma gravação em curso; matar o container com `kill -9`
 o reinicia e não deixa segmento corrompido (testes em `tests/`); `docker compose up -d` do zero
