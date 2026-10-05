@@ -1,0 +1,466 @@
+//! O estado da conexão da janela com o daemon e o que a interface mostra dele
+//! (spec `docs/specs/ux-daemon.md`).
+//!
+//! Puro: recebe os [`LinkEvent`]s da thread de conexão e decide modo, textos e
+//! avisos, sem desenhar nada. A janela só traduz isto em widgets.
+
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+use crate::ipc::link::LinkEvent;
+use crate::ipc::protocol::{CameraInfo, Response, WireEvent};
+
+/// Em que modo a janela está (tabela de modos da spec).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// Não há daemon: a própria janela grava e detecta (uso de antes do ADR 0010).
+    Embedded,
+    /// Há socket; o `Hello` está em andamento.
+    Connecting,
+    /// O daemon grava e detecta; a janela mostra e comanda.
+    Connected,
+    /// Estava conectado e perdeu o canal. O daemon pode ainda estar gravando.
+    Lost,
+    /// O daemon fala outra versão do protocolo.
+    Incompatible,
+    /// O socket existe mas é de outro usuário.
+    NoPermission,
+}
+
+/// Cor semântica do chip e do banner (o tema decide o tom exato).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tone {
+    Neutral,
+    Good,
+    Warning,
+    Error,
+}
+
+/// Aviso fino sob a barra.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Banner {
+    pub tone: Tone,
+    pub text: String,
+}
+
+/// O que o chamador precisa fazer depois de [`DaemonState::apply`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum Effect {
+    None,
+    /// Aviso breve ao usuário.
+    Toast(String),
+    /// Um evento do daemon para a timeline.
+    Event(WireEvent),
+    /// A resposta a um pedido da janela.
+    Reply {
+        token: u64,
+        result: Result<Response, String>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct DaemonState {
+    pub mode: Mode,
+    pub socket: PathBuf,
+    /// `rrv-daemon 0.8.0` (vazio até conectar).
+    pub server: String,
+    /// O estado das câmeras segundo o daemon.
+    pub cameras: Vec<CameraInfo>,
+    /// O motivo da última falha, para o menu.
+    pub detail: Option<String>,
+    /// Quando a próxima tentativa acontece (só em `Lost`).
+    pub retry_in: Option<Duration>,
+    pub lost_since: Option<Instant>,
+    /// O menu do chip está aberto.
+    pub menu_open: bool,
+}
+
+impl DaemonState {
+    pub fn embedded(socket: PathBuf) -> Self {
+        Self::new(Mode::Embedded, socket)
+    }
+
+    pub fn connecting(socket: PathBuf) -> Self {
+        Self::new(Mode::Connecting, socket)
+    }
+
+    fn new(mode: Mode, socket: PathBuf) -> Self {
+        Self {
+            mode,
+            socket,
+            server: String::new(),
+            cameras: Vec::new(),
+            detail: None,
+            retry_in: None,
+            lost_since: None,
+            menu_open: false,
+        }
+    }
+
+    /// A janela decodifica só para exibir? (Todo modo menos o motor local.)
+    pub fn is_daemon_mode(&self) -> bool {
+        self.mode != Mode::Embedded
+    }
+
+    /// O daemon está respondendo agora.
+    pub fn is_connected(&self) -> bool {
+        self.mode == Mode::Connected
+    }
+
+    /// Aplica um evento da thread de conexão.
+    pub fn apply(&mut self, event: LinkEvent) -> Effect {
+        match event {
+            // Uma nova tentativa não apaga o aviso de "perdido": evita piscar.
+            LinkEvent::Connecting => {
+                if self.mode != Mode::Lost {
+                    self.mode = Mode::Connecting;
+                }
+                Effect::None
+            }
+            LinkEvent::Connected { server, cameras } => {
+                let was_lost = self.mode == Mode::Lost;
+                self.mode = Mode::Connected;
+                self.server = server;
+                self.cameras = cameras;
+                self.detail = None;
+                self.retry_in = None;
+                self.lost_since = None;
+                if was_lost {
+                    Effect::Toast("Daemon reconectado".into())
+                } else {
+                    Effect::None
+                }
+            }
+            LinkEvent::Status(cameras) => {
+                if self.mode == Mode::Connected {
+                    self.cameras = cameras;
+                }
+                Effect::None
+            }
+            LinkEvent::Event(ev) => Effect::Event(ev),
+            LinkEvent::Lost { reason, retry_in } => {
+                if self.mode != Mode::Lost {
+                    self.lost_since = Some(Instant::now());
+                }
+                self.mode = Mode::Lost;
+                self.detail = Some(reason);
+                self.retry_in = Some(retry_in);
+                Effect::None
+            }
+            LinkEvent::Incompatible { message } => {
+                self.mode = Mode::Incompatible;
+                self.detail = Some(message);
+                self.retry_in = None;
+                Effect::None
+            }
+            LinkEvent::NoPermission { message } => {
+                self.mode = Mode::NoPermission;
+                self.detail = Some(message);
+                self.retry_in = None;
+                Effect::None
+            }
+            LinkEvent::Reply { token, result } => Effect::Reply { token, result },
+        }
+    }
+
+    /// Texto do chip na barra.
+    pub fn chip_label(&self) -> &'static str {
+        match self.mode {
+            Mode::Embedded => "Motor local",
+            Mode::Connecting => "Daemon · conectando…",
+            Mode::Connected => "Daemon · conectado",
+            Mode::Lost => "Daemon · sem resposta",
+            Mode::Incompatible => "Daemon · versão incompatível",
+            Mode::NoPermission => "Daemon · sem permissão",
+        }
+    }
+
+    pub fn tone(&self) -> Tone {
+        match self.mode {
+            Mode::Embedded => Tone::Neutral,
+            Mode::Connected => Tone::Good,
+            Mode::Connecting | Mode::Lost => Tone::Warning,
+            Mode::Incompatible | Mode::NoPermission => Tone::Error,
+        }
+    }
+
+    /// Quantas câmeras o daemon diz que estão gravando.
+    pub fn recording_count(&self) -> usize {
+        self.cameras.iter().filter(|c| c.recording).count()
+    }
+
+    /// O que o daemon sabe da câmera `name` (a ligação é pelo **nome**, porque a
+    /// janela e o daemon podem ter arquivos de configuração diferentes).
+    pub fn info_for(&self, name: &str) -> Option<&CameraInfo> {
+        self.cameras.iter().find(|c| c.name == name)
+    }
+
+    /// A linha de estado do menu do chip.
+    pub fn summary(&self) -> String {
+        match self.mode {
+            Mode::Embedded => {
+                "Esta janela grava e detecta sozinha. Fechá-la interrompe as gravações.".into()
+            }
+            Mode::Connecting => "Conectando ao daemon…".into(),
+            Mode::Connected => {
+                let n = self.cameras.len();
+                let rec = self.recording_count();
+                format!(
+                    "Conectado ao {} · {n} {} · {}",
+                    self.server,
+                    if n == 1 { "câmera" } else { "câmeras" },
+                    if rec == 0 {
+                        "nenhuma gravando".to_string()
+                    } else {
+                        format!("gravando {rec}")
+                    }
+                )
+            }
+            Mode::Lost => match self.retry_in {
+                Some(d) => format!(
+                    "Sem resposta do daemon. Nova tentativa em {} s.",
+                    d.as_secs().max(1)
+                ),
+                None => "Sem resposta do daemon.".into(),
+            },
+            Mode::Incompatible => self
+                .detail
+                .clone()
+                .unwrap_or_else(|| "A versão do daemon não combina com a da janela.".into()),
+            Mode::NoPermission => {
+                "Sem permissão para o socket do daemon (é de outro usuário?).".into()
+            }
+        }
+    }
+
+    /// O aviso fino sob a barra, quando há algo a dizer.
+    pub fn banner(&self) -> Option<Banner> {
+        match self.mode {
+            Mode::Lost => Some(Banner {
+                tone: Tone::Warning,
+                text: "Sem resposta do daemon. As câmeras podem não estar gravando. \
+                       Tentando reconectar…"
+                    .into(),
+            }),
+            Mode::Incompatible => Some(Banner {
+                tone: Tone::Error,
+                text: "A janela e o daemon falam versões diferentes do protocolo. \
+                       Atualize um dos dois."
+                    .into(),
+            }),
+            Mode::NoPermission => Some(Banner {
+                tone: Tone::Error,
+                text: format!(
+                    "Sem permissão para o socket do daemon ({}).",
+                    self.socket.display()
+                ),
+            }),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cam(index: usize, name: &str, recording: bool) -> CameraInfo {
+        CameraInfo {
+            index,
+            name: name.into(),
+            status: if recording { "recording" } else { "live" }.into(),
+            enabled: true,
+            recording,
+            motion: false,
+            stream: "main".into(),
+        }
+    }
+
+    fn connected() -> DaemonState {
+        let mut s = DaemonState::connecting("/run/rrv/rrv.sock".into());
+        s.apply(LinkEvent::Connected {
+            server: "rrv-daemon 0.8.0".into(),
+            cameras: vec![cam(0, "Portão", true), cam(1, "Garagem", false)],
+        });
+        s
+    }
+
+    #[test]
+    fn embedded_is_the_default_without_a_daemon() {
+        let s = DaemonState::embedded("/x".into());
+        assert_eq!(s.mode, Mode::Embedded);
+        assert!(!s.is_daemon_mode() && !s.is_connected());
+        assert_eq!(s.chip_label(), "Motor local");
+        assert_eq!(s.tone(), Tone::Neutral);
+        assert!(s.banner().is_none());
+        assert!(s.summary().contains("interrompe"));
+    }
+
+    #[test]
+    fn connecting_then_connected_shows_the_daemons_cameras() {
+        let s = connected();
+        assert_eq!(s.mode, Mode::Connected);
+        assert!(s.is_connected() && s.is_daemon_mode());
+        assert_eq!(s.chip_label(), "Daemon · conectado");
+        assert_eq!(s.tone(), Tone::Good);
+        assert_eq!(s.recording_count(), 1);
+        assert!(s.summary().contains("rrv-daemon 0.8.0"));
+        assert!(s.summary().contains("2 câmeras") && s.summary().contains("gravando 1"));
+        assert!(s.banner().is_none());
+    }
+
+    #[test]
+    fn cameras_are_matched_by_name_not_by_index() {
+        let s = connected();
+        // a janela pode ter outra ordem (ou outro arquivo de config)
+        assert!(s.info_for("Garagem").is_some_and(|c| !c.recording));
+        assert!(s.info_for("Portão").is_some_and(|c| c.recording));
+        assert!(s.info_for("Quintal").is_none());
+    }
+
+    #[test]
+    fn status_updates_only_while_connected() {
+        let mut s = connected();
+        s.apply(LinkEvent::Status(vec![cam(0, "Portão", false)]));
+        assert_eq!(s.recording_count(), 0);
+        let mut lost = connected();
+        lost.apply(LinkEvent::Lost {
+            reason: "x".into(),
+            retry_in: Duration::from_secs(2),
+        });
+        lost.apply(LinkEvent::Status(vec![]));
+        assert_eq!(
+            lost.cameras.len(),
+            2,
+            "perdido: mantém o último estado conhecido"
+        );
+    }
+
+    #[test]
+    fn losing_the_daemon_warns_and_keeps_the_last_state() {
+        let mut s = connected();
+        s.apply(LinkEvent::Lost {
+            reason: "o daemon fechou a conexão".into(),
+            retry_in: Duration::from_secs(4),
+        });
+        assert_eq!(s.mode, Mode::Lost);
+        assert_eq!(s.chip_label(), "Daemon · sem resposta");
+        assert_eq!(s.tone(), Tone::Warning);
+        assert!(s.lost_since.is_some());
+        assert!(s.summary().contains("4 s"), "{}", s.summary());
+        let b = s.banner().unwrap();
+        assert_eq!(b.tone, Tone::Warning);
+        assert!(b.text.contains("podem não estar gravando"));
+        assert_eq!(s.cameras.len(), 2, "nada é apagado");
+        assert!(
+            s.is_daemon_mode(),
+            "perder o daemon NÃO volta ao motor local"
+        );
+    }
+
+    #[test]
+    fn a_retry_does_not_make_the_lost_warning_flicker() {
+        let mut s = connected();
+        s.apply(LinkEvent::Lost {
+            reason: "x".into(),
+            retry_in: Duration::from_secs(1),
+        });
+        let since = s.lost_since;
+        s.apply(LinkEvent::Connecting);
+        assert_eq!(s.mode, Mode::Lost, "continua perdido enquanto tenta");
+        s.apply(LinkEvent::Lost {
+            reason: "y".into(),
+            retry_in: Duration::from_secs(2),
+        });
+        assert_eq!(s.lost_since, since, "o instante da perda não é refeito");
+    }
+
+    #[test]
+    fn coming_back_clears_the_warning_and_says_so_once() {
+        let mut s = connected();
+        s.apply(LinkEvent::Lost {
+            reason: "x".into(),
+            retry_in: Duration::from_secs(1),
+        });
+        let fx = s.apply(LinkEvent::Connected {
+            server: "rrv-daemon 0.8.0".into(),
+            cameras: vec![cam(0, "Portão", true)],
+        });
+        assert_eq!(fx, Effect::Toast("Daemon reconectado".into()));
+        assert_eq!(s.mode, Mode::Connected);
+        assert!(s.banner().is_none() && s.lost_since.is_none() && s.retry_in.is_none());
+        // a primeira conexão não anuncia "reconectado"
+        let mut first = DaemonState::connecting("/x".into());
+        assert_eq!(
+            first.apply(LinkEvent::Connected {
+                server: "s".into(),
+                cameras: vec![]
+            }),
+            Effect::None
+        );
+    }
+
+    #[test]
+    fn incompatible_and_no_permission_are_errors_with_their_own_text() {
+        let mut s = DaemonState::connecting("/run/rrv/rrv.sock".into());
+        s.apply(LinkEvent::Incompatible {
+            message: "versão do protocolo 1 não suportada (o daemon fala 2)".into(),
+        });
+        assert_eq!(s.mode, Mode::Incompatible);
+        assert_eq!(s.tone(), Tone::Error);
+        assert!(s.summary().contains("não suportada"));
+        assert!(s.banner().unwrap().text.contains("Atualize"));
+
+        s.apply(LinkEvent::NoPermission {
+            message: "x".into(),
+        });
+        assert_eq!(s.mode, Mode::NoPermission);
+        assert!(s.banner().unwrap().text.contains("/run/rrv/rrv.sock"));
+        assert!(s.is_daemon_mode(), "nenhuma troca automática de modo");
+    }
+
+    #[test]
+    fn events_and_replies_are_handed_to_the_caller() {
+        let mut s = connected();
+        let ev = WireEvent {
+            camera: 0,
+            name: "Portão".into(),
+            kind: crate::domain::timeline::EventType::Motion,
+            detail: None,
+            notification: None,
+            unix_secs: 1,
+        };
+        assert_eq!(s.apply(LinkEvent::Event(ev.clone())), Effect::Event(ev));
+        assert_eq!(
+            s.apply(LinkEvent::Reply {
+                token: 3,
+                result: Ok(Response::Ok)
+            }),
+            Effect::Reply {
+                token: 3,
+                result: Ok(Response::Ok)
+            }
+        );
+    }
+
+    #[test]
+    fn the_chip_never_relies_on_colour_alone() {
+        // todo modo tem um rótulo de texto distinto (acessibilidade)
+        let labels: std::collections::HashSet<_> = [
+            Mode::Embedded,
+            Mode::Connecting,
+            Mode::Connected,
+            Mode::Lost,
+            Mode::Incompatible,
+            Mode::NoPermission,
+        ]
+        .into_iter()
+        .map(|m| {
+            let mut s = DaemonState::embedded("/x".into());
+            s.mode = m;
+            s.chip_label()
+        })
+        .collect();
+        assert_eq!(labels.len(), 6);
+    }
+}
