@@ -1,9 +1,10 @@
+// The engine moved to `crate::engine`; these keep the old `ui::` paths working.
+pub use crate::engine::{bridge, pipeline};
+
 pub(crate) mod app;
-pub mod bridge;
 pub mod grid;
 pub(crate) mod icons;
 pub(crate) mod message;
-pub mod pipeline;
 pub mod sidebar;
 pub(crate) mod state;
 pub(crate) mod subscription;
