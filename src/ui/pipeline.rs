@@ -622,7 +622,7 @@ impl GStreamerBridge {
             &format!("RTSP pipeline: {}", mask_credentials(&pipeline_str)),
         );
 
-        let pipeline = gst::parse_launch(&pipeline_str)
+        let pipeline = gst::parse::launch(&pipeline_str)
             .map_err(|e| {
                 let err = format!("RTSP pipeline parse error: {e}");
                 self.camera_log("ERROR", &err);
@@ -691,7 +691,7 @@ impl GStreamerBridge {
             &format!("HLS pipeline: {}", mask_credentials(&pipeline_str)),
         );
 
-        let pipeline = gst::parse_launch(&pipeline_str)
+        let pipeline = gst::parse::launch(&pipeline_str)
             .map_err(|e| format!("HLS pipeline parse error: {e}"))?
             .downcast::<gst::Pipeline>()
             .map_err(|_| "parse_launch must produce a Pipeline".to_string())?;
@@ -807,7 +807,7 @@ impl GStreamerBridge {
             &format!("File pipeline: {}", mask_credentials(&pipeline_str)),
         );
 
-        let pipeline = gst::parse_launch(&pipeline_str)
+        let pipeline = gst::parse::launch(&pipeline_str)
             .map_err(|e| format!("File pipeline parse error: {e}"))?
             .downcast::<gst::Pipeline>()
             .map_err(|_| "parse_launch must produce a Pipeline".to_string())?;
@@ -884,7 +884,7 @@ mod tests {
              ! videoconvert name=converter \
              ! capsfilter name=filter caps=\"video/x-raw,format=RGBA\" \
              ! appsink name=display_sink sync=false emit-signals=true max-buffers=2 drop=true";
-        let pipeline = gst::parse_launch(desc)
+        let pipeline = gst::parse::launch(desc)
             .unwrap()
             .downcast::<gst::Pipeline>()
             .unwrap();
@@ -908,7 +908,7 @@ mod tests {
             "filesrc location={} ! decodebin ! fakesink sync=false",
             quote_launch_value(&path.to_string_lossy())
         );
-        let Ok(element) = gst::parse_launch(&desc) else {
+        let Ok(element) = gst::parse::launch(&desc) else {
             return false;
         };
         let Ok(pipeline) = element.downcast::<gst::Pipeline>() else {
@@ -950,7 +950,7 @@ mod tests {
              ! videoconvert name=converter \
              ! capsfilter name=filter caps=\"video/x-raw,format=RGBA\" \
              ! appsink name=display_sink sync=false emit-signals=true max-buffers=2 drop=true";
-        let pipeline = gst::parse_launch(desc)
+        let pipeline = gst::parse::launch(desc)
             .expect("test pipeline should parse")
             .downcast::<gst::Pipeline>()
             .expect("should be a pipeline");
@@ -1009,7 +1009,7 @@ mod tests {
              ! videoconvert name=converter \
              ! capsfilter name=filter caps=\"video/x-raw,format=RGBA\" \
              ! appsink name=display_sink sync=false emit-signals=true max-buffers=2 drop=true";
-        let pipeline = gst::parse_launch(desc)
+        let pipeline = gst::parse::launch(desc)
             .unwrap()
             .downcast::<gst::Pipeline>()
             .unwrap();
@@ -1064,7 +1064,7 @@ mod tests {
              ! videoconvert name=converter \
              ! capsfilter name=filter caps=\"video/x-raw,format=RGBA\" \
              ! appsink name=display_sink sync=false emit-signals=true max-buffers=2 drop=true";
-        let pipeline = gst::parse_launch(desc)
+        let pipeline = gst::parse::launch(desc)
             .unwrap()
             .downcast::<gst::Pipeline>()
             .unwrap();

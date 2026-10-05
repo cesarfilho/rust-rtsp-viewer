@@ -1068,7 +1068,7 @@ pub fn validate_decoder_chain(chain: &str) -> Result<(), String> {
     use gstreamer as gst;
 
     let desc = format!("fakesrc num-buffers=0 ! {} ! fakesink", chain);
-    let element = gst::parse_launch(&desc).map_err(|e| {
+    let element = gst::parse::launch(&desc).map_err(|e| {
         format!(
             "Decoder chain '{}' failed to parse: {}. \
              Check element names with `gst-inspect-1.0`.",

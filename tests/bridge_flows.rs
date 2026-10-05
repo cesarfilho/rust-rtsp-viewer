@@ -45,7 +45,7 @@ fn make_clip(path: &Path, width: u32, height: u32) {
          ! matroskamux ! filesink location=\"{}\"",
         path.display()
     );
-    let pipeline = gst::parse_launch(&desc).unwrap();
+    let pipeline = gst::parse::launch(&desc).unwrap();
     pipeline.set_state(gst::State::Playing).unwrap();
     let msg = pipeline.bus().unwrap().timed_pop_filtered(
         gst::ClockTime::from_seconds(20),
@@ -204,7 +204,7 @@ fn is_playable(path: &Path) -> bool {
         "filesrc location=\"{}\" ! decodebin ! fakesink sync=false",
         path.display()
     );
-    let pipeline = gst::parse_launch(&desc).unwrap();
+    let pipeline = gst::parse::launch(&desc).unwrap();
     if pipeline.set_state(gst::State::Playing).is_err() {
         return false;
     }

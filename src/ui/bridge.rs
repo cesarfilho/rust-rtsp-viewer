@@ -462,7 +462,7 @@ impl GStreamerBridge {
             // `property::<T>` panics if the element does not expose `stats` or
             // it is not a `Structure`; a discovered element that turns out not
             // to be a real rtpjitterbuffer must not bring the tick down.
-            if !jb.has_property("stats", Some(gst::Structure::static_type())) {
+            if !jb.has_property("stats") {
                 continue;
             }
             let stats = jb.property::<gst::Structure>("stats");

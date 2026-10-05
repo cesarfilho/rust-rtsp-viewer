@@ -151,7 +151,7 @@ pub fn build_audio_pipeline(url: &str, volume: f32) -> Option<gst::Pipeline> {
          level name=audio_level interval=100000000 ! autoaudiosink",
         quote_launch_value(url)
     );
-    let pipeline = match gst::parse_launch(&pipeline_str) {
+    let pipeline = match gst::parse::launch(&pipeline_str) {
         Ok(el) => el.downcast::<gst::Pipeline>().ok()?,
         Err(e) => {
             warn!(
@@ -210,7 +210,7 @@ fn build_http_audio_pipeline(url: &str, volume: f32) -> Option<gst::Pipeline> {
          level name=audio_level interval=100000000 ! autoaudiosink",
         quote_launch_value(url)
     );
-    let pipeline = match gst::parse_launch(&pipeline_str) {
+    let pipeline = match gst::parse::launch(&pipeline_str) {
         Ok(el) => el.downcast::<gst::Pipeline>().ok()?,
         Err(e) => {
             warn!(
@@ -398,7 +398,7 @@ mod tests {
     /// and tears it down).
     fn build_volume_pipeline() -> gst::Pipeline {
         gst::init().expect("gst::init");
-        let pipeline = gst::Pipeline::new(None);
+        let pipeline = gst::Pipeline::new();
         let volume = gst::ElementFactory::make("volume")
             .name(AUDIO_VOLUME_NAME)
             .build()
@@ -406,8 +406,8 @@ mod tests {
         let sink = gst::ElementFactory::make("fakesink")
             .build()
             .expect("make fakesink");
-        pipeline.add_many(&[&volume, &sink]).expect("add_many");
-        gst::Element::link_many(&[&volume, &sink]).expect("link_many");
+        pipeline.add_many([&volume, &sink]).expect("add_many");
+        gst::Element::link_many([&volume, &sink]).expect("link_many");
         pipeline
     }
 
@@ -524,7 +524,7 @@ mod tests {
         // element — the controller should
         // silently log a warning, not panic.
         gst::init().expect("gst::init");
-        let pipeline = gst::Pipeline::new(None);
+        let pipeline = gst::Pipeline::new();
         let ctrl = AudioController::new(
             pipeline,
             AudioConfig {
