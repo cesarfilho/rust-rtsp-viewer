@@ -180,6 +180,39 @@ fn the_headless_engine_records_on_motion_and_stops_after_the_post_roll() {
     assert!(is_playable(&files[0]), "{} não toca", files[0].display());
 }
 
+/// O histórico (plano 3.2): a gravação por movimento deixa no banco um segmento
+/// fechado, com tamanho, e o evento de movimento ligado a ele.
+#[test]
+fn the_history_records_the_segment_and_links_the_motion_event() {
+    use rrv_core::infrastructure::store::{Store, StoreHandle};
+
+    let tmp = TempDir::new("history");
+    let cam = LiveCamera::start(&tmp.0);
+    let rec = tmp.path("rec");
+    let db = tmp.path("history.db");
+    let mut e = engine(&cam.url(), &rec, 3);
+    e.set_store(StoreHandle::spawn(db.clone()).unwrap());
+
+    let mut events = Vec::new();
+    assert!(run(&mut e, 60, &mut events, |_, ev| kinds(ev)
+        .contains(&EventType::RecordingStart)));
+    cam.set_moving(false);
+    assert!(run(&mut e, 60, &mut events, |_, ev| kinds(ev)
+        .contains(&EventType::RecordingStop)));
+    e.shutdown();
+    drop(e); // solta o último handle: a thread do banco termina e tudo é gravado
+
+    let store = Store::open(&db).unwrap();
+    let segs = store.segments_between("cam", 0, i64::MAX).unwrap();
+    assert_eq!(segs.len(), 1, "{segs:?}");
+    assert!(segs[0].closed && segs[0].bytes > 1024, "{:?}", segs[0]);
+    assert!(segs[0].has_motion, "o movimento devia marcar o segmento");
+    let ev = store.events_between(Some("cam"), 0, i64::MAX).unwrap();
+    let motion = ev.iter().find(|x| x.kind == "motion").expect("sem evento");
+    assert_eq!(motion.segment_id, Some(segs[0].id));
+    assert!(ev.iter().any(|x| x.kind == "recording_stop"));
+}
+
 /// O defeito do SIGTERM: parar com uma gravação em curso tem de deixar o
 /// arquivo finalizado, não vazio.
 #[test]

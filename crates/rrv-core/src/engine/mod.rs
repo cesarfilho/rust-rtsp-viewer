@@ -22,6 +22,7 @@ use crate::domain::recording::RecordingConfig;
 use crate::domain::timeline::EventType;
 use crate::domain::zones::ZoneConfig;
 use crate::infrastructure::reconnect::{ReconnectDecision, ReconnectState};
+use crate::infrastructure::store::{StoreCmd, StoreHandle};
 use crate::infrastructure::zone_state::ZonesFile;
 use std::sync::atomic::Ordering;
 
@@ -44,6 +45,11 @@ pub struct EngineSettings<'a> {
 
 /// The engine's tick, in milliseconds (the window's `TICK_MS` is the same).
 pub const TICK_MS: u64 = 100;
+
+/// Unix time in milliseconds (the history database's clock).
+pub(crate) fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
 /// Slow work (latency, RTP stats, motion) runs on every Nth tick (~500 ms).
 pub const SLOW_EVERY_N_TICKS: u64 = 5;
 
@@ -85,6 +91,8 @@ pub struct Engine {
     /// notify. The window uses this while a daemon owns those jobs (spec
     /// `ux-daemon.md`); two owners would record everything twice.
     pub display_only: bool,
+    /// The history database (daemon only): events and recorded segments.
+    pub store: Option<StoreHandle>,
     /// What the configuration asked for, kept so leaving display-only restores it.
     pub configured: ConfiguredBehaviour,
     /// Display name per camera (for notification text).
@@ -233,6 +241,7 @@ impl Engine {
             backoff_states: (0..count).map(|_| BackoffState::new()).collect(),
             stream_quality: vec![StreamQuality::Main; count],
             display_only: false,
+            store: None,
             configured: ConfiguredBehaviour {
                 motion_enabled: motion.enabled,
                 motion_recording,
@@ -470,6 +479,15 @@ impl Engine {
         // would duplicate them on the timeline.
         if self.display_only {
             return;
+        }
+        if let Some(store) = &self.store {
+            store.send(StoreCmd::Event {
+                camera: self.names.get(camera).cloned().unwrap_or_default(),
+                ts: now_ms(),
+                kind: kind.slug().to_string(),
+                label: detail.clone().unwrap_or_default(),
+                score: None,
+            });
         }
         let notification = self.notification_for(camera, kind, detail.as_deref());
         self.events.push(EngineEvent {
@@ -870,6 +888,16 @@ impl Engine {
     /// notifications and builds no recording or detection branch; leaving it
     /// restores what the configuration asked for. Running streams are rebuilt
     /// so their branches match the new mode.
+    /// Keep the history (events and recorded segments) in `store`. Call before
+    /// the first `step`.
+    pub fn set_store(&mut self, store: StoreHandle) {
+        for (i, b) in self.bridges.iter().enumerate() {
+            b.lock().unwrap_or_else(|e| e.into_inner()).store =
+                Some((store.clone(), self.names[i].clone()));
+        }
+        self.store = Some(store);
+    }
+
     /// No window will ever show these cameras (the daemon): the pipelines skip
     /// the full-frame RGBA conversion and copy. Call before the first `step`;
     /// pipelines already running keep what they were built with.
@@ -960,6 +988,7 @@ mod tests {
             backoff_states: (0..n).map(|_| BackoffState::new()).collect(),
             stream_quality: vec![StreamQuality::Main; n],
             display_only: false,
+            store: None,
             configured: ConfiguredBehaviour {
                 motion_enabled: false,
                 motion_recording: false,

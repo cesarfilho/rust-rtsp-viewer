@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::domain::codec;
@@ -8,6 +8,7 @@ use crate::domain::recording::{Container, generate_filename};
 use crate::domain::redact::mask_credentials;
 use crate::infrastructure::launch::quote_launch_value;
 use crate::infrastructure::recording_paths::ensure_recording_dir;
+use crate::infrastructure::store::StoreCmd;
 
 use super::bridge::{
     EMA_ALPHA_X1000, GStreamerBridge, RecordingBranch, SAMPLE_EVERY_N, ema_update, now_unix_secs,
@@ -602,6 +603,31 @@ impl GStreamerBridge {
             .build()
             .map_err(|e| format!("Failed to create splitmuxsink: {e}"))?;
 
+        // Tell the history database about every segment as it opens and closes.
+        let current_segment = Arc::new(Mutex::new(None::<String>));
+        if let Some((store, camera)) = self.store.clone() {
+            let current = current_segment.clone();
+            let pattern = location.to_string_lossy().to_string();
+            sink.connect("format-location", false, move |args| {
+                let id = args[1].get::<u32>().unwrap_or(0);
+                let path = pattern.replacen("%03d", &format!("{id:03}"), 1);
+                let now = crate::engine::now_ms();
+                let mut cur = current.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(prev) = cur.replace(path.clone()) {
+                    store.send(StoreCmd::SegmentClosed {
+                        path: prev,
+                        ts_end: now,
+                    });
+                }
+                store.send(StoreCmd::SegmentOpened {
+                    camera: camera.clone(),
+                    path: path.clone(),
+                    ts: now,
+                });
+                Some(path.to_value())
+            });
+        }
+
         let mut elements = vec![queue.clone()];
         elements.extend(chain.iter().cloned());
         elements.push(sink.clone());
@@ -709,6 +735,8 @@ impl GStreamerBridge {
 
         self.recording = Some(RecordingBranch {
             tee_name,
+            store: self.store.clone(),
+            current_segment,
             tee_pad,
             queue,
             elements,
@@ -764,6 +792,18 @@ impl GStreamerBridge {
         }
         if let Some(tee) = pipeline.by_name(branch.tee_name) {
             tee.release_request_pad(&branch.tee_pad);
+        }
+        if let Some((store, _)) = &branch.store
+            && let Some(path) = branch
+                .current_segment
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take()
+        {
+            store.send(StoreCmd::SegmentClosed {
+                path,
+                ts_end: crate::engine::now_ms(),
+            });
         }
         log::info!("Recording stopped and finalised");
     }

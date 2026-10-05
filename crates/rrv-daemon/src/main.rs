@@ -129,6 +129,15 @@ fn run(cli: &Cli) -> Result<(), String> {
         zones: &zones,
     });
     engine.set_headless();
+    let db = rrv_core::infrastructure::view_state::state_dir().join("history.db");
+    match rrv_core::infrastructure::store::StoreHandle::spawn(db.clone()) {
+        Ok(store) => {
+            log::info!("histórico em {}", db.display());
+            engine.set_store(store);
+        }
+        // Sem histórico o daemon continua gravando: o vídeo vem antes do índice.
+        Err(e) => log::warn!("sem histórico ({}): {e}", db.display()),
+    }
     log::info!(
         "rrv-daemon {}: {} câmera(s), gravação em {}",
         env!("CARGO_PKG_VERSION"),

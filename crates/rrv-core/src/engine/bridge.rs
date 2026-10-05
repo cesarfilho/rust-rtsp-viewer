@@ -52,6 +52,10 @@ pub(crate) struct RecordingBranch {
     /// Which `tee` the branch hangs from (`tee` for decoded frames, `enc_tee`
     /// for the camera's own stream).
     pub(crate) tee_name: &'static str,
+    /// History database and camera name, to close the last segment on teardown.
+    pub(crate) store: Option<(crate::infrastructure::store::StoreHandle, String)>,
+    /// Path of the segment `splitmuxsink` has open right now.
+    pub(crate) current_segment: Arc<Mutex<Option<String>>>,
     /// The `tee` request pad feeding this branch; must be released on teardown.
     pub(crate) tee_pad: gst::Pad,
     /// Head of the branch — the pad we inject EOS into to finalise the file.
@@ -89,6 +93,8 @@ pub struct GStreamerBridge {
     /// No window will show this camera (the daemon): skip the full-frame RGBA
     /// conversion and copy. Must be set before the pipeline starts.
     pub headless: bool,
+    /// History database and this camera's name (set by `Engine::set_store`).
+    pub store: Option<(crate::infrastructure::store::StoreHandle, String)>,
     /// Most recent detection frame, `None` until the first one arrives.
     pub(crate) detect_frame: Arc<Mutex<Option<DetectFrame>>>,
     pub(crate) recording: Option<RecordingBranch>,
@@ -157,6 +163,7 @@ impl GStreamerBridge {
             recording_config: RecordingConfig::default(),
             detect_enabled: false,
             headless: false,
+            store: None,
             detect_frame: Arc::new(Mutex::new(None)),
             recording: None,
             recording_seq: 0,

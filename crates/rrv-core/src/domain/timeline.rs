@@ -18,6 +18,18 @@ pub enum EventType {
 }
 
 impl EventType {
+    /// Stable name for storage (the history database); never translated.
+    pub fn slug(&self) -> &'static str {
+        match self {
+            EventType::Motion => "motion",
+            EventType::RecordingStart => "recording_start",
+            EventType::RecordingStop => "recording_stop",
+            EventType::Offline => "offline",
+            EventType::Online => "online",
+            EventType::Snapshot => "snapshot",
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             EventType::Motion => "Motion",

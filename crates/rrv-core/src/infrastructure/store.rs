@@ -16,6 +16,9 @@ use std::thread::JoinHandle;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+/// Quanto antes da abertura de um segmento um evento ainda é dele.
+pub const LINK_BACK_MS: i64 = 10_000;
+
 /// Versão do esquema (`PRAGMA user_version`).
 const SCHEMA_VERSION: i64 = 1;
 
@@ -120,17 +123,34 @@ impl Store {
     }
 
     /// Registra um segmento que acabou de abrir. Repetir o mesmo caminho é inofensivo.
+    ///
+    /// Um evento de movimento é o que *dispara* a gravação por movimento, então chega
+    /// um instante antes do segmento existir: os eventos da câmera dos últimos
+    /// [`LINK_BACK_MS`] ainda sem segmento passam a apontar para este.
     pub fn segment_opened(&self, camera: &str, path: &str, ts: i64) -> Result<i64, StoreError> {
-        self.conn.execute(
+        let inserted = self.conn.execute(
             "INSERT INTO segments (camera, path, ts_start) VALUES (?1, ?2, ?3)
              ON CONFLICT (path) DO NOTHING",
             params![camera, path, ts],
         )?;
-        Ok(self
-            .conn
-            .query_row("SELECT id FROM segments WHERE path = ?1", [path], |r| {
-                r.get(0)
-            })?)
+        let id: i64 =
+            self.conn
+                .query_row("SELECT id FROM segments WHERE path = ?1", [path], |r| {
+                    r.get(0)
+                })?;
+        if inserted > 0 {
+            self.conn.execute(
+                "UPDATE events SET segment_id = ?1
+                 WHERE camera = ?2 AND segment_id IS NULL AND ts BETWEEN ?3 AND ?4",
+                params![id, camera, ts - LINK_BACK_MS, ts],
+            )?;
+            self.conn.execute(
+                "UPDATE segments SET has_motion = 1 WHERE id = ?1
+                 AND EXISTS (SELECT 1 FROM events WHERE segment_id = ?1 AND kind = 'motion')",
+                [id],
+            )?;
+        }
+        Ok(id)
     }
 
     /// Fecha o segmento `path` com o fim e o tamanho finais.
@@ -497,6 +517,20 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn the_motion_that_triggers_a_recording_links_to_the_segment_it_opens() {
+        let s = Store::open_in_memory().unwrap();
+        s.insert_event("c", 19_000, "motion", "", None).unwrap(); // antes do segmento
+        s.insert_event("c", 5_000, "motion", "", None).unwrap(); // velho demais
+        s.insert_event("outra", 19_500, "motion", "", None).unwrap();
+        let id = s.segment_opened("c", "/r/a.mkv", 20_000).unwrap();
+        let ev = s.events_between(None, 0, i64::MAX).unwrap();
+        let linked: Vec<_> = ev.iter().filter(|e| e.segment_id == Some(id)).collect();
+        assert_eq!(linked.len(), 1);
+        assert_eq!(linked[0].ts, 19_000);
+        assert!(s.segments_between("c", 0, i64::MAX).unwrap()[0].has_motion);
     }
 
     #[test]

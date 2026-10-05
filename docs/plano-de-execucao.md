@@ -97,7 +97,7 @@ Spec de UX aprovada: `docs/specs/ux-historico.md` (padrões: movimento + pré-ro
 | # | Tarefa | Critério de saída | Tam. |
 |---|---|---|---|
 | 3.1 | **Gravação sem reencode** (ADR 0007): `rtph264depay ! h264parse ! splitmuxsink` com `tee` antes do decoder (troca o `decodebin` por cadeia manual) | arquivo tocável, sem CPU de encode, com áudio, H.265 | G | [~] **RTSP H.264/H.265 feito:** `rtspsrc ! parsebin ! enc_tee` grava o stream da câmera sem reencode (começa no keyframe; Intelbras real: 1080p tocável, ~0,1% de CPU). Falta: áudio na gravação, HLS/arquivo (continuam reencodando), MJPEG |
-| 3.2 | SQLite (`rusqlite` bundled, WAL, thread própria): `events` e `segments`; reconciliação na partida | queda no meio de um segmento não deixa órfão | G |
+| 3.2 | SQLite (`rusqlite` bundled, WAL, thread própria): `events` e `segments`; reconciliação na partida | queda no meio de um segmento não deixa órfão | G | [x] `infrastructure::store` (WAL, thread própria, reconcile na partida); o daemon grava segmentos e eventos em `<estado>/history.db`; evento que dispara a gravação liga ao segmento que ela abre. Falta expor por IPC (3.4) |
 | 3.3 | Retenção por modo (contínuo × movimento) e limpeza por espaço; apagar arquivo e depois a linha | disco nunca passa do limite | M |
 | 3.4 | Timeline persistente: clique no evento abre o trecho | busca por câmera e intervalo | M |
 | 3.5 | Reprodução embutida (seek, velocidade) e exportar clipe (remux) | clipe tocável sem reencode | G |
