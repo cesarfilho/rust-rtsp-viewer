@@ -57,6 +57,25 @@ impl BackoffState {
         );
     }
 
+    /// Arm the retry timer for a camera that is down but has none pending.
+    ///
+    /// A pipeline that errors *after* a successful start (camera offline at
+    /// launch, playlist not ready, bus error) never reaches
+    /// `reconnect_camera`'s failure path, so nothing else would ever schedule
+    /// a retry. No-op while a retry is already pending.
+    pub fn arm_if_idle(&mut self) {
+        if self.next_attempt.is_none() {
+            self.record_failure();
+        }
+    }
+
+    /// Clear the pending retry after a rebuild was issued. The failure count is
+    /// kept so the next delay keeps growing; leaving the expired timer armed
+    /// would rebuild the pipeline on every tick.
+    pub fn disarm(&mut self) {
+        self.next_attempt = None;
+    }
+
     pub fn record_success(&mut self) {
         self.consecutive_failures = 0;
         self.next_attempt = None;
@@ -114,6 +133,22 @@ mod tests {
         assert!(d.starts_with("tentativa 2 · próxima em "), "{d}");
         b.next_attempt = Some(Instant::now() - std::time::Duration::from_secs(1));
         assert_eq!(b.status_detail().unwrap(), "tentativa 2 · reconectando agora");
+    }
+
+    #[test]
+    fn arm_if_idle_schedules_once_and_disarm_keeps_the_count() {
+        let mut b = BackoffState::new();
+        b.arm_if_idle();
+        assert_eq!(b.consecutive_failures, 1);
+        let first = b.next_attempt;
+        assert!(first.is_some());
+        b.arm_if_idle(); // already pending: untouched
+        assert_eq!(b.consecutive_failures, 1);
+        assert_eq!(b.next_attempt, first);
+        b.disarm();
+        assert!(!b.is_due());
+        b.arm_if_idle();
+        assert_eq!(b.consecutive_failures, 2);
     }
 
     #[test]

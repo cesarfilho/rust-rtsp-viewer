@@ -47,6 +47,16 @@ pub fn toast_overlay(app: &App) -> iced::widget::Container<'_, Message> {
         .padding(8)
 }
 
+/// Arrows are missing from the system fallback font and render as empty
+/// boxes; strings that contain them use the embedded DejaVu face.
+fn help_font(text: &str) -> iced::Font {
+    if text.contains(['\u{2190}', '\u{2192}']) {
+        super::super::icons::FONT
+    } else {
+        iced::Font::DEFAULT
+    }
+}
+
 pub fn help_overlay<'a>(app: &App, main_content: Element<'a, Message>) -> Element<'a, Message> {
     let theme = app.theme;
     let colors = theme.colors();
@@ -57,9 +67,11 @@ pub fn help_overlay<'a>(app: &App, main_content: Element<'a, Message>) -> Elemen
 
     let row = |keys: &'a str, desc: &'a str| {
         iced::widget::row![
-            iced::widget::container(iced::widget::text(keys).color(accent).size(12))
-                .width(120),
-            iced::widget::text(desc).color(primary).size(12),
+            iced::widget::container(
+                iced::widget::text(keys).color(accent).size(12).font(help_font(keys))
+            )
+            .width(120),
+            iced::widget::text(desc).color(primary).size(12).font(help_font(desc)),
         ]
         .spacing(8)
     };
@@ -84,7 +96,7 @@ pub fn help_overlay<'a>(app: &App, main_content: Element<'a, Message>) -> Elemen
         row("F3", "Alternar aba da sidebar"),
         row("/", "Filtrar câmeras"),
         row("Enter / Backspace", "Zonas de movimento: concluir / desfazer"),
-        row("Esc", "Voltar: spotlight \u{2192} imersivo \u{2192} menu \u{2192} busca"),
+        row("Esc", "Voltar: ajuda \u{2192} spotlight \u{2192} imersivo \u{2192} menu \u{2192} busca"),
         row("?", "Mostrar / ocultar esta ajuda"),
         row("Ctrl+Q", "Sair"),
         iced::widget::horizontal_rule(1),
@@ -171,5 +183,12 @@ mod tests {
     fn menu_larger_than_window_pins_to_origin() {
         let p = menu_origin(iced::Point::new(10.0, 10.0), iced::Size::new(100.0, 100.0), 256.0, 500.0);
         assert_eq!((p.x, p.y), (0.0, 0.0));
+    }
+
+    #[test]
+    fn arrow_strings_use_the_embedded_font() {
+        assert_eq!(help_font("\u{2190} / \u{2192}"), super::super::super::icons::FONT);
+        assert_eq!(help_font("a \u{2192} b"), super::super::super::icons::FONT);
+        assert_eq!(help_font("Tab"), iced::Font::DEFAULT);
     }
 }

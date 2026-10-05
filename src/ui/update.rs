@@ -382,6 +382,16 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
     }
 }
 
+/// Keys that close the (modal) help popup.
+fn is_help_dismiss(key: &iced::keyboard::Key) -> bool {
+    use iced::keyboard::key::Named;
+    use iced::keyboard::Key;
+    matches!(
+        key.as_ref(),
+        Key::Named(Named::Escape) | Key::Character("?")
+    )
+}
+
 /// Resolve a raw key press against the current focus state.
 ///
 /// This runs in `update` rather than the subscription because iced identifies
@@ -401,6 +411,16 @@ fn handle_key(
         return match key.as_ref() {
             Key::Character("q") => update(app, Message::Quit),
             _ => Task::none(),
+        };
+    }
+
+    // The help popup is modal: only its own toggle / Esc act, so `f`, `s` or
+    // `r` cannot fire on the UI hidden behind the scrim.
+    if app.show_help {
+        return if is_help_dismiss(&key) {
+            update(app, Message::ShowHelp)
+        } else {
+            Task::none()
         };
     }
 
@@ -1076,6 +1096,19 @@ fn update_frame(app: &mut App) -> Task<Message> {
             None => {}
         }
 
+        // Down past the connect grace with no retry pending: schedule one.
+        // Without this a camera that fails right after starting is stuck on
+        // "Reconectando" forever (the watchdog only covers live RTSP stalls).
+        if app.connecting_since[i].is_none()
+            && !needs_reconnect
+            && matches!(
+                app.sidebar.cameras[i].status,
+                sidebar::CameraStatus::Offline | sidebar::CameraStatus::Reconnecting
+            )
+        {
+            app.backoff_states[i].arm_if_idle();
+        }
+
         if needs_reconnect {
             reconnect_camera(app, i, &cam_label);
         }
@@ -1164,6 +1197,9 @@ fn reconnect_camera(app: &mut App, i: usize, cam_label: &str) {
     };
 
     if restarted {
+        // One rebuild per backoff period, and a fresh connect grace for it.
+        app.backoff_states[i].disarm();
+        app.connecting_since[i] = Some(Instant::now());
         if prev_audio.is_audible() {
             app.audio_states[i] = prev_audio;
             spawn_audio(app, i, prev_audio.volume_f32());
@@ -1707,6 +1743,18 @@ fn update_sidebar(app: &mut App, msg: super::sidebar::Message) -> Task<Message> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn help_closes_on_escape_or_question_mark_only() {
+        use iced::keyboard::key::Named;
+        use iced::keyboard::Key;
+        assert!(is_help_dismiss(&Key::Named(Named::Escape)));
+        assert!(is_help_dismiss(&Key::Character("?".into())));
+        for other in ["f", "s", "r", "h", "1"] {
+            assert!(!is_help_dismiss(&Key::Character(other.into())));
+        }
+        assert!(!is_help_dismiss(&Key::Named(Named::Enter)));
+    }
 
     #[test]
     fn png_quality_maps_to_compression_effort() {
