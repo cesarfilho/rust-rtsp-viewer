@@ -6,6 +6,7 @@ use crate::domain::codec;
 use crate::domain::metrics::{Metrics, MAX_PENDING_DECODES};
 use crate::domain::recording::{generate_filename, Container};
 use crate::domain::redact::mask_credentials;
+use crate::infrastructure::launch::quote_launch_value;
 use crate::infrastructure::recording_paths::ensure_recording_dir;
 
 use super::bridge::{
@@ -29,15 +30,6 @@ const DECODER_NAME: &str = "video_decoder";
 /// `max-size-*` caps: buffering is the upstream elements' job (`rtspsrc
 /// latency`, `uridecodebin`/`queue2`), not a hand-tuned cache here.
 const POSTDEC_QUEUE: &str = "queue name=postdec_queue leaky=downstream";
-
-/// Quote a value for embedding in a `gst_parse_launch` description.
-///
-/// Unquoted URLs and paths break the parser as soon as they contain a space,
-/// `!`, or `&` — all of which turn up in real camera URLs and file paths.
-fn quote_launch_value(value: &str) -> String {
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
-}
 
 /// Give the configured decoder element an explicit name so we can attach
 /// probes to it, unless the user already named it themselves.

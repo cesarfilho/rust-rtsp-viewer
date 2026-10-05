@@ -38,6 +38,8 @@ use gst::prelude::*;
 
 use log::{info, warn};
 
+use crate::domain::redact::mask_credentials;
+use crate::infrastructure::launch::quote_launch_value;
 use crate::domain::audio::{format_volume, volume_to_x1000, AudioConfig, AudioState};
 
 /// Element name. The `AudioController` looks this element up by name in
@@ -141,16 +143,17 @@ pub fn poll_level_bus(pipeline: &gst::Pipeline, level_state: &AudioLevelState) {
 pub fn build_audio_pipeline(url: &str, volume: f32) -> Option<gst::Pipeline> {
     let vol = volume.clamp(0.0, 1.0);
     let pipeline_str = format!(
-        "rtspsrc name=audio_src location=\"{url}\" latency=100 protocols=tcp \
+        "rtspsrc name=audio_src location={} latency=100 protocols=tcp \
          timeout=5000000000 udp-reconnect=true ! queue ! \
          decodebin ! audioconvert ! audioresample ! \
          volume name=audio_volume volume={vol:.3} ! \
-         level name=audio_level interval=100000000 ! autoaudiosink"
+         level name=audio_level interval=100000000 ! autoaudiosink",
+        quote_launch_value(url)
     );
     let pipeline = match gst::parse_launch(&pipeline_str) {
         Ok(el) => el.downcast::<gst::Pipeline>().ok()?,
         Err(e) => {
-            warn!("Audio pipeline parse error for {url}: {e}");
+            warn!("Audio pipeline parse error for {}: {}", mask_credentials(url), mask_credentials(&e.to_string()));
             return None;
         }
     };
@@ -196,15 +199,16 @@ fn build_http_audio_pipeline(url: &str, volume: f32) -> Option<gst::Pipeline> {
     // dynamic src pads remain unlinked at parse time; the pad-added handler
     // below routes audio pads to audioconvert.
     let pipeline_str = format!(
-        "uridecodebin name=audio_uri uri={url} \
+        "uridecodebin name=audio_uri uri={} \
          audioconvert name=audio_convert ! audioresample \
          ! volume name=audio_volume volume={vol:.3} ! \
-         level name=audio_level interval=100000000 ! autoaudiosink"
+         level name=audio_level interval=100000000 ! autoaudiosink",
+        quote_launch_value(url)
     );
     let pipeline = match gst::parse_launch(&pipeline_str) {
         Ok(el) => el.downcast::<gst::Pipeline>().ok()?,
         Err(e) => {
-            warn!("HTTP audio pipeline parse error for {url}: {e}");
+            warn!("HTTP audio pipeline parse error for {}: {}", mask_credentials(url), mask_credentials(&e.to_string()));
             return None;
         }
     };
@@ -530,5 +534,15 @@ mod tests {
         assert!((v - 0.8).abs() < 1e-6, "expected 0.8, got {v}");
         // Tear down.
         let _ = pipeline.set_state(gst::State::Null);
+    }
+
+    #[test]
+    fn audio_pipelines_survive_hostile_urls() {
+        if gst::init().is_err() {
+            return;
+        }
+        // `"`, `&`, `!` and spaces would break an unquoted description.
+        assert!(build_audio_pipeline("rtsp://u:p@h/a b\"c&d!e", 0.5).is_some());
+        assert!(build_http_audio_pipeline("http://h/p?a=1&b=2 !x", 0.5).is_some());
     }
 }

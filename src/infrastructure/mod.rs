@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod launch;
 pub(crate) mod reconnect;
 pub mod recording_paths;
 pub mod view_state;
