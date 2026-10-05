@@ -80,6 +80,35 @@ pub fn stream_url_for_quality(
     }
 }
 
+/// Which stream a camera should be decoding right now.
+///
+/// The sub-stream is for tiles: a 16-camera grid should not decode sixteen
+/// 1080p mains. Anything that needs the full picture gets the main stream.
+///
+/// - `has_sub`: the camera has a `sub_url` configured; without one it is always Main.
+/// - `recording`: a recording is running. Switching rebuilds the pipeline and
+///   would cut the file, so a recording camera keeps whatever it is on.
+/// - `large_view`: the camera fills the view (spotlight, flex main, or the
+///   only camera on the page).
+pub fn desired_quality(
+    has_sub: bool,
+    recording: bool,
+    current: StreamQuality,
+    large_view: bool,
+) -> StreamQuality {
+    if !has_sub {
+        return StreamQuality::Main;
+    }
+    if recording {
+        return current;
+    }
+    if large_view {
+        StreamQuality::Main
+    } else {
+        StreamQuality::Sub
+    }
+}
+
 /// Whether sub-stream switching is available for this camera.
 pub fn has_sub_stream(config: &MultiStreamConfig) -> bool {
     config.sub_stream_url.is_some()
@@ -88,6 +117,30 @@ pub fn has_sub_stream(config: &MultiStreamConfig) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_sub_url_is_always_main() {
+        for rec in [false, true] {
+            for big in [false, true] {
+                assert_eq!(
+                    desired_quality(false, rec, StreamQuality::Sub, big),
+                    StreamQuality::Main
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tiles_use_sub_and_large_views_use_main() {
+        assert_eq!(desired_quality(true, false, StreamQuality::Main, false), StreamQuality::Sub);
+        assert_eq!(desired_quality(true, false, StreamQuality::Sub, true), StreamQuality::Main);
+    }
+
+    #[test]
+    fn a_recording_camera_never_switches() {
+        assert_eq!(desired_quality(true, true, StreamQuality::Main, false), StreamQuality::Main);
+        assert_eq!(desired_quality(true, true, StreamQuality::Sub, true), StreamQuality::Sub);
+    }
 
     #[test]
     fn stream_quality_toggle() {

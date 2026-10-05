@@ -34,6 +34,18 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
   (`App.view.rotate_*`) auto-advances pages on the frame tick. Flex shows one
   main + a thumbnail strip. Grid cells are wrapped in a `mouse_area`: left
   click selects, right click opens the context menu.
+- **Sub/main stream**: a `[[cameras]]` entry may set `sub_url`. `update::wanted_quality`
+  (pure rule: `domain::multi_stream::desired_quality`) puts the camera on the sub-stream
+  while it is a grid tile and on the main stream in spotlight, as the flex main view, or
+  alone on the page. `sync_active_streams` swaps by rebuilding the pipeline
+  (`restart_stream`); `camera_config_for` swaps `url`. A recording camera never switches,
+  and `toggle_camera_recording` moves to Main *before* starting one, because the file is
+  recorded from the decoded frames.
+- **Decoder + bitrate**: `GStreamerBridge::discover_decoder` walks the pipeline once the
+  stream is live, finds the factory whose klass is `Codec/Decoder/Video[/Hardware]`
+  (`domain::metrics::video_decoder_kind`), shows it in the Inspector (Decoder / Via CPU|GPU)
+  and installs a probe on its sink pad that feeds `bytes_counter`, so Bitrate is the
+  *compressed* rate. `decodebin` currently picks `avdec_*` (CPU) on this machine.
 - **Lazy streaming**: `update::sync_active_streams` keeps only the visible
   page's cameras (+ next page prefetch, + selected) decoding when
   `[view] pause_hidden` is on; the rest are `bridge.stop()`ped and shown
@@ -64,7 +76,7 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
 | `hw_encoder.rs` | hardware encoder selection |
 | `metrics.rs` | `Metrics` (atomic), `PacketStats`, `StreamInfo` |
 | `motion.rs` | frame-difference motion detection |
-| `multi_stream.rs` | main/sub stream selection |
+| `multi_stream.rs` | `StreamQuality`, `desired_quality`, `stream_url_for_quality` — wired to `sub_url` |
 | `notify.rs` | `NotifyConfig`, `message_for`, `cooldown_elapsed` — desktop-notification policy |
 | `ptz.rs` | `PtzCommand` |
 | `recording.rs` | `RecordingConfig`, `RecordingState`, `generate_filename` |

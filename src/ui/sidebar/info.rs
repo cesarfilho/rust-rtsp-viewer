@@ -145,16 +145,18 @@ pub(super) fn info_view(sidebar: &Sidebar, colors: ThemeColors, theme: Theme) ->
     ]
     .spacing(Theme::SPACE_2)
     .align_y(iced::Alignment::Center);
-    body = body.push(card(
-        theme,
-        "STREAM",
-        vec![
-            metric(colors, "Codec", m.codec.clone().unwrap_or_else(|| "—".into()), None),
-            metric(colors, "Resolução", res, None),
-            fps_row.into(),
-            metric(colors, "Bitrate", cam.bitrate.clone(), None),
-        ],
-    ));
+    let mut stream_rows = vec![
+        metric(colors, "Codec", m.codec.clone().unwrap_or_else(|| "—".into()), None),
+        metric(colors, "Decoder", m.decoder.clone().unwrap_or_else(|| "—".into()), None),
+        metric(colors, "Via", decoder_via(m.decoder.as_deref(), m.decoder_hw), None),
+        metric(colors, "Resolução", res, None),
+    ];
+    if let Some(q) = m.stream_quality {
+        stream_rows.push(metric(colors, "Fluxo", q.to_string(), None));
+    }
+    stream_rows.push(fps_row.into());
+    stream_rows.push(metric(colors, "Bitrate", cam.bitrate.clone(), None));
+    body = body.push(card(theme, "STREAM", stream_rows));
 
     // ── Rede card ────────────────────────────────────────────────────────
     let lat = m.latency_ms.unwrap_or(0);
@@ -247,4 +249,25 @@ fn placeholder(msg: &str, color: iced::Color) -> Element<'_, Message> {
         .padding(Theme::SPACE_4)
         .width(Length::Fill)
         .into()
+}
+
+/// Where decoding runs: `CPU` / `GPU`; a dash until the decoder is known.
+fn decoder_via(decoder: Option<&str>, hardware: bool) -> String {
+    match (decoder, hardware) {
+        (None, _) => "—".into(),
+        (Some(_), true) => "GPU".into(),
+        (Some(_), false) => "CPU".into(),
+    }
+}
+
+#[cfg(test)]
+mod decoder_via_tests {
+    use super::decoder_via;
+
+    #[test]
+    fn says_cpu_or_gpu() {
+        assert_eq!(decoder_via(Some("avdec_h264"), false), "CPU");
+        assert_eq!(decoder_via(Some("nvh264dec"), true), "GPU");
+        assert_eq!(decoder_via(None, false), "—");
+    }
 }

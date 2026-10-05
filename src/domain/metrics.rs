@@ -23,6 +23,28 @@ pub struct StreamInfo {
     /// it falls back to the raw `codec` mime (set by the pre-decode
     /// probe from `encoding-name`).
     pub parsed_codec: Option<Codec>,
+    /// GStreamer factory name of the video decoder actually chosen (e.g.
+    /// `avdec_h264`, `nvh264dec`). `decodebin` picks it at runtime, so it is
+    /// found by walking the pipeline once the stream is up.
+    pub decoder: Option<String>,
+    /// The decoder runs on a GPU / fixed-function block (factory klass has
+    /// `Hardware`).
+    pub decoder_hw: bool,
+}
+
+/// Interpret a factory's `klass` metadata: `Some(is_hardware)` for a video
+/// decoder, `None` for anything else.
+///
+/// `Codec/Decoder/Video` is software (`avdec_*`); hardware decoders add a
+/// `/Hardware` segment (`Codec/Decoder/Video/Hardware`: `nvh264dec`,
+/// `vah264dec`).
+pub fn video_decoder_kind(klass: &str) -> Option<bool> {
+    let parts: Vec<&str> = klass.split('/').collect();
+    if parts.contains(&"Decoder") && parts.contains(&"Video") {
+        Some(parts.contains(&"Hardware"))
+    } else {
+        None
+    }
 }
 
 /// Returns true when `format` is a planar (or semi-planar) YUV format whose
@@ -322,6 +344,16 @@ impl Metrics {
 
 #[cfg(test)]
  mod tests {
+    #[test]
+    fn decoder_klass_distinguishes_software_from_hardware() {
+        assert_eq!(video_decoder_kind("Codec/Decoder/Video"), Some(false));
+        assert_eq!(video_decoder_kind("Codec/Decoder/Video/Hardware"), Some(true));
+        assert_eq!(video_decoder_kind("Codec/Decoder/Audio"), None);
+        assert_eq!(video_decoder_kind("Codec/Parser/Converter/Video"), None);
+        assert_eq!(video_decoder_kind("Codec/Encoder/Video/Hardware"), None);
+        assert_eq!(video_decoder_kind(""), None);
+    }
+
     use super::*;
 
     // -- Item 6: snapshot_recent_avg_luma ---------------------------

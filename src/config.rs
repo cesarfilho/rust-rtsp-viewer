@@ -165,6 +165,10 @@ pub struct CameraConfig {
     /// `do_retransmission` for this camera only. When absent, the global
     /// value is used (which defaults to `true` when not set in config.toml).
     pub do_retransmission: Option<bool>,
+    /// Lower-resolution stream for the grid tiles. When set, the camera
+    /// decodes `sub_url` while it is a tile and switches to `url` (main) for
+    /// the spotlight, the flex main view, and while recording.
+    pub sub_url: Option<String>,
 }
 
 /// Flat mirror of `domain::snapshot::SnapshotConfig`
@@ -386,6 +390,7 @@ mod tests {
             audio_volume: None,
             use_uridecodebin: None,
             do_retransmission: None,
+            sub_url: None,
         }
     }
 

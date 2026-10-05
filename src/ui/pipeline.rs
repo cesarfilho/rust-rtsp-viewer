@@ -196,9 +196,8 @@ fn setup_appsink(pipeline: &gst::Pipeline, bridge: &mut GStreamerBridge) -> Resu
                 let bytes = Bytes::copy_from_slice(&map);
                 drop(map);
 
-                metrics
-                    .bytes_counter
-                    .fetch_add(gst_buffer.size() as u64, Ordering::Relaxed);
+                // `bytes_counter` (bitrate) is fed from the decoder's sink pad
+                // — see `GStreamerBridge::discover_decoder`.
                 metrics.frame_count.fetch_add(1, Ordering::Relaxed);
 
                 let now_ns = metrics.mono_ns();

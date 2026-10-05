@@ -113,6 +113,11 @@ pub struct MetricsSnapshot {
     pub bytes: u64,
     pub uptime_secs: u64,
     pub codec: Option<String>,
+    /// Factory name of the decoder in use (`avdec_h264`, `nvh264dec`, …).
+    pub decoder: Option<String>,
+    pub decoder_hw: bool,
+    /// `Main` / `Sub` — only set for cameras that have a `sub_url`.
+    pub stream_quality: Option<&'static str>,
     pub width: Option<i32>,
     pub height: Option<i32>,
     pub framerate_num: Option<i32>,

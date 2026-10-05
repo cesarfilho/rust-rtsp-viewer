@@ -66,6 +66,9 @@ pub struct GStreamerBridge {
     /// How many ticks `discover_rtp_jitterbuffers` has scanned since the last
     /// (re)start — bounds the walk to the first few seconds.
     pub(crate) jb_scan_attempts: u32,
+    /// Same idea for the decoder lookup (`discover_decoder`).
+    pub(crate) decoder_scan_done: bool,
+    pub(crate) decoder_scan_attempts: u32,
     pub(crate) start_time: Instant,
     pub(crate) recording_config: RecordingConfig,
     pub(crate) recording: Option<RecordingBranch>,
@@ -128,6 +131,8 @@ impl GStreamerBridge {
             metrics: Metrics::new(),
             rtp_jitterbuffers: Vec::new(),
             jb_scan_done: false,
+            decoder_scan_done: false,
+            decoder_scan_attempts: 0,
             jb_scan_attempts: 0,
             start_time: now,
             recording_config: RecordingConfig::default(),
@@ -340,6 +345,55 @@ impl GStreamerBridge {
             }
     }
 
+    /// Find which video decoder `decodebin` / `uridecodebin3` actually chose
+    /// and publish it in `StreamInfo`, so the Inspector can say CPU or GPU.
+    ///
+    /// The decoder is created during negotiation, so it only exists once the
+    /// stream is live. Same bounded walk as the jitterbuffer scan: stop once
+    /// found, or after ~10 s of ticks.
+    pub fn discover_decoder(&mut self) {
+        if self.decoder_scan_done || !self.is_live() {
+            return;
+        }
+        self.decoder_scan_attempts += 1;
+        if self.decoder_scan_attempts > 100 {
+            self.decoder_scan_done = true;
+            return;
+        }
+        let Some(ref pipeline) = self.pipeline else { return };
+        let mut iter = pipeline.iterate_recurse();
+        let mut found = None;
+        while let Ok(Some(el)) = iter.next() {
+            let Some(factory) = el.factory() else { continue };
+            let klass = factory.metadata("klass").unwrap_or_default();
+            if let Some(hw) = crate::domain::metrics::video_decoder_kind(klass) {
+                found = Some((factory.name().to_string(), hw, el.clone()));
+                break;
+            }
+        }
+        if let Some((name, hw, decoder)) = found {
+            if let Ok(mut si) = self.metrics.stream_info.lock() {
+                si.decoder = Some(name);
+                si.decoder_hw = hw;
+            }
+            // Bitrate is the *compressed* stream: count what enters the
+            // decoder. (The appsink only sees decoded RGBA, whose size says
+            // nothing about the network rate.)
+            if let Some(pad) = decoder.static_pad("sink") {
+                let metrics = self.metrics.clone();
+                pad.add_probe(gst::PadProbeType::BUFFER, move |_pad, info| {
+                    if let Some(gst::PadProbeData::Buffer(ref buf)) = info.data {
+                        metrics
+                            .bytes_counter
+                            .fetch_add(buf.size() as u64, Ordering::Relaxed);
+                    }
+                    gst::PadProbeReturn::Ok
+                });
+            }
+            self.decoder_scan_done = true;
+        }
+    }
+
     pub fn discover_rtp_jitterbuffers(&mut self) {
         // Walking the whole pipeline graph via `iterate_recurse` every 100 ms
         // forever is wasted work — and it runs on the UI thread holding the
@@ -470,6 +524,13 @@ impl GStreamerBridge {
         self.rtp_jitterbuffers.clear();
         self.jb_scan_done = false;
         self.jb_scan_attempts = 0;
+        self.decoder_scan_done = false;
+        self.decoder_scan_attempts = 0;
+        // The next pipeline may be a different stream (sub ↔ main) with another
+        // size / codec; the caps probe only fills fields that are still empty.
+        if let Ok(mut si) = self.metrics.stream_info.lock() {
+            *si = crate::domain::metrics::StreamInfo::default();
+        }
     }
 
     /// Alias kept for the process-exit call sites (`shutdown`, `Drop`).

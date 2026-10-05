@@ -108,6 +108,10 @@ label = "Garagem"         # nome exibido na sidebar (opcional)
 audio_volume = 0.8        # volume desta câmera (0.0–1.0); ausente = usa [audio].volume
 # latency_ms = 100        # override da latência global (opcional)
 # decoder = "decodebin"   # override do decoder global (opcional)
+# sub_url = "rtsp://admin:senha@192.168.1.100:554/cam/realmonitor?channel=1&subtype=1"
+#                         # stream de baixa resolução usado nos blocos da grade; o
+#                         # principal (url) é usado no spotlight, no destaque do Flex
+#                         # e durante a gravação. Reduz bastante o custo com muitas câmeras.
 # use_uridecodebin = false # força uridecodebin; auto-detectado por http:// e https://
 # do_retransmission = true # override do retransmission global (opcional)
 

@@ -92,6 +92,9 @@ pub struct App {
     pub reconnect_states: Vec<ReconnectState>,
     pub backoff_states: Vec<BackoffState>,
     pub camera_configs: Vec<crate::config::CameraConfig>,
+    /// Which stream each camera is running on (`Sub` only for cameras with a
+    /// `sub_url`). Drives `update::camera_config_for` and the Inspector.
+    pub stream_quality: Vec<crate::domain::multi_stream::StreamQuality>,
     pub is_fullscreen: bool,
     pub show_help: bool,
     /// Video presentation mode (Normal / Immersive / Spotlight). Not persisted.
@@ -386,6 +389,7 @@ pub fn new_app(
             audio_level_states,
             reconnect_states,
             backoff_states,
+            stream_quality: vec![crate::domain::multi_stream::StreamQuality::Main; kept_cameras.len()],
             camera_configs: kept_cameras,
             is_fullscreen: false,
             show_help: false,
