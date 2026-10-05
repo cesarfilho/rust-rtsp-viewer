@@ -24,5 +24,6 @@ pub mod snapshot;
 pub mod streaming;
 pub mod timelapse;
 pub mod timeline;
+pub mod timeline_view;
 pub mod view;
 pub mod zones;
