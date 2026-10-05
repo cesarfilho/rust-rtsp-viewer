@@ -47,6 +47,14 @@ pub const TICK_MS: u64 = 100;
 /// Slow work (latency, RTP stats, motion) runs on every Nth tick (~500 ms).
 pub const SLOW_EVERY_N_TICKS: u64 = 5;
 
+/// The motion / recording / notification settings the config asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConfiguredBehaviour {
+    pub motion_enabled: bool,
+    pub motion_recording: bool,
+    pub notify_enabled: bool,
+}
+
 /// How long a freshly (re)started pipeline shows `Connecting` instead of
 /// flapping to `Reconnecting`/`Offline` while it hand-shakes.
 pub const CONNECT_GRACE_SECS: u64 = 12;
@@ -73,6 +81,12 @@ pub struct Engine {
     pub reconnect_states: Vec<ReconnectState>,
     /// Per-camera reconnect backoff.
     pub backoff_states: Vec<BackoffState>,
+    /// Display-only: decode to show, but never record, detect motion or
+    /// notify. The window uses this while a daemon owns those jobs (spec
+    /// `ux-daemon.md`); two owners would record everything twice.
+    pub display_only: bool,
+    /// What the configuration asked for, kept so leaving display-only restores it.
+    pub configured: ConfiguredBehaviour,
     /// Display name per camera (for notification text).
     pub names: Vec<String>,
     /// Events raised since the host last called [`Engine::take_events`].
@@ -218,6 +232,12 @@ impl Engine {
             reconnect_states: (0..count).map(|_| ReconnectState::new(15)).collect(),
             backoff_states: (0..count).map(|_| BackoffState::new()).collect(),
             stream_quality: vec![StreamQuality::Main; count],
+            display_only: false,
+            configured: ConfiguredBehaviour {
+                motion_enabled: motion.enabled,
+                motion_recording,
+                notify_enabled: notify.enabled,
+            },
             names,
             events: Vec::new(),
             status: vec![CameraStatus::Connecting; count],
@@ -446,6 +466,11 @@ impl Engine {
     /// Raise an event. Applies the notification policy: per (camera, kind)
     /// cooldown, so a flapping camera does not spam.
     pub fn emit(&mut self, camera: usize, kind: EventType, detail: Option<String>) {
+        // Display-only: the daemon's events are the truth; this engine's own
+        // would duplicate them on the timeline.
+        if self.display_only {
+            return;
+        }
         let notification = self.notification_for(camera, kind, detail.as_deref());
         self.events.push(EngineEvent {
             camera,
@@ -489,6 +514,9 @@ impl Engine {
     /// sub-stream would save a low-resolution file: move to the main stream
     /// first (`wanted_quality` then leaves it alone until the recording stops).
     pub fn toggle_recording(&mut self, i: usize) -> Result<bool, String> {
+        if self.display_only {
+            return Err("a gravação é feita pelo daemon".into());
+        }
         let starting = !self.bridges[i]
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -835,6 +863,35 @@ impl Engine {
         }
         self.start_queue.clear();
     }
+
+    /// Switch between doing everything (`false`) and display-only (`true`).
+    ///
+    /// Display-only turns off motion detection, motion recording and
+    /// notifications and builds no recording or detection branch; leaving it
+    /// restores what the configuration asked for. Running streams are rebuilt
+    /// so their branches match the new mode.
+    pub fn set_display_only(&mut self, display_only: bool) {
+        if self.display_only == display_only {
+            return;
+        }
+        self.display_only = display_only;
+        let c = self.configured;
+        self.motion_config.enabled = c.motion_enabled && !display_only;
+        self.motion_recording = c.motion_recording && !display_only;
+        self.notify.enabled = c.notify_enabled && !display_only;
+        for b in &self.bridges {
+            b.lock().unwrap_or_else(|e| e.into_inner()).detect_enabled = self.motion_config.enabled;
+        }
+        for i in 0..self.bridges.len() {
+            self.prev_motion_frames[i] = None;
+            self.motion_active[i] = false;
+            self.auto_recording[i] = false;
+            if self.active_stream[i] {
+                let quality = self.stream_quality[i];
+                self.restart_stream(i, quality);
+            }
+        }
+    }
 }
 
 /// Something that happened in the engine that the host should record and,
@@ -893,6 +950,12 @@ mod tests {
             reconnect_states: (0..n).map(|_| ReconnectState::new(15)).collect(),
             backoff_states: (0..n).map(|_| BackoffState::new()).collect(),
             stream_quality: vec![StreamQuality::Main; n],
+            display_only: false,
+            configured: ConfiguredBehaviour {
+                motion_enabled: false,
+                motion_recording: false,
+                notify_enabled: false,
+            },
             names: (0..n).map(|i| format!("cam{i}")).collect(),
             events: Vec::new(),
             status: vec![CameraStatus::Connecting; n],
@@ -1401,5 +1464,87 @@ mod tests {
         assert_eq!(e.camera_count(), 0);
         assert!(e.start_queue.is_empty());
         assert!(e.enabled_cameras().is_empty());
+    }
+
+    // ---- display-only ----
+
+    fn full_engine() -> Engine {
+        let c = cams("[[cameras]]\nurl = \"rtsp://a/s\"\n[[cameras]]\nurl = \"rtsp://b/s\"\n");
+        let dir = std::env::temp_dir().join(format!("rrv-engine-do-{}", std::process::id()));
+        Engine::new(EngineSettings {
+            cameras: &c,
+            recording: &RecordingConfig {
+                on_motion: true,
+                ..RecordingConfig::default()
+            },
+            motion: MotionConfig {
+                enabled: true,
+                ..MotionConfig::default()
+            },
+            notify: NotifyConfig {
+                enabled: true,
+                ..NotifyConfig::default()
+            },
+            logs: &LogsConfigFile {
+                dir: Some(dir),
+                ..LogsConfigFile::default()
+            },
+            pause_hidden: true,
+            stagger: Duration::from_millis(100),
+            zones: &ZonesFile::default(),
+        })
+    }
+
+    #[test]
+    fn display_only_turns_off_motion_recording_and_notifications() {
+        let mut e = full_engine();
+        assert!(e.motion_config.enabled && e.motion_recording && e.notify.enabled);
+        assert!(e.bridges.iter().all(|b| b.lock().unwrap().detect_enabled));
+        assert!(
+            e.must_run_everything(),
+            "com on_motion todas as câmeras rodam"
+        );
+
+        e.set_display_only(true);
+        assert!(!e.motion_config.enabled && !e.motion_recording && !e.notify.enabled);
+        assert!(
+            e.bridges.iter().all(|b| !b.lock().unwrap().detect_enabled),
+            "nenhum ramo de detecção é montado"
+        );
+        assert!(
+            !e.must_run_everything(),
+            "sem gatilho de movimento, a visão decide quais câmeras rodam"
+        );
+    }
+
+    #[test]
+    fn leaving_display_only_restores_what_the_config_asked_for() {
+        let mut e = full_engine();
+        e.set_display_only(true);
+        e.set_display_only(false);
+        assert!(e.motion_config.enabled && e.motion_recording && e.notify.enabled);
+        assert!(e.bridges.iter().all(|b| b.lock().unwrap().detect_enabled));
+        assert!(!e.display_only);
+    }
+
+    #[test]
+    fn display_only_refuses_to_record_and_raises_no_events() {
+        let mut e = full_engine();
+        e.set_display_only(true);
+        let err = e.toggle_recording(0).unwrap_err();
+        assert!(err.contains("daemon"), "{err}");
+        e.emit(0, EventType::Offline, None);
+        assert!(e.take_events().is_empty(), "os eventos são os do daemon");
+    }
+
+    #[test]
+    fn switching_modes_twice_is_a_no_op_and_clears_motion_state() {
+        let mut e = full_engine();
+        e.motion_active[0] = true;
+        e.auto_recording[1] = true;
+        e.set_display_only(false); // já era false: nada muda
+        assert!(e.motion_active[0] && e.auto_recording[1]);
+        e.set_display_only(true);
+        assert!(!e.motion_active[0] && !e.auto_recording[1]);
     }
 }

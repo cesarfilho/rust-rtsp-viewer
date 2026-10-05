@@ -252,3 +252,64 @@ fn the_headless_engine_brings_a_camera_up_and_keeps_it_live() {
         kinds(&events)
     );
 }
+
+/// Modo display-only (a janela conectada a um daemon): o vídeo flui, mas nada
+/// grava, detecta ou emite evento, mesmo com movimento e `on_motion` ligado. Ao
+/// voltar ao modo completo ("Usar motor local"), a gravação por movimento
+/// começa e o arquivo sai tocável.
+#[test]
+fn display_only_shows_video_but_never_records_until_switched_back() {
+    let tmp = TempDir::new("display-only");
+    let cam = LiveCamera::start(&tmp.0); // a bola se mexe
+    let rec = tmp.path("rec");
+    let mut e = engine(&cam.url(), &rec, 3600);
+    e.set_display_only(true);
+
+    let mut events = Vec::new();
+    let generation = |e: &Engine| e.bridges[0].lock().unwrap().read_frame().3;
+    // espera o vídeo começar, depois mede o fluxo por 5 s
+    assert!(
+        run(&mut e, 40, &mut events, |e, _| generation(e) > 0),
+        "o vídeo nunca começou"
+    );
+    let before = generation(&e);
+    run(&mut e, 5, &mut events, |_, _| false);
+    let advanced = generation(&e) - before;
+    let state = describe(&e);
+
+    assert!(
+        advanced >= 30,
+        "o vídeo não está fluindo em display-only: {advanced} quadros ({state})"
+    );
+    assert!(
+        e.bridges[0]
+            .lock()
+            .unwrap()
+            .capture_detect_frame()
+            .is_none(),
+        "display-only não monta o ramo de detecção"
+    );
+    assert!(
+        events.is_empty(),
+        "display-only não emite eventos: {:?}",
+        kinds(&events)
+    );
+    assert!(mkv_files(&rec).is_empty(), "display-only não grava");
+    assert!(e.toggle_recording(0).is_err());
+
+    // "Usar motor local": agora o motor é dono da gravação
+    e.set_display_only(false);
+    let started = run(&mut e, 60, &mut events, |_, ev| {
+        kinds(ev).contains(&EventType::RecordingStart)
+    });
+    run(&mut e, 3, &mut events, |_, _| false);
+    e.shutdown();
+
+    assert!(
+        started,
+        "a gravação por movimento não começou ao sair do display-only"
+    );
+    let files = mkv_files(&rec);
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert!(is_playable(&files[0]), "{} não toca", files[0].display());
+}
