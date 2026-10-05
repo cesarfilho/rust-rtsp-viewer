@@ -13,16 +13,21 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::config::CameraConfig;
-use crate::domain::camera_status::CameraStatus;
+use crate::domain::camera_status::{CameraStatus, StatusReading};
 use crate::domain::motion::MotionConfig;
 use crate::domain::multi_stream::StreamQuality;
 use crate::domain::multi_stream::{MultiStreamConfig, desired_quality, stream_url_for_quality};
 use crate::domain::notify::NotifyConfig;
 use crate::domain::timeline::EventType;
 use crate::domain::zones::ZoneConfig;
-use crate::infrastructure::reconnect::ReconnectState;
+use crate::infrastructure::reconnect::{ReconnectDecision, ReconnectState};
+use std::sync::atomic::Ordering;
 
 use backoff::BackoffState;
+
+/// How long a freshly (re)started pipeline shows `Connecting` instead of
+/// flapping to `Reconnecting`/`Offline` while it hand-shakes.
+pub const CONNECT_GRACE_SECS: u64 = 12;
 
 /// Per-camera runtime state of the video engine. Every `Vec` is indexed by
 /// camera and kept in lockstep. The UI owns one and reads it; the orchestration
@@ -447,6 +452,146 @@ impl Engine {
             }
         }
     }
+
+    /// One health tick for a running camera: drain its bus, measure fps and
+    /// bitrate, refresh its status, raise online/offline events, run the
+    /// connect grace and arm a retry when it is down. The host reacts to the
+    /// returned [`CameraTick`] (sidebar row, and the reconnect itself, which it
+    /// wraps with audio handling).
+    ///
+    /// The bridge guard is released before returning: `std::sync::Mutex` is not
+    /// reentrant and the reconnect re-locks it.
+    pub fn tick_camera(&mut self, i: usize, poll_slow_metrics: bool) -> CameraTick {
+        let was_offline = matches!(
+            self.status[i],
+            CameraStatus::Offline | CameraStatus::Reconnecting
+        );
+        let label = self
+            .names
+            .get(i)
+            .cloned()
+            .unwrap_or_else(|| format!("Camera {}", i + 1));
+        let is_uridecodebin = self
+            .camera_configs
+            .get(i)
+            .map(|c| {
+                c.use_uridecodebin.unwrap_or(false)
+                    || c.url.starts_with("http://")
+                    || c.url.starts_with("https://")
+            })
+            .unwrap_or(false);
+
+        let (fps, reading, needs_reconnect, errored) = {
+            let mut bridge = self.bridges[i].lock().unwrap_or_else(|e| e.into_inner());
+            bridge.poll_bus();
+            let fps = bridge.update_fps();
+            let metrics = bridge.metrics().clone();
+            metrics
+                .current_fps_x1000
+                .store((fps * 1000.0) as u64, Ordering::Relaxed);
+            metrics.is_live.store(bridge.is_live(), Ordering::Relaxed);
+            bridge.discover_rtp_jitterbuffers();
+            bridge.discover_decoder();
+            if poll_slow_metrics {
+                bridge.query_latency();
+                bridge.poll_rtp_stats();
+            }
+            let reading = bridge.sample_status(&self.status[i]);
+            if let Some(status) = reading.as_ref().and_then(|r| r.status.clone()) {
+                self.status[i] = status;
+            }
+
+            let is_live = bridge.is_live();
+            let backoff_due = self.backoff_states[i].is_due();
+            let decision = self.reconnect_states[i].tick(
+                is_live,
+                is_uridecodebin,
+                Some(fps),
+                backoff_due,
+                &label,
+            );
+            if is_live && fps > 0.0 && matches!(decision, ReconnectDecision::None) {
+                self.backoff_states[i].record_success();
+            }
+            let errored = bridge
+                .error_message
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some();
+            let needs_reconnect = match decision {
+                ReconnectDecision::Reconnect(reason) => {
+                    log::info!("[{label}] Reconnecting: {reason}");
+                    true
+                }
+                ReconnectDecision::None => false,
+            };
+            (fps, reading, needs_reconnect, errored)
+        };
+
+        // A pipeline we started in the last few seconds shows CONNECTING rather
+        // than flapping to RECONNECTING/OFFLINE while it hand-shakes. Cleared once
+        // it actually goes live. This runs *before* the events below: a camera
+        // that is still hand-shaking is not offline, so it must not raise an
+        // Offline event (and a desktop notification) on every start or sub/main
+        // switch.
+        match self.connecting_since[i] {
+            Some(_) if self.status[i] == CameraStatus::Live => {
+                self.connecting_since[i] = None;
+            }
+            Some(t) if t.elapsed().as_secs() < CONNECT_GRACE_SECS => {
+                if matches!(
+                    self.status[i],
+                    CameraStatus::Offline | CameraStatus::Reconnecting
+                ) {
+                    self.status[i] = CameraStatus::Connecting;
+                }
+            }
+            Some(_) => self.connecting_since[i] = None,
+            None => {}
+        }
+
+        // Log connectivity transitions once the status has settled.
+        let now_offline = matches!(
+            self.status[i],
+            CameraStatus::Offline | CameraStatus::Reconnecting
+        );
+        if was_offline && !now_offline {
+            self.emit(i, EventType::Online, None);
+        } else if !was_offline && now_offline {
+            self.emit(i, EventType::Offline, None);
+        }
+
+        // Down with no retry pending: schedule one. A pipeline that reported an
+        // error is dead, so it retries right away; otherwise wait out the
+        // connect grace. Without this a camera that fails right after starting
+        // is stuck on "Reconectando" forever (the watchdog only covers live
+        // RTSP stalls).
+        let down = matches!(
+            self.status[i],
+            CameraStatus::Offline | CameraStatus::Reconnecting
+        );
+        if !needs_reconnect
+            && BackoffState::should_schedule_retry(
+                self.connecting_since[i].is_some(),
+                down,
+                errored,
+            )
+        {
+            self.backoff_states[i].arm_if_idle();
+        }
+
+        CameraTick {
+            fps,
+            reading,
+            needs_reconnect,
+        }
+    }
+
+    /// Motion detection and the motion-triggered recording, run at ~2 Hz.
+    pub fn tick_motion(&mut self, i: usize) {
+        self.detect_motion(i);
+        self.drive_motion_recording(i);
+    }
 }
 
 /// Something that happened in the engine that the host should record and,
@@ -461,6 +606,16 @@ pub struct EngineEvent {
     /// `(title, body)` when the notification policy says to announce it
     /// (enabled, the kind is worth a message, the cooldown has elapsed).
     pub notification: Option<(String, String)>,
+}
+
+/// The result of [`Engine::tick_camera`].
+#[derive(Debug, Clone)]
+pub struct CameraTick {
+    pub fps: f64,
+    /// Fresh fps/bitrate/status for the sidebar row; `None` for a disabled camera.
+    pub reading: Option<StatusReading>,
+    /// The watchdog or the backoff timer says the pipeline must be rebuilt.
+    pub needs_reconnect: bool,
 }
 
 /// What a [`Engine::reconnect`] did.
@@ -756,5 +911,69 @@ mod tests {
         assert!(e.toggle_recording(0).is_err());
         assert_eq!(e.status[0], CameraStatus::Live, "status is untouched");
         assert!(e.take_events().is_empty(), "no event for a failed toggle");
+    }
+
+    #[test]
+    fn a_camera_that_went_down_raises_offline_and_arms_a_retry() {
+        let mut e = engine(1);
+        e.status[0] = CameraStatus::Live;
+        e.active_stream[0] = true;
+        // no pipeline: the bridge is neither live nor reconnecting → Offline
+        let tick = e.tick_camera(0, false);
+        assert_eq!(e.status[0], CameraStatus::Offline);
+        assert!(!tick.needs_reconnect, "the retry waits for its timer");
+        let events = e.take_events();
+        assert_eq!(events.len(), 1, "got {events:?}");
+        assert_eq!(events[0].kind, EventType::Offline);
+        assert!(
+            e.backoff_states[0].next_attempt.is_some(),
+            "a camera that is down must arm a retry"
+        );
+    }
+
+    #[test]
+    fn a_just_started_camera_shows_connecting_not_offline() {
+        let mut e = engine(1);
+        e.status[0] = CameraStatus::Connecting;
+        e.active_stream[0] = true;
+        e.connecting_since[0] = Some(Instant::now());
+        e.tick_camera(0, false);
+        assert_eq!(
+            e.status[0],
+            CameraStatus::Connecting,
+            "inside the connect grace"
+        );
+        assert!(e.take_events().is_empty());
+        assert!(
+            e.backoff_states[0].next_attempt.is_none(),
+            "no retry while the camera is still hand-shaking"
+        );
+    }
+
+    #[test]
+    fn the_connect_grace_expires() {
+        let mut e = engine(1);
+        e.status[0] = CameraStatus::Connecting;
+        e.active_stream[0] = true;
+        e.connecting_since[0] = Some(Instant::now() - Duration::from_secs(CONNECT_GRACE_SECS + 1));
+        e.tick_camera(0, false);
+        assert!(e.connecting_since[0].is_none());
+        assert_eq!(e.status[0], CameraStatus::Offline);
+        let events = e.take_events();
+        assert_eq!(
+            events.len(),
+            1,
+            "one Offline once the grace is over: {events:?}"
+        );
+        assert_eq!(events[0].kind, EventType::Offline);
+    }
+
+    #[test]
+    fn a_disabled_camera_reports_nothing() {
+        let mut e = engine(1);
+        e.status[0] = CameraStatus::Disabled;
+        let tick = e.tick_camera(0, false);
+        assert!(tick.reading.is_none());
+        assert_eq!(e.status[0], CameraStatus::Disabled);
     }
 }

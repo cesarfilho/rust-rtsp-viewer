@@ -10,24 +10,18 @@ use crate::domain::snapshot::BURST_INTERVAL_MS;
 use crate::domain::timeline::{EventType, TimelineEvent};
 use crate::domain::view;
 use crate::infrastructure::audio::{build_audio_pipeline_for_url, poll_level_bus};
-use crate::infrastructure::reconnect::ReconnectDecision;
 use crate::infrastructure::view_state::ViewStateFile;
 
 use super::app::PendingBurst;
 use super::bridge::now_unix_secs;
 use super::message::LayoutMode;
 use super::sidebar;
-use super::state::{BackoffState, Toast, VU_PEAK_DECAY_MS};
+use super::state::{Toast, VU_PEAK_DECAY_MS};
 use super::{App, Message};
 
 /// Focus target used to blur the search box: focusing an id that no widget
 /// owns makes iced unfocus everything.
 const BLUR_TARGET: &str = "__rrv_blur__";
-
-/// A freshly (re)started pipeline shows `CONNECTING` rather than
-/// `RECONNECTING` / `OFFLINE` for this long, so the grid doesn't flap amber
-/// while a dozen HLS feeds hand-shake.
-const CONNECT_GRACE_SECS: u64 = 12;
 
 pub fn update(app: &mut App, message: Message) -> Task<Message> {
     let task = update_inner(app, message);
@@ -629,11 +623,6 @@ fn persist_zones(app: &mut App, idx: usize) {
     crate::infrastructure::zone_state::save(&app.zones_file);
 }
 
-/// Called at ~2 Hz per live camera; the engine raises the event on the rising edge.
-fn detect_camera_motion(app: &mut App, i: usize) {
-    app.engine.detect_motion(i);
-}
-
 /// Record an event: the engine applies its notification policy and the host
 /// puts it on the timeline (see [`drain_engine_events`]).
 fn push_event(app: &mut App, camera_idx: usize, kind: EventType, description: Option<String>) {
@@ -943,157 +932,40 @@ fn update_frame(app: &mut App) -> Task<Message> {
             continue;
         }
 
-        let was_offline = matches!(
-            app.engine.status[i],
-            sidebar::CameraStatus::Offline | sidebar::CameraStatus::Reconnecting
-        );
+        let tick = app.engine.tick_camera(i, poll_slow_metrics);
 
-        let cam_label = app
-            .sidebar
-            .cameras
+        // The sidebar row is the UI's: sparkline history, mute and REC flags.
+        app.fps_history[i].push(tick.fps);
+        if app.fps_history[i].len() > 60 {
+            app.fps_history[i].remove(0);
+        }
+        let is_recording = app.engine.bridges[i]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_recording();
+        let is_muted = !app
+            .audio_states
             .get(i)
-            .map(|c| c.name.clone())
-            .unwrap_or_else(|| format!("Camera {}", i + 1));
-
-        // Everything that needs the bridge happens inside this block. The
-        // guard must be released before the reconnect path below re-locks the
-        // same mutex — `std::sync::Mutex` is not reentrant, so holding it
-        // across both deadlocks the UI thread permanently.
-        let (needs_reconnect, errored) = {
-            let mut bridge = app.engine.bridges[i]
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            bridge.poll_bus();
-            let fps = bridge.update_fps();
-            app.fps_history[i].push(fps);
-            if app.fps_history[i].len() > 60 {
-                app.fps_history[i].remove(0);
-            }
-            let metrics = bridge.metrics().clone();
-            metrics
-                .current_fps_x1000
-                .store((fps * 1000.0) as u64, Ordering::Relaxed);
-            metrics.is_live.store(bridge.is_live(), Ordering::Relaxed);
-            bridge.discover_rtp_jitterbuffers();
-            bridge.discover_decoder();
-            if poll_slow_metrics {
-                bridge.query_latency();
-                bridge.poll_rtp_stats();
-            }
-            if let Some(reading) = bridge.sample_status(&app.engine.status[i]) {
-                if let Some(status) = &reading.status {
-                    app.engine.status[i] = status.clone();
-                }
-                app.sidebar.cameras[i].apply(reading);
-            }
-            let hist = &mut app.sidebar.cameras[i].fps_history;
-            hist.push(fps);
-            if hist.len() > 16 {
-                hist.remove(0);
-            }
-            app.sidebar.cameras[i].is_muted = !app
-                .audio_states
-                .get(i)
-                .map(|s| s.is_audible())
-                .unwrap_or(false);
-            app.sidebar.cameras[i].is_recording = bridge.is_recording();
-
-            let is_live = bridge.is_live();
-            let is_uridecodebin = app
-                .engine
-                .camera_configs
-                .get(i)
-                .map(|c| {
-                    c.use_uridecodebin.unwrap_or(false)
-                        || c.url.starts_with("http://")
-                        || c.url.starts_with("https://")
-                })
-                .unwrap_or(false);
-
-            let backoff_due = app.engine.backoff_states[i].is_due();
-            let decision = app.engine.reconnect_states[i].tick(
-                is_live,
-                is_uridecodebin,
-                Some(fps),
-                backoff_due,
-                &cam_label,
-            );
-
-            if is_live && fps > 0.0 && matches!(decision, ReconnectDecision::None) {
-                app.engine.backoff_states[i].record_success();
-            }
-
-            let errored = bridge
-                .error_message
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .is_some();
-            let reconnect = match decision {
-                ReconnectDecision::Reconnect(reason) => {
-                    log::info!("[{}] Reconnecting: {}", cam_label, reason);
-                    true
-                }
-                ReconnectDecision::None => false,
-            };
-            (reconnect, errored)
-        };
-
-        // Log connectivity transitions once the status has been refreshed.
-        let now_offline = matches!(
-            app.engine.status[i],
-            sidebar::CameraStatus::Offline | sidebar::CameraStatus::Reconnecting
-        );
-        if was_offline && !now_offline {
-            push_event(app, i, EventType::Online, None);
-        } else if !was_offline && now_offline {
-            push_event(app, i, EventType::Offline, None);
+            .map(|s| s.is_audible())
+            .unwrap_or(false);
+        let row = &mut app.sidebar.cameras[i];
+        if let Some(reading) = tick.reading {
+            row.apply(reading);
         }
-
-        // Cosmetic: a pipeline we started in the last few seconds shows
-        // CONNECTING rather than flapping to RECONNECTING/OFFLINE while it
-        // hand-shakes. Cleared once it actually goes live.
-        match app.engine.connecting_since[i] {
-            Some(_) if app.engine.status[i] == sidebar::CameraStatus::Live => {
-                app.engine.connecting_since[i] = None;
-            }
-            Some(t) if t.elapsed().as_secs() < CONNECT_GRACE_SECS => {
-                if matches!(
-                    app.engine.status[i],
-                    sidebar::CameraStatus::Offline | sidebar::CameraStatus::Reconnecting
-                ) {
-                    app.engine.status[i] = sidebar::CameraStatus::Connecting;
-                }
-            }
-            Some(_) => app.engine.connecting_since[i] = None,
-            None => {}
+        row.fps_history.push(tick.fps);
+        if row.fps_history.len() > 16 {
+            row.fps_history.remove(0);
         }
+        row.is_muted = is_muted;
+        row.is_recording = is_recording;
 
-        // Down with no retry pending: schedule one. A pipeline that reported an
-        // error is dead, so it retries right away; otherwise wait out the
-        // connect grace. Without this a camera that fails right after starting
-        // is stuck on "Reconectando" forever (the watchdog only covers live
-        // RTSP stalls).
-        let down = matches!(
-            app.engine.status[i],
-            sidebar::CameraStatus::Offline | sidebar::CameraStatus::Reconnecting
-        );
-        if !needs_reconnect
-            && BackoffState::should_schedule_retry(
-                app.engine.connecting_since[i].is_some(),
-                down,
-                errored,
-            )
-        {
-            app.engine.backoff_states[i].arm_if_idle();
-        }
-
-        if needs_reconnect {
+        if tick.needs_reconnect {
+            let cam_label = app.engine.names[i].clone();
             reconnect_camera(app, i, &cam_label);
         }
 
         if poll_slow_metrics {
-            detect_camera_motion(app, i);
-            drive_motion_recording(app, i);
+            app.engine.tick_motion(i);
         }
 
         // Pull VU levels off the audio pipeline's bus (no GLib loop → no watch).
@@ -1448,12 +1320,6 @@ fn toggle_camera_recording(app: &mut App, idx: usize) -> Result<bool, String> {
     let is_recording = app.engine.toggle_recording(idx)?;
     app.is_recording = is_recording;
     Ok(is_recording)
-}
-
-/// `[recording] on_motion`: start recording on motion, stop after the
-/// post-roll of quiet. Runs right after each motion sample.
-fn drive_motion_recording(app: &mut App, i: usize) {
-    app.engine.drive_motion_recording(i);
 }
 
 /// Push a volume value to a running audio pipeline, if there is one.
