@@ -83,6 +83,9 @@ pub struct GStreamerBridge {
     /// Build the reduced detection branch when a pipeline starts. Off by
     /// default: with motion detection disabled it would be wasted work.
     pub detect_enabled: bool,
+    /// No window will show this camera (the daemon): skip the full-frame RGBA
+    /// conversion and copy. Must be set before the pipeline starts.
+    pub headless: bool,
     /// Most recent detection frame, `None` until the first one arrives.
     pub(crate) detect_frame: Arc<Mutex<Option<DetectFrame>>>,
     pub(crate) recording: Option<RecordingBranch>,
@@ -150,6 +153,7 @@ impl GStreamerBridge {
             start_time: now,
             recording_config: RecordingConfig::default(),
             detect_enabled: false,
+            headless: false,
             detect_frame: Arc::new(Mutex::new(None)),
             recording: None,
             recording_seq: 0,

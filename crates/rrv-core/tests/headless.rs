@@ -35,7 +35,7 @@ fn engine(url: &str, rec_dir: &Path, post_roll: u32) -> Engine {
         dir: Some(rec_dir.join("logs")),
         ..LogsConfigFile::default()
     };
-    Engine::new(EngineSettings {
+    let mut e = Engine::new(EngineSettings {
         cameras: &[cam],
         recording: &recording,
         // Mais sensível que o padrão: a bola do `videotestsrc`, comprimida a
@@ -54,7 +54,10 @@ fn engine(url: &str, rec_dir: &Path, post_roll: u32) -> Engine {
         pause_hidden: true,
         stagger: Duration::from_millis(100),
         zones: &ZonesFile::default(),
-    })
+    });
+    // Como o daemon: sem quadro RGBA de tela cheia.
+    e.set_headless();
+    e
 }
 
 /// Run `step` at the real tick until `done` says so or `secs` pass.

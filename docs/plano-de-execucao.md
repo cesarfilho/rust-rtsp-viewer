@@ -61,7 +61,7 @@ Depende de 0.4 e 0.5.
 |---|---|---|---|
 | 2.1 | Spike barato: `gst-plugin-va`, `vah264dec` na iGPU Intel, CPU com o caminho RGBA atual | número comparado ao baseline | P |
 | 2.2 | Em câmeras reais, conferir qual decoder o `decodebin` escolhe e se o `Via` mostra GPU | Inspector correto | P |
-| 2.3 | **Caminho NV12 + shader** (widget wgpu próprio): `appsink` em NV12, conversão na GPU (0,94 s contra 2,27 s por stream medidos) | 16 × 1080p no orçamento; fallback RGBA mantido | G–XG |
+| 2.3 | **Caminho NV12 + shader** (widget wgpu próprio): `appsink` em NV12, conversão na GPU (0,94 s contra 2,27 s por stream medidos) | 16 × 1080p no orçamento; fallback RGBA mantido | G–XG | [~] **parte do daemon feita:** sem janela não há conversão RGBA (−57% de CPU, `docs/baseline.md`); falta NV12 + shader na janela |
 | 2.4 | Zero-copy / PRIME offload (renderizar na NVIDIA) | só se 2.3 não bastar | XG |
 | 2.5 | Topologia B (ADR 0008): pipeline *detect* sempre ligado no sub + *display* só para o visível | decidido com 0.3, 0.4 (**D1**, **D2**) | G |
 | 2.6 | Ligar `streaming` (pausa em cena estática) | só se o baseline mostrar ganho; senão remover o módulo | M |

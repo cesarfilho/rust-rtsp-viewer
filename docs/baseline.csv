@@ -11,3 +11,5 @@ label,cams,live,cpu_avg_pct,cpu_max_pct,rss_mib,net_mbps,stream_mbps,fps_avg,res
 "11 HLS, max-threads=2 (2ª rodada)",11,11,149.9,203.6,945,23.46,15.71,26.3,1280x720/1920x1080,avdec_h264
 "11 HLS, decoder max-threads=1",11,11,153.3,217.5,805,24.01,20.83,26.7,1280x720/1920x1080,avdec_h264
 "11 HLS, decoder max-threads=4",11,11,156.9,205.7,1113,22.63,18.87,26.3,1280x720/1920x1080,avdec_h264
+"11 HLS, headless (sem RGBA)",11,11,61.5,76.2,631,23.02,18.89,26.0,1280x720/1920x1080,avdec_h264
+"12 câmeras COM movimento, headless",12,10,52.2,68.3,687,23.22,21.78,26.9,1280x720/1920x1080,avdec_h264

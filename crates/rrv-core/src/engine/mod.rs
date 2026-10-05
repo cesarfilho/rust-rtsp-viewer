@@ -870,6 +870,15 @@ impl Engine {
     /// notifications and builds no recording or detection branch; leaving it
     /// restores what the configuration asked for. Running streams are rebuilt
     /// so their branches match the new mode.
+    /// No window will ever show these cameras (the daemon): the pipelines skip
+    /// the full-frame RGBA conversion and copy. Call before the first `step`;
+    /// pipelines already running keep what they were built with.
+    pub fn set_headless(&mut self) {
+        for b in &self.bridges {
+            b.lock().unwrap_or_else(|e| e.into_inner()).headless = true;
+        }
+    }
+
     pub fn set_display_only(&mut self, display_only: bool) {
         if self.display_only == display_only {
             return;

@@ -128,6 +128,7 @@ fn run(cli: &Cli) -> Result<(), String> {
         stagger: Duration::from_millis(view.stagger_ms()),
         zones: &zones,
     });
+    engine.set_headless();
     log::info!(
         "rrv-daemon {}: {} câmera(s), gravação em {}",
         env!("CARGO_PKG_VERSION"),

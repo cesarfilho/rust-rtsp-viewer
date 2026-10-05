@@ -20,6 +20,8 @@ Câmeras: 1 Intelbras local (RTSP, 1080p principal / 480p sub) e 11 HLS pública
 | **11 HLS, `max-threads=2` (padrão)** | **143–150%** | **~940 MiB** | 24 Mb/s |
 | 11 HLS, `max-threads=4` | 157% | 1113 MiB | 23 Mb/s |
 | 12 câmeras, com detecção de movimento | 154% | 2369 MiB* | 24 Mb/s |
+| **11 HLS, daemon sem RGBA (headless)** | **62%** | **631 MiB** | 23 Mb/s |
+| **12 câmeras com movimento, headless** | **52%** | **687 MiB** | 23 Mb/s |
 
 \* medido antes do limite de threads. O custo da detecção ficou dentro do ruído.
 

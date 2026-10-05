@@ -125,7 +125,9 @@ fn insert_detect_branch(pipeline: &gst::Pipeline, bridge: &GStreamerBridge) -> R
          ! videorate name=detect_rate drop-only=true \
          ! video/x-raw,framerate={DETECT_FPS}/1 \
          ! videoscale \
-         ! video/x-raw,format=RGBA,width={DETECT_WIDTH},height={DETECT_HEIGHT} \
+         ! video/x-raw,width={DETECT_WIDTH},height={DETECT_HEIGHT} \
+         ! videoconvert \
+         ! video/x-raw,format=RGBA \
          ! appsink name=detect_sink sync=false async=false emit-signals=true max-buffers=1 drop=true"
     );
     let bin = gst::parse::bin_from_description(&desc, true)
@@ -245,33 +247,48 @@ fn setup_appsink(pipeline: &gst::Pipeline, bridge: &mut GStreamerBridge) -> Resu
     let frame = bridge.frame.clone();
     let metrics = bridge.metrics.clone();
     let is_live = bridge.is_live.clone();
+    let headless = bridge.headless;
+    if headless && let Some(filter) = pipeline.by_name("filter") {
+        // No RGBA conversion for a picture nobody shows: the decoder's own
+        // format flows on to the recording and detection branches.
+        filter.set_property("caps", gst::Caps::new_empty_simple("video/x-raw"));
+    }
     appsink.set_callbacks(
         gst_app::AppSinkCallbacks::builder()
             .new_sample(move |appsink| {
                 let sample = appsink.pull_sample().map_err(|_| gst::FlowError::Error)?;
                 let gst_buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
-                let map = gst_buffer
-                    .map_readable()
-                    .map_err(|_| gst::FlowError::Error)?;
                 let caps = sample.caps().ok_or(gst::FlowError::Error)?;
                 let structure = caps.structure(0).ok_or(gst::FlowError::Error)?;
                 let w = structure.get::<i32>("width").unwrap_or(0) as u32;
                 let h = structure.get::<i32>("height").unwrap_or(0) as u32;
 
-                // A frame whose byte count disagrees with its caps would make
-                // `Handle::from_rgba` render garbage and the snapshot encoder
-                // panic. Drop it instead.
-                let expected = w as usize * h as usize * 4;
-                if w == 0 || h == 0 || map.len() != expected {
-                    log::debug!(
-                        "Dropping malformed frame: {}x{} with {} bytes (expected {})",
-                        w,
-                        h,
-                        map.len(),
-                        expected
-                    );
-                    return Ok(gst::FlowSuccess::Ok);
-                }
+                // Headless: nobody looks at the picture, so the frame is not
+                // converted to RGBA nor copied; it only proves flow.
+                let bytes = if headless {
+                    Bytes::new()
+                } else {
+                    let map = gst_buffer
+                        .map_readable()
+                        .map_err(|_| gst::FlowError::Error)?;
+                    // A frame whose byte count disagrees with its caps would
+                    // make `Handle::from_rgba` render garbage and the snapshot
+                    // encoder panic. Drop it instead.
+                    let expected = w as usize * h as usize * 4;
+                    if w == 0 || h == 0 || map.len() != expected {
+                        log::debug!(
+                            "Dropping malformed frame: {}x{} with {} bytes (expected {})",
+                            w,
+                            h,
+                            map.len(),
+                            expected
+                        );
+                        return Ok(gst::FlowSuccess::Ok);
+                    }
+                    // Reference-counted, so the handle and the snapshot buffer
+                    // share one allocation instead of each taking a full copy.
+                    Bytes::copy_from_slice(&map)
+                };
 
                 // Frames are flowing → the stream is live, whatever a stale
                 // bus error left `is_live` at. Without this, one transient
@@ -280,11 +297,6 @@ fn setup_appsink(pipeline: &gst::Pipeline, bridge: &mut GStreamerBridge) -> Resu
                 // PLAYING), and the reconnect watchdog then rebuilds the
                 // pipeline every 15 s — freezing every camera on the UI thread.
                 is_live.store(true, Ordering::Relaxed);
-
-                // Reference-counted, so the handle and the snapshot buffer
-                // share one allocation instead of each taking a full copy.
-                let bytes = Bytes::copy_from_slice(&map);
-                drop(map);
 
                 // `bytes_counter` (bitrate) is fed from the decoder's sink pad
                 // — see `GStreamerBridge::discover_decoder`.
@@ -313,7 +325,7 @@ fn setup_appsink(pipeline: &gst::Pipeline, bridge: &mut GStreamerBridge) -> Resu
                 }
 
                 let frame_count = metrics.frame_count.load(Ordering::Relaxed);
-                if frame_count.is_multiple_of(SAMPLE_EVERY_N) {
+                if !headless && frame_count.is_multiple_of(SAMPLE_EVERY_N) {
                     sample_image_quality_rgba(&metrics, &bytes, w as usize, h as usize);
                 }
 
