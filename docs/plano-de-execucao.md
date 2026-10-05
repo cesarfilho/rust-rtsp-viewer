@@ -24,6 +24,7 @@ de saída, tamanhos e decisões pendentes (o como e o quando). Estado real do c�
 | D1 | ~~Posicionamento: video wall nativo ou NVR completo~~ → **decidido em 2026-10-05: NVR completo, com UX/UI muito bem definida** | (liberou M3 e M4) |
 | D2 | Câmeras reais: quantas, modelos, se aceitam 2 sessões RTSP, se têm sub-stream | 0.3, 0.4, 2.5 |
 | D3 | Licença do modelo de detecção (YOLO da Ultralytics é AGPL; o projeto também é, confirmar) | 4.1 |
+| D5 | Vídeo ao vivo no cliente: sessão própria (A), redistribuição pelo daemon (B, recomendada) ou memória compartilhada (C) — ADR 0010 | M2.5 (2.5.4), 2.5 |
 | D4 | Windows/macOS: manter só "compila" (ADR 0001) ou subir o nível | 5.6 |
 
 ## M0 — Fundação e medição (0.8.x)
@@ -68,6 +69,23 @@ Depende de 0.4 e 0.5.
 
 Gate M2: 16 câmeras dentro do orçamento do baseline. Risco principal: 2.3.
 
+## M2.5 — Motor sem janela (0.10.x) — ADR 0010
+O NVR grava e detecta com a janela fechada. **Vem antes do M3**: gravação, SQLite, retenção e IA
+passam a viver no daemon; construí-las dentro de `update.rs` e migrar depois custa muito mais.
+| # | Tarefa | Critério de saída | Tam. |
+|---|---|---|---|
+| 2.5.1 | Desacoplar o iced do motor: `Handle`/`Bytes` fora de `bridge`/`pipeline` (hoje ~5 pontos) | `bridge` e `pipeline` compilam sem `iced` | P |
+| 2.5.2 | Extrair a orquestração de `ui/update.rs` (reconexão, backoff, fila de partida, movimento, gravação por evento, notificações, eventos) para um módulo de motor sem `App` | o cliente atual usa o motor e todos os testes seguem verdes | G |
+| 2.5.3 | Workspace Cargo: `rrv-core` (domain + motor), `rrv-daemon`, cliente | `cargo build --workspace`; mesmo comportamento | M |
+| 2.5.4 | Vídeo ao vivo do daemon para o cliente (**D5**; medir antes com 0.3) | cliente mostra 16 câmeras com 1 sessão RTSP por câmera | G |
+| 2.5.5 | IPC por socket Unix (`0600`): comandos, eventos, versão do protocolo | cliente liga/desliga gravação, edita zonas, recebe eventos | G |
+| 2.5.6 | `rrv-daemon` headless + unit systemd de usuário (`Restart=on-failure`) | grava e detecta com a janela fechada; reinicia sozinho | M |
+| 2.5.7 | Cliente com estados de daemon (conectado, iniciando, ausente → motor embutido) e **spec de UX** (`docs/specs/ux-daemon.md`) | UX escrita antes do código; contraste testado | M |
+| 2.5.8 | Credenciais no keyring (antecipa 5.3): dois processos não devem repassar senha em texto | senha fora do `config.toml` e do IPC | M |
+
+Gate M2.5: fechar a janela não interrompe uma gravação em curso; matar o daemon com `kill -9`
+o reinicia e não deixa segmento corrompido (testes em `tests/`).
+
 ## M3 — Gravação e histórico (0.11)
 | # | Tarefa | Critério de saída | Tam. |
 |---|---|---|---|
@@ -98,7 +116,7 @@ entra só como integração de saída (5.4).
 |---|---|---|
 | 5.1 | ONVIF: descoberta (WS-Discovery) e assistente de cadastro; Profile T como base | G |
 | 5.2 | PTZ via `oxvif`, ligando `ptz.rs` (depende de 5.1) | M |
-| 5.3 | Credenciais no keyring (`secret-service`) | M |
+| 5.3 | Credenciais no keyring (`secret-service`) — antecipada para 2.5.8 | M |
 | 5.4 | MQTT/Home Assistant (`rumqttc`) para eventos e saúde por câmera | M |
 | 5.5 | i18n (pt-BR + en) e acessibilidade | G |
 | 5.6 | Empacotamento: AUR, AppImage/Flatpak, releases automáticas (`cargo-dist`) (**D4**) | M |
@@ -113,7 +131,7 @@ atalhos, contraste (testes de tema) e critério de aceite visual. Reaproveitar a
 `command_menu` único, `ThemeColors`, pip de status, `view::pinned`, ícones `icons::FONT`.
 
 ## Caminho crítico
-Depois de M0, `0.1 → 0.4 → M2` (escala) e `0.6 → M4` (IA) andam em paralelo. Ordens que
+Depois de M0, `0.1 → 0.4 → M2` (escala) e `0.6 → M4` (IA) andam em paralelo, mas **M2.5 antes de M3** (o motor sem janela é onde M3/M4 vivem). Ordens que
 não podem inverter: 0.5 antes de 2.3 · 3.1 antes de 3.6 · 1.2 antes de 4.3 · 0.4 antes de
 qualquer otimização.
 

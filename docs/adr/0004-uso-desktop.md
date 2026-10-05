@@ -1,5 +1,5 @@
 # 0004 — Uso: app desktop pessoal
-**Status:** Aceita
+**Status:** Substituída em parte pelo ADR 0010 (2026-10-05): o NVR passa a ter um daemon sem janela. O resto (Iced como interface, núcleo sem iced) segue valendo.
 
 ## Decisão
 Iced continua sendo a interface única. Sem serviço headless, sem API HTTP/MQTT no escopo atual.
