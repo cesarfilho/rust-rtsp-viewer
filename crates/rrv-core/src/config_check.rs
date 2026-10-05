@@ -204,6 +204,11 @@ pub fn validate(config: &Config) -> Vec<Issue> {
             ));
         }
     }
+    if let Some(r) = &config.retention
+        && let Err(message) = r.clone().into_config()
+    {
+        issues.push(Issue::error("retention", message));
+    }
     if let Some(w) = &config.webhook
         && let Err(message) = w.clone().into_config()
     {

@@ -26,6 +26,7 @@ thiserror = "1"
 chrono = { version = "0.4", features = ["clock"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+libc = "0.2.190"
 
 [dev-dependencies]
 toml = "0.8"

@@ -155,3 +155,11 @@ label = "Rio Jardim Sofia"
 # url = "https://ntfy.sh/meu-topico-secreto"
 # format = "json"       # "json" (padrão: camera, event, detail, title, message, time_unix) ou "ntfy"
 # timeout_secs = 5      # 1–60
+
+# ── Retenção das gravações (só o daemon) ─────────────────────────────────────
+# Roda a cada minuto. Apaga o arquivo e depois o registro; nunca toca em
+# segmento que está sendo gravado nem em trecho protegido.
+[retention]
+# motion_days = 7          # gravações por movimento ficam 7 dias (0 = sem limite de idade)
+# manual_days = 0          # gravações manuais/contínuas: 0 = não expiram por idade
+# max_disk_percent = 80    # nunca passar de 80% do disco (50–95); apaga o mais antigo

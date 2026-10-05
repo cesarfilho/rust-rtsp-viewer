@@ -16,11 +16,13 @@ use std::thread::JoinHandle;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::domain::retention::{self, Candidate, DiskUsage, RetentionConfig};
+
 /// Quanto antes da abertura de um segmento um evento ainda é dele.
 pub const LINK_BACK_MS: i64 = 10_000;
 
 /// Versão do esquema (`PRAGMA user_version`).
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Segment {
@@ -34,6 +36,8 @@ pub struct Segment {
     pub has_motion: bool,
     pub protected: bool,
     pub closed: bool,
+    /// `"motion"` (disparada por movimento) ou `"manual"` (pedida pela pessoa).
+    pub mode: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -119,6 +123,12 @@ impl Store {
                  PRAGMA user_version = 1;",
             )?;
         }
+        if version < 2 {
+            conn.execute_batch(
+                "ALTER TABLE segments ADD COLUMN mode TEXT NOT NULL DEFAULT 'manual';
+                 PRAGMA user_version = 2;",
+            )?;
+        }
         Ok(Self { conn })
     }
 
@@ -127,11 +137,17 @@ impl Store {
     /// Um evento de movimento é o que *dispara* a gravação por movimento, então chega
     /// um instante antes do segmento existir: os eventos da câmera dos últimos
     /// [`LINK_BACK_MS`] ainda sem segmento passam a apontar para este.
-    pub fn segment_opened(&self, camera: &str, path: &str, ts: i64) -> Result<i64, StoreError> {
+    pub fn segment_opened(
+        &self,
+        camera: &str,
+        path: &str,
+        ts: i64,
+        mode: &str,
+    ) -> Result<i64, StoreError> {
         let inserted = self.conn.execute(
-            "INSERT INTO segments (camera, path, ts_start) VALUES (?1, ?2, ?3)
+            "INSERT INTO segments (camera, path, ts_start, mode) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT (path) DO NOTHING",
-            params![camera, path, ts],
+            params![camera, path, ts, mode],
         )?;
         let id: i64 =
             self.conn
@@ -204,11 +220,12 @@ impl Store {
             has_motion: r.get::<_, i64>(6)? != 0,
             protected: r.get::<_, i64>(7)? != 0,
             closed: r.get::<_, i64>(8)? != 0,
+            mode: r.get(9)?,
         })
     }
 
     const SEGMENT_COLUMNS: &'static str =
-        "id, camera, path, ts_start, ts_end, bytes, has_motion, protected, closed";
+        "id, camera, path, ts_start, ts_end, bytes, has_motion, protected, closed, mode";
 
     /// Segmentos de `camera` que tocam o intervalo `[from, to]`, do mais antigo ao mais novo.
     pub fn segments_between(
@@ -299,6 +316,39 @@ impl Store {
         Ok(())
     }
 
+    /// Aplica a retenção: apaga (arquivo, depois linha) o que a política manda. Devolve
+    /// quantos segmentos e bytes saíram.
+    pub fn enforce_retention(
+        &self,
+        cfg: &RetentionConfig,
+        now_ms: i64,
+        disk: Option<DiskUsage>,
+    ) -> Result<(usize, u64), StoreError> {
+        let all = self.oldest_deletable(usize::MAX >> 1, None)?;
+        let candidates: Vec<Candidate> = all
+            .iter()
+            .map(|s| Candidate {
+                id: s.id,
+                ts_start: s.ts_start,
+                bytes: s.bytes.max(0) as u64,
+                mode: s.mode.clone(),
+            })
+            .collect();
+        let doomed = retention::plan(&candidates, now_ms, cfg, disk);
+        let (mut n, mut freed) = (0, 0u64);
+        for seg in all.iter().filter(|s| doomed.contains(&s.id)) {
+            match self.delete_segment(seg) {
+                Ok(()) => {
+                    n += 1;
+                    freed += seg.bytes.max(0) as u64;
+                }
+                // Um arquivo que não sai não impede os outros; a linha fica para a próxima.
+                Err(e) => log::warn!("retenção: não apaguei {}: {e}", seg.path),
+            }
+        }
+        Ok((n, freed))
+    }
+
     /// Na partida: fecha o que ficou aberto por uma queda e tira o que não tem arquivo.
     pub fn reconcile(&self) -> Result<Reconciled, StoreError> {
         let mut out = Reconciled::default();
@@ -358,6 +408,7 @@ pub enum StoreCmd {
         camera: String,
         path: String,
         ts: i64,
+        mode: String,
     },
     SegmentClosed {
         path: String,
@@ -369,6 +420,11 @@ pub enum StoreCmd {
         kind: String,
         label: String,
         score: Option<f64>,
+    },
+    /// Roda a retenção; `dir` é onde ficam as gravações (para medir o disco).
+    Retention {
+        cfg: RetentionConfig,
+        dir: PathBuf,
     },
 }
 
@@ -426,8 +482,24 @@ impl StoreHandle {
 
 fn apply(store: &Store, cmd: StoreCmd) -> Result<(), StoreError> {
     match cmd {
-        StoreCmd::SegmentOpened { camera, path, ts } => {
-            store.segment_opened(&camera, &path, ts)?;
+        StoreCmd::SegmentOpened {
+            camera,
+            path,
+            ts,
+            mode,
+        } => {
+            store.segment_opened(&camera, &path, ts, &mode)?;
+        }
+        StoreCmd::Retention { cfg, dir } => {
+            let now = chrono::Utc::now().timestamp_millis();
+            let (n, freed) =
+                store.enforce_retention(&cfg, now, crate::infrastructure::disk::usage(&dir))?;
+            if n > 0 {
+                log::info!(
+                    "retenção: {n} segmento(s) apagado(s), {} MiB liberados",
+                    freed >> 20
+                );
+            }
         }
         StoreCmd::SegmentClosed { path, ts_end } => {
             let bytes = std::fs::metadata(&path)
@@ -462,7 +534,8 @@ mod tests {
     #[test]
     fn a_segment_goes_from_open_to_closed() {
         let s = Store::open_in_memory().unwrap();
-        s.segment_opened("garagem", "/r/a.mkv", 1_000).unwrap();
+        s.segment_opened("garagem", "/r/a.mkv", 1_000, "manual")
+            .unwrap();
         let open = s.segments_between("garagem", 0, 10_000).unwrap();
         assert_eq!(open.len(), 1);
         assert!(!open[0].closed && open[0].ts_end.is_none());
@@ -476,8 +549,8 @@ mod tests {
     #[test]
     fn opening_the_same_path_twice_keeps_one_row() {
         let s = Store::open_in_memory().unwrap();
-        let a = s.segment_opened("c", "/r/a.mkv", 1).unwrap();
-        let b = s.segment_opened("c", "/r/a.mkv", 2).unwrap();
+        let a = s.segment_opened("c", "/r/a.mkv", 1, "manual").unwrap();
+        let b = s.segment_opened("c", "/r/a.mkv", 2, "manual").unwrap();
         assert_eq!(a, b);
         assert_eq!(s.segments_between("c", 0, 10).unwrap().len(), 1);
     }
@@ -487,10 +560,11 @@ mod tests {
         let s = Store::open_in_memory().unwrap();
         for (i, (a, b)) in [(0, 99), (100, 199), (200, 299)].into_iter().enumerate() {
             let p = format!("/r/{i}.mkv");
-            s.segment_opened("c", &p, a).unwrap();
+            s.segment_opened("c", &p, a, "manual").unwrap();
             s.segment_closed(&p, b, 1).unwrap();
         }
-        s.segment_opened("outra", "/r/x.mkv", 150).unwrap();
+        s.segment_opened("outra", "/r/x.mkv", 150, "manual")
+            .unwrap();
         let got = s.segments_between("c", 150, 250).unwrap();
         assert_eq!(
             got.iter().map(|g| g.path.as_str()).collect::<Vec<_>>(),
@@ -501,7 +575,7 @@ mod tests {
     #[test]
     fn a_motion_event_links_to_its_segment_and_marks_it() {
         let s = Store::open_in_memory().unwrap();
-        let id = s.segment_opened("c", "/r/a.mkv", 100).unwrap();
+        let id = s.segment_opened("c", "/r/a.mkv", 100, "manual").unwrap();
         s.insert_event("c", 150, "motion", "", Some(0.4)).unwrap();
         s.segment_closed("/r/a.mkv", 200, 1).unwrap();
         s.insert_event("c", 5_000, "offline", "", None).unwrap(); // fora de qualquer segmento
@@ -525,7 +599,7 @@ mod tests {
         s.insert_event("c", 19_000, "motion", "", None).unwrap(); // antes do segmento
         s.insert_event("c", 5_000, "motion", "", None).unwrap(); // velho demais
         s.insert_event("outra", 19_500, "motion", "", None).unwrap();
-        let id = s.segment_opened("c", "/r/a.mkv", 20_000).unwrap();
+        let id = s.segment_opened("c", "/r/a.mkv", 20_000, "manual").unwrap();
         let ev = s.events_between(None, 0, i64::MAX).unwrap();
         let linked: Vec<_> = ev.iter().filter(|e| e.segment_id == Some(id)).collect();
         assert_eq!(linked.len(), 1);
@@ -538,7 +612,7 @@ mod tests {
         let s = Store::open_in_memory().unwrap();
         for (i, ts) in [10, 20, 30].into_iter().enumerate() {
             let p = format!("/r/{i}.mkv");
-            let id = s.segment_opened("c", &p, ts).unwrap();
+            let id = s.segment_opened("c", &p, ts, "manual").unwrap();
             if i < 2 {
                 s.segment_closed(&p, ts + 5, 100).unwrap();
             }
@@ -560,14 +634,14 @@ mod tests {
         std::fs::write(&f, b"x").unwrap();
         let s = Store::open_in_memory().unwrap();
         let p = f.to_string_lossy().to_string();
-        s.segment_opened("c", &p, 1).unwrap();
+        s.segment_opened("c", &p, 1, "manual").unwrap();
         s.segment_closed(&p, 2, 1).unwrap();
         let seg = s.oldest_deletable(1, None).unwrap().remove(0);
         s.delete_segment(&seg).unwrap();
         assert!(!f.exists());
         assert!(s.segments_between("c", 0, 10).unwrap().is_empty());
         // arquivo já ausente: só a linha, sem erro
-        s.segment_opened("c", &p, 1).unwrap();
+        s.segment_opened("c", &p, 1, "manual").unwrap();
         s.segment_closed(&p, 2, 1).unwrap();
         let seg = s.oldest_deletable(1, None).unwrap().remove(0);
         s.delete_segment(&seg).unwrap();
@@ -587,11 +661,11 @@ mod tests {
 
         {
             let s = Store::open(&db).unwrap();
-            s.segment_opened("c", &alive.to_string_lossy(), 1_000)
+            s.segment_opened("c", &alive.to_string_lossy(), 1_000, "manual")
                 .unwrap();
-            s.segment_opened("c", &empty.to_string_lossy(), 2_000)
+            s.segment_opened("c", &empty.to_string_lossy(), 2_000, "manual")
                 .unwrap();
-            s.segment_opened("c", &gone, 3_000).unwrap();
+            s.segment_opened("c", &gone, 3_000, "manual").unwrap();
             // "queda": nada foi fechado.
         }
         let s = Store::open(&db).unwrap();
@@ -612,6 +686,67 @@ mod tests {
         std::fs::remove_file(&alive).unwrap();
         assert_eq!(s.reconcile().unwrap().missing, 1);
         assert!(s.segments_between("c", 0, i64::MAX).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn retention_deletes_old_motion_files_and_rows_but_spares_protected_and_open() {
+        let d = tmp("retention");
+        let s = Store::open_in_memory().unwrap();
+        let day = 86_400_000i64;
+        let now = 100 * day;
+        let mk = |name: &str, days_ago: i64, mode: &str, closed: bool| {
+            let f = d.join(name);
+            std::fs::write(&f, vec![0u8; 10]).unwrap();
+            let p = f.to_string_lossy().to_string();
+            let id = s
+                .segment_opened("c", &p, now - days_ago * day, mode)
+                .unwrap();
+            if closed {
+                s.segment_closed(&p, now - days_ago * day + 1, 10).unwrap();
+            }
+            (id, f)
+        };
+        let (_, old) = mk("old.mkv", 10, "motion", true);
+        let (prot_id, protected) = mk("prot.mkv", 10, "motion", true);
+        s.set_protected(prot_id, true).unwrap();
+        let (_, open) = mk("open.mkv", 10, "motion", false);
+        let (_, manual) = mk("manual.mkv", 10, "manual", true);
+        let (_, fresh) = mk("fresh.mkv", 1, "motion", true);
+
+        let (n, freed) = s
+            .enforce_retention(&RetentionConfig::default(), now, None)
+            .unwrap();
+        assert_eq!((n, freed), (1, 10));
+        assert!(!old.exists());
+        for kept in [&protected, &open, &manual, &fresh] {
+            assert!(kept.exists(), "{} não devia sair", kept.display());
+        }
+        assert_eq!(s.segments_between("c", 0, i64::MAX).unwrap().len(), 4);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_version_1_database_is_migrated_keeping_its_rows() {
+        let d = tmp("migrate");
+        let db = d.join("h.db");
+        {
+            let c = Connection::open(&db).unwrap();
+            c.execute_batch(
+                "CREATE TABLE segments (id INTEGER PRIMARY KEY, camera TEXT NOT NULL,
+                   path TEXT NOT NULL UNIQUE, ts_start INTEGER NOT NULL, ts_end INTEGER,
+                   bytes INTEGER NOT NULL DEFAULT 0, has_motion INTEGER NOT NULL DEFAULT 0,
+                   protected INTEGER NOT NULL DEFAULT 0, closed INTEGER NOT NULL DEFAULT 0);
+                 CREATE TABLE events (id INTEGER PRIMARY KEY, camera TEXT NOT NULL, ts INTEGER NOT NULL,
+                   kind TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', score REAL, segment_id INTEGER);
+                 INSERT INTO segments (camera, path, ts_start, closed) VALUES ('c', '/r/a.mkv', 5, 1);
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        }
+        let s = Store::open(&db).unwrap();
+        let seg = &s.segments_between("c", 0, 100).unwrap()[0];
+        assert_eq!(seg.mode, "manual", "o que já existia vira manual");
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -639,6 +774,7 @@ mod tests {
             camera: "c".into(),
             path: p.clone(),
             ts: 100,
+            mode: "manual".into(),
         });
         h.send(StoreCmd::Event {
             camera: "c".into(),

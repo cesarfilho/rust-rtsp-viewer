@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use rrv_core::engine::{Engine, EngineEvent, EngineSettings, TICK_MS};
+use rrv_core::infrastructure::store::StoreCmd;
 use rrv_core::ipc::handler::Host;
 use rrv_core::ipc::protocol::WireEvent;
 use rrv_core::ipc::server::IpcServer;
@@ -114,6 +115,11 @@ fn run(cli: &Cli) -> Result<(), String> {
         notify.enabled = true;
         log::info!("webhook ligado: {}", w.target());
     }
+    let retention = config
+        .retention
+        .map(|r| r.into_config())
+        .transpose()?
+        .unwrap_or_default();
     let logs = config.logs.unwrap_or_default();
     let view = config.view.unwrap_or_default();
     let mut zones = rrv_core::infrastructure::zone_state::load();
@@ -170,6 +176,15 @@ fn run(cli: &Cli) -> Result<(), String> {
             zones_file: &mut zones,
             persist: true,
         });
+        // A cada minuto (e na partida): apaga o que passou da idade ou do limite de disco.
+        if tick.is_multiple_of(RETENTION_EVERY_TICKS)
+            && let Some(store) = &engine.store
+        {
+            store.send(StoreCmd::Retention {
+                cfg: retention,
+                dir: recording.dir.clone(),
+            });
+        }
         let events = engine.step(tick);
         let now = unix_secs();
         let wire: Vec<WireEvent> = events
@@ -206,6 +221,9 @@ fn run(cli: &Cli) -> Result<(), String> {
 /// O host do motor entrega os eventos: aqui só registra no log. O webhook/MQTT
 /// de saída (plano 2.5.11) entra neste ponto, com o `notification` que a
 /// política do motor já decidiu.
+/// A retenção roda a cada minuto.
+const RETENTION_EVERY_TICKS: u64 = 600;
+
 fn log_event(engine: &Engine, event: &EngineEvent) {
     let name = engine.names.get(event.camera).map_or("?", String::as_str);
     match &event.detail {

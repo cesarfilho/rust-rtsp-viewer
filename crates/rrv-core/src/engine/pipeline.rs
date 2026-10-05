@@ -607,6 +607,7 @@ impl GStreamerBridge {
         let current_segment = Arc::new(Mutex::new(None::<String>));
         if let Some((store, camera)) = self.store.clone() {
             let current = current_segment.clone();
+            let mode = self.recording_mode.to_string();
             let pattern = location.to_string_lossy().to_string();
             sink.connect("format-location", false, move |args| {
                 let id = args[1].get::<u32>().unwrap_or(0);
@@ -623,6 +624,7 @@ impl GStreamerBridge {
                     camera: camera.clone(),
                     path: path.clone(),
                     ts: now,
+                    mode: mode.clone(),
                 });
                 Some(path.to_value())
             });

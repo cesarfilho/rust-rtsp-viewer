@@ -532,6 +532,12 @@ impl Engine {
     /// sub-stream would save a low-resolution file: move to the main stream
     /// first (`wanted_quality` then leaves it alone until the recording stops).
     pub fn toggle_recording(&mut self, i: usize) -> Result<bool, String> {
+        self.toggle_recording_as(i, "manual")
+    }
+
+    /// Like [`Engine::toggle_recording`], saying why a recording that starts does
+    /// (`"motion"` or `"manual"`): retention treats them differently.
+    fn toggle_recording_as(&mut self, i: usize, mode: &'static str) -> Result<bool, String> {
         if self.display_only {
             return Err("a gravação é feita pelo daemon".into());
         }
@@ -542,10 +548,11 @@ impl Engine {
         if starting && self.stream_quality.get(i) == Some(&StreamQuality::Sub) {
             self.restart_stream(i, StreamQuality::Main);
         }
-        let recording = self.bridges[i]
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .toggle_recording()?;
+        let recording = {
+            let mut b = self.bridges[i].lock().unwrap_or_else(|e| e.into_inner());
+            b.recording_mode = mode;
+            b.toggle_recording()?
+        };
         self.status[i] = if recording {
             CameraStatus::Recording
         } else {
@@ -652,10 +659,12 @@ impl Engine {
         );
         match action {
             crate::domain::recording::MotionRecAction::None => {}
-            crate::domain::recording::MotionRecAction::Start => match self.toggle_recording(i) {
-                Ok(_) => self.auto_recording[i] = true,
-                Err(e) => log::warn!("Motion recording could not start on camera {i}: {e}"),
-            },
+            crate::domain::recording::MotionRecAction::Start => {
+                match self.toggle_recording_as(i, "motion") {
+                    Ok(_) => self.auto_recording[i] = true,
+                    Err(e) => log::warn!("Motion recording could not start on camera {i}: {e}"),
+                }
+            }
             crate::domain::recording::MotionRecAction::Stop => {
                 if let Err(e) = self.toggle_recording(i) {
                     log::warn!("Motion recording could not stop on camera {i}: {e}");

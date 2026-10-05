@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod disk;
 pub mod launch;
 pub mod notify;
 pub mod reconnect;

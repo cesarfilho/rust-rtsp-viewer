@@ -40,6 +40,9 @@ pub struct Config {
     /// `[motion]` — frame-difference detector tuning (`enabled`, `threshold`,
     /// `contour_area`, `sample_stride`).
     pub motion: Option<crate::domain::motion::MotionConfigFile>,
+    /// `[retention]` — how long the daemon keeps recordings (`motion_days`,
+    /// `manual_days`, `max_disk_percent`).
+    pub retention: Option<crate::domain::retention::RetentionFile>,
 }
 
 /// Flat mirror of the `[notifications]` section.

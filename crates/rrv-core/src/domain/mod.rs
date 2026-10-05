@@ -19,6 +19,7 @@ pub mod notify;
 pub mod ptz;
 pub mod recording;
 pub mod redact;
+pub mod retention;
 pub mod snapshot;
 pub mod streaming;
 pub mod timelapse;

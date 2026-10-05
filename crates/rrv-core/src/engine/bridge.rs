@@ -93,6 +93,8 @@ pub struct GStreamerBridge {
     /// No window will show this camera (the daemon): skip the full-frame RGBA
     /// conversion and copy. Must be set before the pipeline starts.
     pub headless: bool,
+    /// Why the next recording starts: `"motion"` or `"manual"` (retention rules differ).
+    pub recording_mode: &'static str,
     /// History database and this camera's name (set by `Engine::set_store`).
     pub store: Option<(crate::infrastructure::store::StoreHandle, String)>,
     /// Most recent detection frame, `None` until the first one arrives.
@@ -163,6 +165,7 @@ impl GStreamerBridge {
             recording_config: RecordingConfig::default(),
             detect_enabled: false,
             headless: false,
+            recording_mode: "manual",
             store: None,
             detect_frame: Arc::new(Mutex::new(None)),
             recording: None,
