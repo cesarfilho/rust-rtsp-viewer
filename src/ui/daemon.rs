@@ -80,6 +80,15 @@ pub enum Modal {
 }
 
 impl Modal {
+    /// A confirmação ao sair, se for o caso: só quando fechar a janela cortaria
+    /// gravações que **ela mesma** está fazendo (motor local). Com um daemon, ou
+    /// sem nada gravando, fecha direto.
+    pub fn for_quit(local_recordings: usize) -> Option<Modal> {
+        (local_recordings > 0).then_some(Modal::Quit {
+            recordings: local_recordings,
+        })
+    }
+
     pub fn title(&self) -> &'static str {
         match self {
             Modal::UseLocalEngine => "Usar o motor local?",
@@ -557,6 +566,13 @@ mod tests {
         })
         .collect();
         assert_eq!(glyphs.len(), 6, "dois modos com a mesma forma");
+    }
+
+    #[test]
+    fn quitting_asks_only_when_it_would_cut_a_local_recording() {
+        assert_eq!(Modal::for_quit(0), None, "nada gravando: fecha direto");
+        assert_eq!(Modal::for_quit(1), Some(Modal::Quit { recordings: 1 }));
+        assert_eq!(Modal::for_quit(4), Some(Modal::Quit { recordings: 4 }));
     }
 
     #[test]

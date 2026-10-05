@@ -393,12 +393,12 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
             update(app, *inner)
         }
         Message::QuitRequested => {
-            let recordings = local_recording_count(app);
-            if recordings > 0 {
-                app.modal = Some(super::daemon::Modal::Quit { recordings });
-                Task::none()
-            } else {
-                update(app, Message::Quit)
+            match super::daemon::Modal::for_quit(local_recording_count(app)) {
+                Some(modal) => {
+                    app.modal = Some(modal);
+                    Task::none()
+                }
+                None => update(app, Message::Quit),
             }
         }
         Message::ToggleDaemonMenu => {
@@ -1843,5 +1843,280 @@ mod tests {
         // `advance_burst` is driven by the frame tick, so a burst would be
         // paced wrong if these two ever diverged.
         assert_eq!(BURST_INTERVAL_MS, super::super::subscription::TICK_MS);
+    }
+
+    // ---- a janela e o daemon (spec ux-daemon.md) ----
+
+    use crate::ipc::protocol::{CameraInfo, Request, Response};
+    use crate::ui::daemon::{DaemonState, Modal, Mode, PendingRequest};
+
+    /// Uma janela de verdade (sem iniciar pipelines) com uma câmera "Portão".
+    fn test_app() -> App {
+        let cam: crate::config::CameraConfig =
+            toml::from_str("url = \"rtsp://127.0.0.1:9/x\"\nname = \"Portão\"").unwrap();
+        let dir = std::env::temp_dir().join(format!("rrv-ui-test-{}", std::process::id()));
+        let (app, _task) = crate::ui::app::new_app(
+            vec![cam],
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            "cosmic".into(),
+            crate::config::LogsConfigFile {
+                dir: Some(dir),
+                ..Default::default()
+            },
+            Vec::new(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            crate::ui::DaemonOptions {
+                embedded: true,
+                socket: Some("/nonexistent/rrv.sock".into()),
+            },
+        );
+        app
+    }
+
+    fn info(name: &str, recording: bool) -> CameraInfo {
+        CameraInfo {
+            index: 0,
+            name: name.into(),
+            status: "live".into(),
+            enabled: true,
+            recording,
+            motion: false,
+            stream: "main".into(),
+        }
+    }
+
+    /// Põe a janela em modo "conectado" a um daemon que (não) existe de verdade:
+    /// há um `DaemonLink`, então os pedidos saem, e o estado é o que o teste manda.
+    fn connected(app: &mut App, recording: bool) {
+        app.link = Some(crate::ipc::link::DaemonLink::spawn(
+            "/nonexistent/rrv.sock".into(),
+        ));
+        app.daemon = DaemonState::connecting("/nonexistent/rrv.sock".into());
+        app.daemon.mode = Mode::Connected;
+        app.daemon.server = "rrv-daemon test".into();
+        app.daemon.cameras = vec![info("Portão", recording)];
+        app.engine.set_display_only(true);
+        app.sidebar.selected = Some(0);
+    }
+
+    #[test]
+    fn a_window_without_a_daemon_starts_in_the_local_engine() {
+        let app = test_app();
+        assert_eq!(app.daemon.mode, Mode::Embedded);
+        assert!(app.link.is_none());
+        assert!(!app.engine.display_only);
+    }
+
+    #[test]
+    fn with_a_daemon_the_window_only_shows() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        assert!(app.engine.display_only, "a janela não grava nem detecta");
+        assert!(app.engine.toggle_recording(0).is_err());
+    }
+
+    #[test]
+    fn recording_is_only_shown_after_the_daemon_confirms() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        let _ = update(&mut app, Message::ToggleRecording);
+        // o pedido saiu e está pendente: nada de REC ainda
+        assert_eq!(app.pending.len(), 1);
+        assert!(matches!(
+            app.pending.values().next(),
+            Some(PendingRequest::ToggleRecording { camera }) if camera == "Portão"
+        ));
+        assert!(!app.is_recording && !app.sidebar.cameras[0].is_recording);
+        // apertar de novo enquanto espera não manda outro pedido
+        let _ = update(&mut app, Message::ToggleRecording);
+        assert_eq!(app.pending.len(), 1, "um pedido por vez");
+    }
+
+    #[test]
+    fn a_daemon_error_becomes_a_toast_and_the_state_does_not_change() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        let _ = update(&mut app, Message::ToggleRecording);
+        let token = *app.pending.keys().next().unwrap();
+        let toasts_before = app.toasts.len();
+        handle_reply(
+            &mut app,
+            token,
+            Ok(Response::Error {
+                message: "a câmera não está rodando".into(),
+            }),
+        );
+        assert!(app.pending.is_empty());
+        assert_eq!(app.toasts.len(), toasts_before + 1);
+        assert!(
+            app.toasts
+                .last()
+                .unwrap()
+                .message
+                .contains("Falha na gravação")
+        );
+        assert!(!app.is_recording, "nunca REC sem confirmação");
+    }
+
+    #[test]
+    fn without_a_connection_nothing_is_sent_and_the_user_is_told() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        app.daemon.mode = Mode::Lost;
+        let _ = update(&mut app, Message::ToggleRecording);
+        assert!(app.pending.is_empty());
+        assert!(!app.toasts.is_empty());
+    }
+
+    #[test]
+    fn rec_comes_from_the_daemon_by_camera_name() {
+        let mut app = test_app();
+        connected(&mut app, true);
+        app.engine.status[0] = sidebar::CameraStatus::Live;
+        sync_status_rows(&mut app);
+        assert!(app.sidebar.cameras[0].is_recording);
+        assert_eq!(
+            app.sidebar.cameras[0].status,
+            sidebar::CameraStatus::Recording
+        );
+        // o daemon para de gravar: volta a ao vivo
+        app.daemon.cameras[0].recording = false;
+        sync_status_rows(&mut app);
+        assert!(!app.sidebar.cameras[0].is_recording);
+        assert_eq!(app.sidebar.cameras[0].status, sidebar::CameraStatus::Live);
+        // uma câmera que o daemon não conhece não ganha REC
+        app.daemon.cameras[0].name = "Outra".into();
+        app.daemon.cameras[0].recording = true;
+        sync_status_rows(&mut app);
+        assert!(!app.sidebar.cameras[0].is_recording);
+    }
+
+    #[test]
+    fn zones_stay_in_the_editor_when_the_daemon_refuses() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        let drawing = vec![
+            crate::domain::zones::Point::new(0.1, 0.1),
+            crate::domain::zones::Point::new(0.9, 0.1),
+            crate::domain::zones::Point::new(0.5, 0.9),
+        ];
+        app.zone_edit = Some(crate::ui::app::ZoneEdit {
+            camera_idx: 0,
+            temp_vertices: drawing.clone(),
+            saving: false,
+        });
+        finish_zone(&mut app);
+        assert!(
+            app.zone_edit.as_ref().unwrap().saving,
+            "aguardando o daemon"
+        );
+        assert!(
+            app.engine.zones[0].zones.is_empty(),
+            "nada é aplicado antes da confirmação"
+        );
+        let token = *app.pending.keys().next().unwrap();
+        handle_reply(
+            &mut app,
+            token,
+            Ok(Response::Error {
+                message: "zona inválida".into(),
+            }),
+        );
+        let edit = app.zone_edit.as_ref().expect("o editor continua aberto");
+        assert_eq!(edit.temp_vertices.len(), 3, "o desenho está intacto");
+        assert!(!edit.saving);
+        assert!(app.engine.zones[0].zones.is_empty());
+    }
+
+    #[test]
+    fn zones_are_applied_and_the_drawing_cleared_when_the_daemon_confirms() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        app.zone_edit = Some(crate::ui::app::ZoneEdit {
+            camera_idx: 0,
+            temp_vertices: vec![
+                crate::domain::zones::Point::new(0.1, 0.1),
+                crate::domain::zones::Point::new(0.9, 0.1),
+                crate::domain::zones::Point::new(0.5, 0.9),
+            ],
+            saving: false,
+        });
+        finish_zone(&mut app);
+        let token = *app.pending.keys().next().unwrap();
+        handle_reply(&mut app, token, Ok(Response::Ok));
+        assert_eq!(app.engine.zones[0].zones.len(), 1);
+        assert!(app.zone_edit.as_ref().unwrap().temp_vertices.is_empty());
+    }
+
+    #[test]
+    fn closing_without_local_recordings_does_not_ask() {
+        let mut app = test_app();
+        let _ = update(&mut app, Message::QuitRequested);
+        assert!(app.modal.is_none(), "nada gravando: fecha direto");
+    }
+
+    #[test]
+    fn with_a_daemon_closing_never_asks() {
+        let mut app = test_app();
+        connected(&mut app, true);
+        assert_eq!(local_recording_count(&app), 0);
+        let _ = update(&mut app, Message::QuitRequested);
+        assert!(app.modal.is_none(), "o daemon segue gravando");
+    }
+
+    #[test]
+    fn a_modal_traps_the_keyboard_enter_accepts_esc_declines() {
+        use iced::keyboard::{Key, Modifiers, key::Named};
+        let mut app = test_app();
+        app.modal = Some(Modal::Quit { recordings: 2 });
+        // outras teclas não disparam nada na interface de trás
+        let _ = handle_key(&mut app, Key::Character("r".into()), Modifiers::empty());
+        assert!(app.modal.is_some() && app.pending.is_empty());
+        // Esc recusa
+        let _ = handle_key(&mut app, Key::Named(Named::Escape), Modifiers::empty());
+        assert!(app.modal.is_none());
+    }
+
+    #[test]
+    fn using_the_local_engine_takes_over_recording() {
+        let mut app = test_app();
+        connected(&mut app, true);
+        app.pending.insert(
+            9,
+            PendingRequest::SetEnabled {
+                camera: "Portão".into(),
+            },
+        );
+        use_local_engine(&mut app);
+        assert_eq!(app.daemon.mode, Mode::Embedded);
+        assert!(app.link.is_none() && app.pending.is_empty());
+        assert!(!app.engine.display_only, "agora a janela grava e detecta");
+    }
+
+    #[test]
+    fn losing_the_daemon_never_switches_to_the_local_engine_by_itself() {
+        let mut app = test_app();
+        connected(&mut app, true);
+        let _ = app.daemon.apply(crate::ipc::link::LinkEvent::Lost {
+            reason: "x".into(),
+            retry_in: std::time::Duration::from_secs(1),
+        });
+        assert_eq!(app.daemon.mode, Mode::Lost);
+        assert!(app.engine.display_only, "segue só mostrando");
+        assert!(app.daemon.banner().is_some());
+    }
+
+    #[test]
+    fn requests_use_the_daemons_index_found_by_name() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        app.daemon.cameras[0].index = 7; // o daemon numera diferente
+        assert_eq!(daemon_index(&mut app, "Portão"), Some(7));
+        assert_eq!(daemon_index(&mut app, "Quintal"), None);
+        let _ = Request::Status;
     }
 }

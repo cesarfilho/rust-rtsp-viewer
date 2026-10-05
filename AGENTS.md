@@ -93,7 +93,16 @@ is single-threaded) and `client::IpcClient` is the window's / `rrvctl`'s side. R
 `subscribe` (pushes `WireEvent`s), `toggle_recording`, `set_camera_enabled`, `get_zones`,
 `set_zones` (stored by camera *name*, never by URL). A second daemon on a live socket is refused;
 a stale socket file is replaced. `rrvctl status|record|enable|disable|zones|events` is the CLI.
-The window does not use the channel yet (plan 2.5.7, after its UX spec).
+The window uses it (plan 2.5.7, spec `docs/specs/ux-daemon.md`): `ipc::link::DaemonLink` keeps the
+connection on its own thread (1 s heartbeat, 5 s timeout, 1/2/4/8/15 s backoff; `Incompatible` and
+`NoPermission` never retry by themselves) and `ui::daemon::DaemonState` is the pure reducer that
+decides mode, chip text and banner. **With a daemon the window's `Engine` is `display_only`** (no
+detection branch, no recording, no notifications, no events of its own): two owners would do
+everything twice. Requests go through `update::send_to_daemon` and **nothing is applied locally
+before the daemon confirms** (REC, zones); cameras are matched to the daemon's by *name*, never
+index. Losing the daemon does NOT fall back to the local engine (it may still be recording): the
+user chooses (banner / chip menu, with a confirmation). The banner takes height, so grid sizing and
+pointer tracking use `view::chrome_top`, not `TOOLBAR_HEIGHT`.
 
 ## Source layout
 

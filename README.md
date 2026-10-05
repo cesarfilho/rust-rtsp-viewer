@@ -321,6 +321,28 @@ NVIDIA exige o `nvidia-container-toolkit`), nem aviso de movimento com a janela 
 tarefa 2.5.11): por ora os eventos vão para `docker compose logs`. A imagem tem ~1 GB (plugins
 `bad`/`ugly`/`libav` do GStreamer).
 
+### A janela com o daemon
+
+Ao abrir, a janela procura o socket do daemon (`$XDG_RUNTIME_DIR/rrv/rrv.sock`). **Sem socket, usa o
+motor local** e funciona como sempre. Com socket, conecta, e **só mostra**: quem grava, detecta
+movimento e avisa é o daemon (senão tudo sairia em dobro). O **chip** à esquerda do medidor de saúde
+diz em que modo está; clique nele para o menu.
+
+| Chip | Significa |
+|---|---|
+| `○ Motor local` | Não há daemon: a janela grava e detecta. **Fechá-la interrompe as gravações** (ela pergunta antes). |
+| `● Daemon · conectado` | O daemon grava. Fechar a janela não interrompe nada. |
+| `◐ Daemon · sem resposta` | Contato perdido: banner âmbar, tenta reconectar sozinha. As câmeras *podem* não estar gravando. |
+| `▲ Daemon · versão incompatível` | A janela e o daemon falam versões diferentes: atualize um dos dois. |
+| `■ Daemon · sem permissão` | O socket é de outro usuário. |
+
+- Ao perder o daemon a janela **não** troca sozinha para o motor local (ele pode continuar gravando e a
+  troca gravaria em dobro). O banner oferece **Reconectar agora** e **Usar motor local** (com confirmação).
+- `rust-rtsp-viewer --embedded` força o motor local; `--daemon <socket>` (ou `RRV_SOCKET`) aponta o socket.
+- Gravar (`r`) e salvar zonas viram pedidos ao daemon e só aparecem na tela **depois** de ele confirmar;
+  se ele recusar, o editor de zonas continua aberto com o desenho.
+- A aba Eventos mostra o que chegou desde que a janela conectou (o histórico persistente é do M3).
+
 ## Teclas de Atalho
 
 | Tecla | Ação |

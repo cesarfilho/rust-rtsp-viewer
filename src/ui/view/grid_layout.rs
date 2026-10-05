@@ -179,11 +179,14 @@ pub fn grid_layout(app: &App, sidebar_width: f32, available_height: f32) -> Elem
                     .map(|b| b.recording_elapsed_secs())
                     .unwrap_or(0);
                 let red = Theme::color_from_hex(colors.accent_red);
-                tl = tl.push(small_badge(
-                    format!("REC {:02}:{:02}:{:02}", e / 3600, (e % 3600) / 60, e % 60),
-                    red,
-                    Theme::readable_on(red),
-                ));
+                // Com um daemon quem grava é ele e esta janela não sabe há quanto
+                // tempo: um cronômetro local sempre zerado enganaria.
+                let label = if app.daemon.is_daemon_mode() {
+                    "REC".to_string()
+                } else {
+                    format!("REC {:02}:{:02}:{:02}", e / 3600, (e % 3600) / 60, e % 60)
+                };
+                tl = tl.push(small_badge(label, red, Theme::readable_on(red)));
             }
             stack = stack.push(super::pinned(tl, Horizontal::Left, Vertical::Top, 4.0));
 
