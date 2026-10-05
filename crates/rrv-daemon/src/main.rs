@@ -144,6 +144,12 @@ fn run(cli: &Cli) -> Result<(), String> {
         // Sem histórico o daemon continua gravando: o vídeo vem antes do índice.
         Err(e) => log::warn!("sem histórico ({}): {e}", db.display()),
     }
+    // Conexão só de leitura do laço principal (a thread do banco é a que escreve; o
+    // WAL deixa as duas conviverem).
+    let history = engine
+        .store
+        .as_ref()
+        .and_then(|_| rrv_core::infrastructure::store::Store::open(&db).ok());
     log::info!(
         "rrv-daemon {}: {} câmera(s), gravação em {}",
         env!("CARGO_PKG_VERSION"),
@@ -175,6 +181,7 @@ fn run(cli: &Cli) -> Result<(), String> {
             engine: &mut engine,
             zones_file: &mut zones,
             persist: true,
+            history: history.as_ref(),
         });
         // A cada minuto (e na partida): apaga o que passou da idade ou do limite de disco.
         if tick.is_multiple_of(RETENTION_EVERY_TICKS)

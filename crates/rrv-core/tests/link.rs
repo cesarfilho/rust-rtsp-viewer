@@ -59,6 +59,7 @@ impl FakeDaemon {
                     engine: &mut engine,
                     zones_file: &mut zones,
                     persist: false,
+                    history: None,
                 });
                 let evs: Vec<_> = rx.try_iter().collect();
                 server.publish(&evs);

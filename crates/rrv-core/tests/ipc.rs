@@ -63,6 +63,7 @@ fn with_server<T: Send + 'static>(
             engine: &mut engine,
             zones_file: &mut zones,
             persist: false,
+            history: None,
         });
         each_tick(&server);
         thread::sleep(Duration::from_millis(10));

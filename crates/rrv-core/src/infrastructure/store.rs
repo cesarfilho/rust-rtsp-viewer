@@ -169,6 +169,15 @@ impl Store {
         Ok(id)
     }
 
+    /// Tira um segmento que não chegou a ter vídeo (a gravação parou antes do primeiro
+    /// keyframe): o arquivo vazio e a linha.
+    pub fn discard_segment(&self, path: &str) -> Result<(), StoreError> {
+        let _ = std::fs::remove_file(path);
+        self.conn
+            .execute("DELETE FROM segments WHERE path = ?1", [path])?;
+        Ok(())
+    }
+
     /// Fecha o segmento `path` com o fim e o tamanho finais.
     pub fn segment_closed(&self, path: &str, ts_end: i64, bytes: i64) -> Result<(), StoreError> {
         self.conn.execute(
@@ -787,9 +796,26 @@ mod tests {
             path: p,
             ts_end: 200,
         });
+        // um segmento que fechou sem nenhum byte não fica no histórico
+        let empty = d.join("vazio.mkv");
+        std::fs::write(&empty, b"").unwrap();
+        let ep = empty.to_string_lossy().to_string();
+        h.send(StoreCmd::SegmentOpened {
+            camera: "c".into(),
+            path: ep.clone(),
+            ts: 300,
+            mode: "manual".into(),
+        });
+        h.send(StoreCmd::SegmentClosed {
+            path: ep,
+            ts_end: 400,
+        });
         drop(h); // junta a thread: tudo foi gravado
         let s = Store::open(&db).unwrap();
-        let seg = &s.segments_between("c", 0, 1_000).unwrap()[0];
+        let rows = s.segments_between("c", 0, 1_000).unwrap();
+        assert_eq!(rows.len(), 1, "o segmento vazio foi descartado: {rows:?}");
+        assert!(!empty.exists());
+        let seg = &rows[0];
         assert!(seg.closed && seg.bytes == 50 && seg.has_motion);
         assert_eq!(s.events_between(Some("c"), 0, 1_000).unwrap().len(), 1);
         let _ = std::fs::remove_dir_all(&d);

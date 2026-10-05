@@ -43,6 +43,14 @@ enum Command {
     Zones { camera: String },
     /// Acompanha os eventos (movimento, gravação, online/offline)
     Events,
+    /// Gravações e eventos das últimas horas (do histórico do daemon)
+    History {
+        /// Nome da câmera (padrão: todas)
+        camera: Option<String>,
+        /// Quantas horas olhar para trás
+        #[arg(long, default_value_t = 24)]
+        hours: u32,
+    },
 }
 
 fn main() -> ExitCode {
@@ -54,6 +62,17 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `HH:MM:SS` local de um instante Unix em ms.
+fn clock(ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms)
+        .map(|t| {
+            t.with_timezone(&chrono::Local)
+                .format("%d/%m %H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_else(|| "?".into())
 }
 
 fn cameras(c: &mut IpcClient) -> Result<Vec<CameraInfo>, String> {
@@ -160,6 +179,56 @@ fn run(cli: &Cli) -> Result<(), String> {
             match c.request(&Request::GetZones { camera: i })? {
                 Response::Zones { zones, .. } => {
                     println!("{}", serde_json::to_string_pretty(&zones).unwrap());
+                    Ok(())
+                }
+                Response::Error { message } => Err(message),
+                other => Err(format!("resposta inesperada: {other:?}")),
+            }
+        }
+        Command::History { camera, hours } => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as i64);
+            let req = Request::History {
+                camera: camera.clone(),
+                from_ms: now - *hours as i64 * 3_600_000,
+                to_ms: now,
+            };
+            match c.request(&req)? {
+                Response::History {
+                    segments,
+                    events,
+                    truncated,
+                } => {
+                    if cli.json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&(&segments, &events)).unwrap()
+                        );
+                        return Ok(());
+                    }
+                    println!("# gravações ({})", segments.len());
+                    for s in &segments {
+                        let end = s.ts_end.map_or("gravando".to_string(), |e| {
+                            format!("{:>5}s", (e - s.ts_start) / 1000)
+                        });
+                        println!(
+                            "{}  {:<16} {} {:>8} KiB  {}{}",
+                            clock(s.ts_start),
+                            s.camera,
+                            end,
+                            s.bytes / 1024,
+                            s.mode,
+                            if s.has_motion { "  movimento" } else { "" }
+                        );
+                    }
+                    println!("# eventos ({})", events.len());
+                    for e in &events {
+                        println!("{}  {:<16} {}", clock(e.ts), e.camera, e.kind);
+                    }
+                    if truncated {
+                        println!("(resposta cortada no limite; reduza --hours)");
+                    }
                     Ok(())
                 }
                 Response::Error { message } => Err(message),

@@ -25,6 +25,7 @@ clap = { version = "4", features = ["derive", "env"] }
 # SIGTERM/SIGHUP além de SIGINT: `docker stop` envia SIGTERM.
 ctrlc = { version = "3", features = ["termination"] }
 serde_json = "1"
+chrono = { version = "0.4.45", features = ["clock"] }
 
 [dev-dependencies]
 rrv-core = { path = "../rrv-core", features = ["testing"] }

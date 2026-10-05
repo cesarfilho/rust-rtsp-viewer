@@ -3487,6 +3487,7 @@ dependencies = [
 name = "rrv-daemon"
 version = "0.8.0"
 dependencies = [
+ "chrono",
  "clap",
  "ctrlc",
  "env_logger",

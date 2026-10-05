@@ -8,7 +8,9 @@ use crate::domain::zones::{MotionZoneFile, ZoneConfig};
 use crate::engine::Engine;
 use crate::infrastructure::zone_state::{self, ZonesFile};
 
-use super::protocol::{CameraInfo, PROTOCOL_VERSION, Request, Response};
+use crate::infrastructure::store::Store;
+
+use super::protocol::{CameraInfo, HistoryEvent, PROTOCOL_VERSION, Request, Response, SegmentInfo};
 
 /// O estado que o tratador altera além do motor: as zonas persistidas.
 pub struct Host<'a> {
@@ -16,7 +18,12 @@ pub struct Host<'a> {
     pub zones_file: &'a mut ZonesFile,
     /// Persistir de verdade (desligado nos testes, para não tocar no disco).
     pub persist: bool,
+    /// O histórico (`None`: o daemon está sem banco).
+    pub history: Option<&'a Store>,
 }
+
+/// Teto de linhas por resposta de histórico (cada lista).
+const HISTORY_LIMIT: usize = 5000;
 
 fn status_name(s: &CameraStatus) -> &'static str {
     match s {
@@ -123,6 +130,62 @@ pub fn apply(host: &mut Host<'_>, request: &Request) -> Response {
             host.engine.set_camera_enabled(*camera, *enabled);
             Response::Ok
         }
+        Request::History {
+            camera,
+            from_ms,
+            to_ms,
+        } => {
+            let Some(store) = host.history else {
+                return error("o daemon está sem histórico (o banco não abriu)");
+            };
+            if from_ms > to_ms {
+                return error("intervalo invertido (from_ms > to_ms)");
+            }
+            let names: Vec<String> = match camera {
+                Some(n) => vec![n.clone()],
+                None => host.engine.names.clone(),
+            };
+            let mut segments = Vec::new();
+            for name in &names {
+                match store.segments_between(name, *from_ms, *to_ms) {
+                    Ok(rows) => segments.extend(rows.into_iter().map(|s| SegmentInfo {
+                        id: s.id,
+                        camera: s.camera,
+                        ts_start: s.ts_start,
+                        ts_end: s.ts_end,
+                        bytes: s.bytes,
+                        has_motion: s.has_motion,
+                        protected: s.protected,
+                        mode: s.mode,
+                    })),
+                    Err(e) => return error(format!("histórico: {e}")),
+                }
+            }
+            segments.sort_by_key(|s| s.ts_start);
+            let events = match store.events_between(camera.as_deref(), *from_ms, *to_ms) {
+                Ok(rows) => rows
+                    .into_iter()
+                    .map(|e| HistoryEvent {
+                        id: e.id,
+                        camera: e.camera,
+                        ts: e.ts,
+                        kind: e.kind,
+                        label: e.label,
+                        segment_id: e.segment_id,
+                    })
+                    .collect::<Vec<_>>(),
+                Err(e) => return error(format!("histórico: {e}")),
+            };
+            let mut events = events;
+            let truncated = segments.len() > HISTORY_LIMIT || events.len() > HISTORY_LIMIT;
+            segments.truncate(HISTORY_LIMIT);
+            events.truncate(HISTORY_LIMIT);
+            Response::History {
+                segments,
+                events,
+                truncated,
+            }
+        }
         Request::GetZones { camera } => {
             if let Err(e) = check(*camera) {
                 return e;
@@ -218,6 +281,7 @@ mod tests {
                 engine,
                 zones_file: zones,
                 persist: false,
+                history: None,
             },
             r,
         )
@@ -352,6 +416,91 @@ mod tests {
         assert!(message.contains("inválida"), "{message}");
         assert!(!e.zones[0].has_active());
         assert!(z.cameras.is_empty());
+    }
+
+    #[test]
+    fn history_returns_segments_and_events_of_the_asked_camera_only() {
+        let mut e = engine(2);
+        let mut z = ZonesFile::default();
+        let store = Store::open_in_memory().unwrap();
+        store
+            .segment_opened("cam1", "/d/a.mkv", 1_000, "motion")
+            .unwrap();
+        store.segment_closed("/d/a.mkv", 9_000, 4096).unwrap();
+        store
+            .segment_opened("cam0", "/d/b.mkv", 2_000, "manual")
+            .unwrap();
+        store
+            .insert_event("cam1", 1_500, "motion", "", None)
+            .unwrap();
+        let ask = |camera: Option<&str>, e: &mut Engine, z: &mut ZonesFile| {
+            apply(
+                &mut Host {
+                    engine: e,
+                    zones_file: z,
+                    persist: false,
+                    history: Some(&store),
+                },
+                &Request::History {
+                    camera: camera.map(String::from),
+                    from_ms: 0,
+                    to_ms: 10_000,
+                },
+            )
+        };
+        let Response::History {
+            segments,
+            events,
+            truncated,
+        } = ask(Some("cam1"), &mut e, &mut z)
+        else {
+            panic!("esperava History");
+        };
+        assert!(!truncated);
+        assert_eq!(segments.len(), 1);
+        assert_eq!((segments[0].bytes, segments[0].ts_end), (4096, Some(9_000)));
+        assert!(segments[0].has_motion && segments[0].mode == "motion");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].segment_id, Some(segments[0].id));
+
+        let Response::History { segments, .. } = ask(None, &mut e, &mut z) else {
+            panic!()
+        };
+        assert_eq!(segments.len(), 2, "sem nome: todas as câmeras");
+        assert!(segments[0].ts_start <= segments[1].ts_start, "em ordem");
+    }
+
+    #[test]
+    fn history_without_a_database_or_with_a_bad_interval_is_an_error() {
+        let mut e = engine(1);
+        let mut z = ZonesFile::default();
+        let req = Request::History {
+            camera: None,
+            from_ms: 0,
+            to_ms: 1,
+        };
+        let Response::Error { message } = run(&mut e, &mut z, &req) else {
+            panic!()
+        };
+        assert!(message.contains("sem histórico"), "{message}");
+
+        let store = Store::open_in_memory().unwrap();
+        let Response::Error { message } = apply(
+            &mut Host {
+                engine: &mut e,
+                zones_file: &mut z,
+                persist: false,
+                history: Some(&store),
+            },
+            &Request::History {
+                camera: None,
+                from_ms: 5,
+                to_ms: 1,
+            },
+        ) else {
+            panic!()
+        };
+        assert!(message.contains("invertido"), "{message}");
     }
 
     #[test]

@@ -35,6 +35,13 @@ pub enum Request {
         camera: usize,
         zones: Vec<MotionZoneFile>,
     },
+    /// Segmentos gravados e eventos num intervalo (Unix ms). `camera` é o *nome*
+    /// da câmera; sem ele, todas.
+    History {
+        camera: Option<String>,
+        from_ms: i64,
+        to_ms: i64,
+    },
 }
 
 /// Resposta do daemon a um pedido.
@@ -56,6 +63,12 @@ pub enum Response {
         camera: usize,
         zones: Vec<MotionZoneFile>,
     },
+    History {
+        segments: Vec<SegmentInfo>,
+        events: Vec<HistoryEvent>,
+        /// `true` se o intervalo tinha mais que o limite por resposta.
+        truncated: bool,
+    },
     Subscribed,
     Ok,
     Error {
@@ -69,6 +82,33 @@ pub enum Response {
 pub enum ServerMessage {
     Response(Response),
     Event(WireEvent),
+}
+
+/// Um segmento gravado. O caminho do arquivo é do daemon e não sai dele.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SegmentInfo {
+    pub id: i64,
+    pub camera: String,
+    pub ts_start: i64,
+    /// `None` enquanto o segmento está aberto (ainda gravando).
+    pub ts_end: Option<i64>,
+    pub bytes: i64,
+    pub has_motion: bool,
+    pub protected: bool,
+    /// `motion` ou `manual`.
+    pub mode: String,
+}
+
+/// Um evento do histórico persistente.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistoryEvent {
+    pub id: i64,
+    pub camera: String,
+    pub ts: i64,
+    /// `motion`, `recording_start`, `recording_stop`, `offline`, `online`, `snapshot`.
+    pub kind: String,
+    pub label: String,
+    pub segment_id: Option<i64>,
 }
 
 /// Uma câmera como o cliente a vê.
