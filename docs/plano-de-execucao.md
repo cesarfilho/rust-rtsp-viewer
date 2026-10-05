@@ -47,7 +47,7 @@ Gate M0: baseline real publicado, 0.5 decidido, ADRs "Proposta" promovidos ou re
 | # | Tarefa | Critério de saída | Tam. | Estado |
 |---|---|---|---|---|
 | 1.1 | **Corrigir a cegueira**: câmeras com `[motion]`/`on_motion` ficam fora do `pause_hidden`, decodificando o sub | movimento e gravação funcionam em câmera de página oculta; teste | P–M | [x] |
-| 1.2 | Ramo de detecção reduzido (ADR 0005): `tee → leaky queue → videorate → videoscale → ~320×180 GRAY8 → appsink` no lugar do `capture_frame` em resolução cheia | CPU dentro do orçamento medido em 0.4 | M | [~] ramo feito e testado; falta medir CPU com 16 câmeras (0.4) |
+| 1.2 | Ramo de detecção reduzido (ADR 0005): `tee → leaky queue → videorate → videoscale → ~320×180 GRAY8 → appsink` no lugar do `capture_frame` em resolução cheia | CPU dentro do orçamento medido em 0.4 | M | [~] ramo feito. **Defeito achado e corrigido em 2026-10-05:** o `detect_sink` bloqueava o preroll e congelava o pipeline de forma intermitente (agora `async=false`, com teste de regressão);  falta medir CPU com 16 câmeras (0.4) |
 | 1.3 | Recuperação rápida na partida: retentar em segundos, não só após os 12 s de graça | câmera que falha ao iniciar tenta de novo em ~1 s (limitado pela fonte, não pelo app) | P | [x] |
 | 1.4 | Áudio usa o sub (ou só abre a sessão quando ouvido) | sem sessão extra com a câmera na grade | P | [~] o áudio já só abre sessão quando ouvido; falta usar o sub, e muitos sub-streams não têm áudio: decidir com 0.3 (D2) |
 | 1.5 | Zonas: manter `zones.toml` e atualizar a spec (em vez de `[[cameras.zones]]`) | spec e código coerentes | P | [x] |

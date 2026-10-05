@@ -42,6 +42,11 @@ pub struct EngineSettings<'a> {
     pub zones: &'a ZonesFile,
 }
 
+/// The engine's tick, in milliseconds (the window's `TICK_MS` is the same).
+pub const TICK_MS: u64 = 100;
+/// Slow work (latency, RTP stats, motion) runs on every Nth tick (~500 ms).
+pub const SLOW_EVERY_N_TICKS: u64 = 5;
+
 /// How long a freshly (re)started pipeline shows `Connecting` instead of
 /// flapping to `Reconnecting`/`Offline` while it hand-shakes.
 pub const CONNECT_GRACE_SECS: u64 = 12;
@@ -777,6 +782,58 @@ impl Engine {
             self.start_queue.retain(|&q| q != i);
             self.status[i] = CameraStatus::Disabled;
         }
+    }
+
+    /// One tick of the headless engine (the daemon calls this every
+    /// [`TICK_MS`] ms); the window does the same work inside `update_frame`,
+    /// interleaved with view math.
+    ///
+    /// With no window there is no "visible page": every enabled camera is
+    /// wanted, and starts are still staggered. A camera runs on the stream
+    /// `wanted_quality` picks (sub when it has one, main while recording).
+    /// Returns the events raised during the tick.
+    pub fn step(&mut self, tick: u64) -> Vec<EngineEvent> {
+        let slow = tick.is_multiple_of(SLOW_EVERY_N_TICKS);
+        let want = self.enabled_cameras();
+        for i in self.reconcile(&want) {
+            self.pause_stream(i);
+        }
+        if let Some(i) = self.pop_next_start(&want) {
+            let quality = self.wanted_quality(i, false);
+            self.restart_stream(i, quality);
+        }
+        for i in want {
+            if !self.active_stream[i] {
+                continue;
+            }
+            let label = self.names[i].clone();
+            if self.tick_camera(i, slow).needs_reconnect {
+                self.reconnect(i, &label);
+            }
+            if slow {
+                self.tick_motion(i);
+            }
+        }
+        self.take_events()
+    }
+
+    /// Stop every pipeline, finalising recordings in progress (the muxer writes
+    /// its trailer on EOS; a process killed without this leaves an empty,
+    /// unplayable file). Blocks until the files are closed.
+    pub fn shutdown(&mut self) {
+        for i in 0..self.bridges.len() {
+            self.bridges[i]
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .stop();
+            self.active_stream[i] = false;
+            self.auto_recording[i] = false;
+            self.connecting_since[i] = None;
+            if self.status[i] != CameraStatus::Disabled {
+                self.status[i] = CameraStatus::Paused;
+            }
+        }
+        self.start_queue.clear();
     }
 }
 

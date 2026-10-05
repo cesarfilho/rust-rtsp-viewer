@@ -107,6 +107,11 @@ fn insert_tee(pipeline: &gst::Pipeline) -> Result<(), String> {
 ///
 /// `tee → queue(leaky) → videorate(2 fps) → videoscale(320 px) → RGBA → appsink`
 ///
+/// The sink is `async=false`: it must not take part in the pipeline's preroll.
+/// `videorate` holds the first buffer until it sees a second, and in PAUSED only
+/// the preroll frame flows, so a sink that waited for it left the *whole*
+/// pipeline stuck in an async change to PLAYING (one frame shown, then frozen).
+///
 /// `videorate` comes *before* `videoscale` so only [`DETECT_FPS`] frames a
 /// second are resized, instead of every decoded frame. Motion detection reads
 /// this small frame instead of diffing full-resolution display frames. The
@@ -121,7 +126,7 @@ fn insert_detect_branch(pipeline: &gst::Pipeline, bridge: &GStreamerBridge) -> R
          ! video/x-raw,framerate={DETECT_FPS}/1 \
          ! videoscale \
          ! video/x-raw,format=RGBA,width={DETECT_WIDTH},height={DETECT_HEIGHT} \
-         ! appsink name=detect_sink sync=false emit-signals=true max-buffers=1 drop=true"
+         ! appsink name=detect_sink sync=false async=false emit-signals=true max-buffers=1 drop=true"
     );
     let bin = gst::parse::bin_from_description(&desc, true)
         .map_err(|e| format!("detect branch parse error: {e}"))?;
@@ -487,6 +492,13 @@ impl GStreamerBridge {
                 self.recording_config.max_segment_size_bytes,
             )
             .property("send-keyframe-requests", true)
+            // splitmuxsink is a sink-like bin whose own state change is async.
+            // Added to a pipeline that is already PLAYING, that made the whole
+            // pipeline lose its state and drop back to PAUSED, where nothing
+            // flows, so the splitmuxsink never got the first buffer it needed
+            // to finish its change: a deadlock (picture frozen, recording
+            // empty). `async-handling` keeps the async change inside the bin.
+            .property("async-handling", true)
             .property("muxer", &muxer)
             .build()
             .map_err(|e| format!("Failed to create splitmuxsink: {e}"))?;

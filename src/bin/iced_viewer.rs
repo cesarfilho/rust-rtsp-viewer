@@ -36,37 +36,20 @@ fn main() -> ExitCode {
     }
 }
 
-/// Read and validate the config. Warnings are printed to stderr; any error
-/// (parse failure or an `erro:` issue) aborts with every problem listed.
-fn load_config(config_path: &str) -> Result<(rust_rtsp_viewer::config::Config, usize), String> {
-    use rust_rtsp_viewer::config_check::{check, has_errors};
-
-    let config_str = std::fs::read_to_string(config_path)
-        .map_err(|e| format!("cannot read {config_path}: {e}"))?;
-    let (config, issues) =
-        check(&config_str).map_err(|e| format!("cannot parse {config_path}: {e}"))?;
-    for issue in &issues {
-        eprintln!("rust-rtsp-viewer: {config_path}: {}", issue.render());
-    }
-    if has_errors(&issues) {
-        return Err(format!("{config_path} has errors (see above)"));
-    }
-    Ok((config, issues.len()))
-}
-
 /// `--check`: validate and report, without starting GStreamer or the GUI.
 fn check_only(config_path: &str) -> Result<(), String> {
-    let (config, warnings) = load_config(config_path)?;
+    let (config, warnings) =
+        rust_rtsp_viewer::startup::load_config(config_path, "rust-rtsp-viewer")?;
     let cameras = config.cameras.as_ref().map_or(0, Vec::len);
     println!("{config_path}: ok — {cameras} câmera(s), {warnings} aviso(s)");
     Ok(())
 }
 
 fn run(config_path: &str) -> Result<(), String> {
-    let (config, _) = load_config(config_path)?;
+    let (config, _) = rust_rtsp_viewer::startup::load_config(config_path, "rust-rtsp-viewer")?;
 
     let mut cameras = config.cameras.clone().unwrap_or_default();
-    merge_global_camera_defaults(&mut cameras, &config);
+    rust_rtsp_viewer::startup::merge_global_camera_defaults(&mut cameras, &config);
 
     // Initialise GStreamer up front so a broken install fails with a clear
     // message here instead of panicking mid-construction once the GUI is up.
@@ -106,21 +89,4 @@ fn run(config_path: &str) -> Result<(), String> {
         motion_config,
     )
     .map_err(|e| format!("GUI failed to start: {e}"))
-}
-
-fn merge_global_camera_defaults(
-    cameras: &mut [rust_rtsp_viewer::config::CameraConfig],
-    file_config: &rust_rtsp_viewer::config::Config,
-) {
-    for cam in cameras.iter_mut() {
-        if cam.decoder.is_none() {
-            cam.decoder = file_config.decoder.clone();
-        }
-        if cam.do_retransmission.is_none() {
-            cam.do_retransmission = file_config.do_retransmission;
-        }
-        if cam.latency_ms.is_none() {
-            cam.latency_ms = file_config.latency_ms;
-        }
-    }
 }

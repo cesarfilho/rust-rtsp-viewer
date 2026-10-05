@@ -303,6 +303,26 @@ enforces it. Consequences to keep in mind:
 - Orchestration lives in `engine::Engine` (task 2.5.2); `ui/update.rs` keeps only view math, audio
   and presentation.
 
+## Pipeline traps found the hard way
+
+- **A branch sink that sits behind a buffering element must be `async=false`.** `detect_sink`
+  follows `videorate`, which holds the first buffer until it sees a second; in PAUSED only the
+  preroll frame flows, so a sink that waited for it left the *whole* pipeline stuck in an async
+  change to PLAYING (one frame shown, then frozen, intermittently). Any new appsink fed through
+  such an element needs `async=false`.
+- **`splitmuxsink` needs `async-handling=true`.** It is a sink-like bin with its own async state
+  change; added to a PLAYING pipeline it made the whole pipeline lose state and fall back to
+  PAUSED, where nothing flows, so it never got its first buffer: deadlock (frozen picture, empty
+  recording). Same rule for any async element added while running.
+- **A status of `Live` proves nothing about flow.** `sample_status` only moves to `Live` when fps
+  > 0 and never goes back; check the frame generation (`read_frame().3`) advancing instead.
+- **Test sources must be real time.** A file is decoded faster than the clock and the tee delivers
+  in ~1 s bursts, so motion/recording tests on files are non-deterministic. `tests/headless.rs`
+  builds a live HLS camera with GStreamer only (`videotestsrc is-live` → `hlssink2` + a tiny HTTP
+  server) and waits for the playlist before starting the engine.
+- **Never take the same bridge `lock()` twice in one expression** (two guards live until the end
+  of the statement): it deadlocks. Bind once.
+
 ## Adding new features
 
 - New UI event: add a variant to `Message` in `message.rs`, handle in `update.rs`.
