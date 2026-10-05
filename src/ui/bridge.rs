@@ -536,6 +536,9 @@ impl GStreamerBridge {
         self.jb_scan_attempts = 0;
         self.decoder_scan_done = false;
         self.decoder_scan_attempts = 0;
+        // A new attempt starts clean: a stale error would make the retry
+        // logic treat a connecting pipeline as already failed.
+        *self.error_message.lock().unwrap_or_else(|e| e.into_inner()) = None;
         // The next pipeline may be a different stream (sub ↔ main) with another
         // size / codec; the caps probe only fills fields that are still empty.
         if let Ok(mut si) = self.metrics.stream_info.lock() {

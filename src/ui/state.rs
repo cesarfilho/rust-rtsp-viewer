@@ -57,6 +57,16 @@ impl BackoffState {
         );
     }
 
+    /// Should a retry be scheduled for a camera that is down?
+    ///
+    /// - `errored`: the pipeline reported an error / EOS. It is dead, so retry
+    ///   now instead of waiting out the connect grace.
+    /// - otherwise wait for the grace to pass (`connecting` false) so a slow
+    ///   but healthy handshake is not torn down.
+    pub fn should_schedule_retry(connecting: bool, down: bool, errored: bool) -> bool {
+        errored || (!connecting && down)
+    }
+
     /// Arm the retry timer for a camera that is down but has none pending.
     ///
     /// A pipeline that errors *after* a successful start (camera offline at
@@ -143,6 +153,18 @@ mod tests {
             b.status_detail().unwrap(),
             "tentativa 2 · reconectando agora"
         );
+    }
+
+    #[test]
+    fn retry_is_immediate_on_error_but_waits_for_grace_otherwise() {
+        // errored: retry right away, even inside the connect grace
+        assert!(BackoffState::should_schedule_retry(true, true, true));
+        // slow handshake inside the grace, no error: leave it alone
+        assert!(!BackoffState::should_schedule_retry(true, true, false));
+        // grace over and still down: retry
+        assert!(BackoffState::should_schedule_retry(false, true, false));
+        // healthy: nothing to do
+        assert!(!BackoffState::should_schedule_retry(false, false, false));
     }
 
     #[test]

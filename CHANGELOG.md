@@ -13,6 +13,10 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
   não funcionavam nelas. Agora, quando `[motion]` está ligado e algo reage a movimento,
   todas as câmeras continuam decodificando (no sub-stream, se houver `sub_url`).
   Sem `on_motion`/notificações, o `pause_hidden` segue valendo.
+- **Recuperação rápida na partida**: um pipeline que reporta erro logo ao iniciar agenda o
+  retry na hora (backoff de 1 s), em vez de esperar os 12 s de graça (medido: ~13 s → ~8 s
+  com uma fonte HLS que leva ~5 s para publicar). O erro antigo agora é limpo no `stop()`,
+  para não derrubar uma reconexão ainda em andamento.
 - `scripts/baseline.sh` nunca achava o processo (`pgrep -x` com nome de 16 caracteres).
 
 ### 🔧 Alterado

@@ -1102,7 +1102,7 @@ fn update_frame(app: &mut App) -> Task<Message> {
         // guard must be released before the reconnect path below re-locks the
         // same mutex — `std::sync::Mutex` is not reentrant, so holding it
         // across both deadlocks the UI thread permanently.
-        let needs_reconnect = {
+        let (needs_reconnect, errored) = {
             let mut bridge = app.bridges[i].lock().unwrap_or_else(|e| e.into_inner());
             bridge.poll_bus();
             let fps = bridge.update_fps();
@@ -1158,13 +1158,19 @@ fn update_frame(app: &mut App) -> Task<Message> {
                 app.backoff_states[i].record_success();
             }
 
-            match decision {
+            let errored = bridge
+                .error_message
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some();
+            let reconnect = match decision {
                 ReconnectDecision::Reconnect(reason) => {
                     log::info!("[{}] Reconnecting: {}", cam_label, reason);
                     true
                 }
                 ReconnectDecision::None => false,
-            }
+            };
+            (reconnect, errored)
         };
 
         // Log connectivity transitions once the status has been refreshed.
@@ -1197,15 +1203,17 @@ fn update_frame(app: &mut App) -> Task<Message> {
             None => {}
         }
 
-        // Down past the connect grace with no retry pending: schedule one.
-        // Without this a camera that fails right after starting is stuck on
-        // "Reconectando" forever (the watchdog only covers live RTSP stalls).
-        if app.connecting_since[i].is_none()
-            && !needs_reconnect
-            && matches!(
-                app.sidebar.cameras[i].status,
-                sidebar::CameraStatus::Offline | sidebar::CameraStatus::Reconnecting
-            )
+        // Down with no retry pending: schedule one. A pipeline that reported an
+        // error is dead, so it retries right away; otherwise wait out the
+        // connect grace. Without this a camera that fails right after starting
+        // is stuck on "Reconectando" forever (the watchdog only covers live
+        // RTSP stalls).
+        let down = matches!(
+            app.sidebar.cameras[i].status,
+            sidebar::CameraStatus::Offline | sidebar::CameraStatus::Reconnecting
+        );
+        if !needs_reconnect
+            && BackoffState::should_schedule_retry(app.connecting_since[i].is_some(), down, errored)
         {
             app.backoff_states[i].arm_if_idle();
         }

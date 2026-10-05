@@ -225,7 +225,9 @@ via `subscription`'s `listen_with`, or any keypress) and auto-hides after
   that errors right after a successful start (offline at launch, playlist not
   ready) would sit on "Reconectando" forever. `update_frame` arms the backoff for
   an active camera that is down past `CONNECT_GRACE_SECS`; `reconnect_camera`
-  `disarm`s it after each rebuild (else the expired timer rebuilds every tick).
+  `disarm`s it after each rebuild (else the expired timer rebuilds every tick). A pipeline that
+  reported an error / EOS is dead, so it is armed immediately (`BackoffState::should_schedule_retry`);
+  `GStreamerBridge::stop()` clears `error_message` so a stale error never re-arms a reconnect.
 - **The help popup is modal for the keyboard** (`handle_key` → `is_help_dismiss`):
   only `?` / `Esc` act while it is open.
 - **`infrastructure::launch::quote_launch_value`** wraps every URL/path put into
