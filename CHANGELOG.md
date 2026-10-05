@@ -6,6 +6,22 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 
 ## [Unreleased]
 
+## [0.8.0]
+
+### ✨ Adicionado
+
+- **Sub-stream por câmera** (`sub_url` em `[[cameras]]`): os blocos da grade decodificam o
+  stream de baixa resolução; spotlight, destaque do Flex e gravação usam o principal. A
+  gravação sempre sai no stream principal (o app troca antes de começar a gravar).
+- **Decoder em uso no Inspector** (`Decoder` e `Via` CPU/GPU), descoberto no pipeline em
+  execução.
+
+### 🐛 Corrigido
+
+- **Bitrate do Inspector** mostrava a vazão do frame RGBA decodificado, não a do stream;
+  agora conta os bytes comprimidos na entrada do decoder.
+- **Resolução/codec velhos** no Inspector depois de reconectar ou trocar de stream.
+
 ## [0.7.2]
 
 ### 🐛 Corrigido
