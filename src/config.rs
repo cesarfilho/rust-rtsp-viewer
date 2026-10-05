@@ -21,7 +21,7 @@ pub struct Config {
     pub audio: Option<AudioConfigFile>,
     /// Multi-camera grid mode.
     pub cameras: Option<Vec<CameraConfig>>,
-    /// UI theme: "dark" (default), "light", "amoled", or "custom".
+    /// UI theme: "cosmic" (default), "dark", "light", "amoled" or "opencode".
     pub theme: Option<String>,
     /// Per-camera log file directory. Default: `~/logs/rust-rtsp-viewer`.
     /// Each camera gets its own file: `<dir>/<safe_label>.log`.

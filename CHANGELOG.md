@@ -19,6 +19,13 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
   para não derrubar uma reconexão ainda em andamento.
 - `scripts/baseline.sh` nunca achava o processo (`pgrep -x` com nome de 16 caracteres).
 
+### ✨ Adicionado
+
+- **`--check`** e validação do `config.toml` na partida (`config_check`): avisa sobre chaves
+  com erro de digitação (antes eram ignoradas em silêncio, ex.: `sub_ul`), valores fora de
+  faixa, esquema de URL não suportado, nomes/rótulos duplicados, índices de grupo inválidos e
+  tema inexistente (caía no padrão sem aviso). Erros abortam; avisos não. Senhas mascaradas.
+
 ### 🔧 Alterado
 
 - CI: `cargo fmt --check`, `cargo-deny` (licenças/RustSec/fontes), testes de doc e job

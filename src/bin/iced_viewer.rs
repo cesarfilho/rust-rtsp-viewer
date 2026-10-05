@@ -12,13 +12,22 @@ struct Cli {
     /// Path to config file
     #[arg(default_value = "config.toml")]
     config: String,
+
+    /// Validate the config file and exit (0 = usable, 1 = errors); opens no window
+    #[arg(long)]
+    check: bool,
 }
 
 fn main() -> ExitCode {
     env_logger::init();
     let cli = Cli::parse();
 
-    match run(&cli.config) {
+    let result = if cli.check {
+        check_only(&cli.config)
+    } else {
+        run(&cli.config)
+    };
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("rust-rtsp-viewer: {e}");
@@ -27,18 +36,36 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(config_path: &str) -> Result<(), String> {
+/// Read and validate the config. Warnings are printed to stderr; any error
+/// (parse failure or an `erro:` issue) aborts with every problem listed.
+fn load_config(config_path: &str) -> Result<(rust_rtsp_viewer::config::Config, usize), String> {
+    use rust_rtsp_viewer::config_check::{check, has_errors};
+
     let config_str = std::fs::read_to_string(config_path)
         .map_err(|e| format!("cannot read {config_path}: {e}"))?;
-    let config: rust_rtsp_viewer::config::Config =
-        toml::from_str(&config_str).map_err(|e| format!("cannot parse {config_path}: {e}"))?;
+    let (config, issues) =
+        check(&config_str).map_err(|e| format!("cannot parse {config_path}: {e}"))?;
+    for issue in &issues {
+        eprintln!("rust-rtsp-viewer: {config_path}: {}", issue.render());
+    }
+    if has_errors(&issues) {
+        return Err(format!("{config_path} has errors (see above)"));
+    }
+    Ok((config, issues.len()))
+}
+
+/// `--check`: validate and report, without starting GStreamer or the GUI.
+fn check_only(config_path: &str) -> Result<(), String> {
+    let (config, warnings) = load_config(config_path)?;
+    let cameras = config.cameras.as_ref().map_or(0, Vec::len);
+    println!("{config_path}: ok — {cameras} câmera(s), {warnings} aviso(s)");
+    Ok(())
+}
+
+fn run(config_path: &str) -> Result<(), String> {
+    let (config, _) = load_config(config_path)?;
 
     let mut cameras = config.cameras.clone().unwrap_or_default();
-    if cameras.is_empty() {
-        return Err(format!(
-            "no cameras configured — add [[cameras]] sections to {config_path}"
-        ));
-    }
     merge_global_camera_defaults(&mut cameras, &config);
 
     // Initialise GStreamer up front so a broken install fails with a clear

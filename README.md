@@ -70,7 +70,7 @@ sistema: `make install PREFIX=/usr/local` (aí sim como root).
 ./target/release/rust-rtsp-viewer /caminho/para/config.toml
 ```
 
-O Iced viewer lê toda a configuração do `config.toml`. Não há flags CLI posicionais — tudo é configurado via arquivo. O buffering do stream é gerenciado pelo GStreamer; o único ajuste exposto é `latency_ms` (→ `rtspsrc latency`).
+O Iced viewer lê toda a configuração do `config.toml`. Tudo é configurado via arquivo; a única flag é `--check`, que valida o `config.toml` (chaves com erro de digitação, valores fora de faixa, URLs, grupos) e sai sem abrir janela. O buffering do stream é gerenciado pelo GStreamer; o único ajuste exposto é `latency_ms` (→ `rtspsrc latency`).
 
 ### Arquivo de configuração (config.toml)
 

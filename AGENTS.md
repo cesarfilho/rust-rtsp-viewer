@@ -125,12 +125,20 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
 ## CLI
 
 ```
-rust-rtsp-viewer [CONFIG_PATH]      # default: ./config.toml
+rust-rtsp-viewer [CONFIG_PATH]          # default: ./config.toml
+rust-rtsp-viewer --check [CONFIG_PATH]  # validate and exit (0 usable, 1 errors); no window
 ```
 
 All configuration is in the TOML file. The only other inputs are clap's
-`--help` / `--version` and `RUST_LOG` (read by `env_logger::init()` for log
+`--help` / `--version` / `--check` and `RUST_LOG` (read by `env_logger::init()` for log
 verbosity).
+
+`config_check::check` (used at startup and by `--check`) reports typos in key names
+(`serde_ignored`: ignored keys used to vanish silently), out-of-range values, unsupported
+URL schemes, duplicate names/labels, group indices past the last camera and unknown
+themes. Warnings go to stderr and the app still starts; an `erro:` issue aborts. Messages
+mask credentials. A new config key needs no extra code to be typo-checked, but a new
+*semantic* rule belongs in `config_check::validate` with a test.
 
 ## Config (`config.toml`)
 

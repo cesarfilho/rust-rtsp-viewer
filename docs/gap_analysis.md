@@ -62,7 +62,7 @@ Legenda: ✅ feito · 🟡 parcial · ❌ aberto.
 | # | Item | Estado |
 |---|---|---|
 | 18 | Credenciais em texto puro no `config.toml` | ❌ (keyring/`secret-service`); logs e erros já mascaram |
-| 19 | Validação de config com mensagem por campo, `--check` | ❌ |
+| 19 | Validação de config com mensagem por campo, `--check` | ✅ `config_check` + `--check` (typos, faixas, URLs, duplicatas, grupos, tema) |
 | 20 | Arquivos sensíveis na árvore | ✅ `config.toml` e settings locais no `.gitignore`; planos de ferramentas locais saíram do versionamento |
 
 ### F. UX, acessibilidade e distribuição
