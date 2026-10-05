@@ -1890,6 +1890,8 @@ mod tests {
             recording,
             motion: false,
             stream: "main".into(),
+            decoder: None,
+            decoder_hw: false,
         }
     }
 

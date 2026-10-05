@@ -83,6 +83,14 @@ pub struct CameraInfo {
     pub motion: bool,
     /// `main` ou `sub`.
     pub stream: String,
+    /// O decodificador em uso (`vah264dec`, `avdec_h264`…); vazio até a câmera
+    /// subir. Campo aditivo: um cliente antigo, que não o conhece, continua
+    /// funcionando (por isso o `default`).
+    #[serde(default)]
+    pub decoder: Option<String>,
+    /// O decodificador roda na GPU (ou num bloco de função fixa).
+    #[serde(default)]
+    pub decoder_hw: bool,
 }
 
 /// Um evento do motor, no formato do fio.
@@ -186,6 +194,16 @@ mod tests {
             message: "x".into(),
         });
         assert!(encode_line(&r).contains("\"type\":\"response\""));
+    }
+
+    #[test]
+    fn camera_info_from_an_older_daemon_still_parses() {
+        // sem os campos `decoder` e `decoder_hw`, que são posteriores
+        let old = "{\"index\":0,\"name\":\"Portão\",\"status\":\"live\",\"enabled\":true,\
+                   \"recording\":false,\"motion\":false,\"stream\":\"main\"}";
+        let info: CameraInfo = serde_json::from_str(old).unwrap();
+        assert_eq!(info.decoder, None);
+        assert!(!info.decoder_hw);
     }
 
     #[test]

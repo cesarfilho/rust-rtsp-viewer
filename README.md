@@ -329,8 +329,10 @@ docker compose logs -f rrv
   `rrvctl events`. Dentro do contêiner: `docker exec rrv rrvctl status`.
 - Fora do Docker: `cargo run -p rrv-daemon -- config.toml` (mesmos `--check` e `--health`).
 
-Ainda não há decodificação por GPU no contêiner (a iGPU Intel por VA-API é a tarefa 2.5.10, a
-NVIDIA exige o `nvidia-container-toolkit`), e o aviso de movimento com a janela fechada é o `[webhook]` (abaixo); os eventos também vão para
+**GPU Intel (VA-API):** `docker compose -f compose.yaml -f compose.vaapi.yaml up -d`; o `rrvctl status` mostra
+`vah264dec (GPU)` ou `avdec_h264 (CPU)`. **Hoje ela não reduz a CPU** (medido: 71% × 74% de um núcleo
+para 4 câmeras 1080p30), porque o custo está na conversão RGBA, não no H.264; veja
+`docs/gpu-container.md`. A NVIDIA exige o `nvidia-container-toolkit`, e o aviso de movimento com a janela fechada é o `[webhook]` (abaixo); os eventos também vão para
 `docker compose logs`. A imagem tem ~1 GB (plugins
 `bad`/`ugly`/`libav` do GStreamer).
 

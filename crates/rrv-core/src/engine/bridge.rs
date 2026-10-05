@@ -396,6 +396,10 @@ impl GStreamerBridge {
             }
         }
         if let Some((name, hw, decoder)) = found {
+            self.camera_log(
+                "INFO",
+                &format!("Decoder: {name} ({})", if hw { "GPU" } else { "CPU" }),
+            );
             if let Ok(mut si) = self.metrics.stream_info.lock() {
                 si.decoder = Some(name);
                 si.decoder_hw = hw;

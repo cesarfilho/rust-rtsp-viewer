@@ -106,12 +106,18 @@ fn run(cli: &Cli) -> Result<(), String> {
                     "#", "câmera", "estado", "stream"
                 );
                 for cam in all {
+                    let decoder = match (&cam.decoder, cam.decoder_hw) {
+                        (Some(d), true) => format!("{d} (GPU)"),
+                        (Some(d), false) => format!("{d} (CPU)"),
+                        (None, _) => "—".to_string(),
+                    };
                     println!(
-                        "{:<3} {:<24} {:<13} {:<6} {}{}",
+                        "{:<3} {:<24} {:<13} {:<6} {:<16} {}{}",
                         cam.index,
                         cam.name,
                         cam.status,
                         cam.stream,
+                        decoder,
                         if cam.recording { "sim" } else { "não" },
                         if cam.motion { "  (movimento)" } else { "" }
                     );

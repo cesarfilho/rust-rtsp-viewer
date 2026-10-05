@@ -39,22 +39,31 @@ fn error(message: impl Into<String>) -> Response {
 /// Fotografia das câmeras.
 pub fn camera_infos(engine: &Engine) -> Vec<CameraInfo> {
     (0..engine.camera_count())
-        .map(|i| CameraInfo {
-            index: i,
-            name: engine.names[i].clone(),
-            status: status_name(&engine.status[i]).into(),
-            enabled: engine.camera_enabled[i],
-            recording: engine.status[i] == CameraStatus::Recording
-                || engine.bridges[i]
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .is_recording(),
-            motion: engine.motion_active[i],
-            stream: match engine.stream_quality[i] {
-                StreamQuality::Main => "main",
-                StreamQuality::Sub => "sub",
+        .map(|i| {
+            let stream = engine.bridges[i]
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .metrics()
+                .snapshot_stream_info();
+            CameraInfo {
+                index: i,
+                name: engine.names[i].clone(),
+                status: status_name(&engine.status[i]).into(),
+                enabled: engine.camera_enabled[i],
+                recording: engine.status[i] == CameraStatus::Recording
+                    || engine.bridges[i]
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .is_recording(),
+                motion: engine.motion_active[i],
+                stream: match engine.stream_quality[i] {
+                    StreamQuality::Main => "main",
+                    StreamQuality::Sub => "sub",
+                }
+                .into(),
+                decoder: stream.decoder,
+                decoder_hw: stream.decoder_hw,
             }
-            .into(),
         })
         .collect()
 }
@@ -230,6 +239,8 @@ mod tests {
         assert_eq!(cameras[1].status, "connecting");
         assert_eq!(cameras[1].stream, "main");
         assert!(cameras[1].enabled && !cameras[1].recording && !cameras[1].motion);
+        assert_eq!(cameras[1].decoder, None, "ainda não subiu");
+        assert!(!cameras[1].decoder_hw);
     }
 
     #[test]

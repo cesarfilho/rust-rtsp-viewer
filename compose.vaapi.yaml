@@ -1,0 +1,22 @@
+# Decodificação por GPU Intel (VA-API) no contêiner (plano 2.5.10).
+#
+#   docker compose -f compose.yaml -f compose.vaapi.yaml up -d
+#   docker exec rrv rrvctl status        # a coluna "decodificador" mostra (GPU) ou (CPU)
+#   docker exec rrv vainfo               # diagnóstico do driver
+#
+# Passe o GID do grupo `render` do HOST (`getent group render | cut -d: -f3`); o nome não serve,
+# porque o contêiner tem a sua própria lista de grupos.
+#
+# Só a iGPU Intel/AMD por VA-API. A GPU NVIDIA exige o `nvidia-container-toolkit` no host (decisão
+# D6 do plano) e outra imagem; este arquivo não a cobre.
+# No GStreamer 1.22 (a imagem Debian bookworm) o `vah264dec` tem rank 0 e o `decodebin` NUNCA o
+# escolhe sozinho; a variável abaixo o põe acima do `avdec_h264` (256). Sem o dispositivo o plugin
+# `va` não registra os decodificadores e o `decodebin` cai para a CPU sozinho.
+services:
+  rrv:
+    environment:
+      GST_PLUGIN_FEATURE_RANK: "vah264dec:259,vah265dec:259"
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RRV_RENDER_GID:-987}"

@@ -124,6 +124,17 @@ fn the_window_can_control_the_daemon_over_the_socket() {
         status(&mut c)
     );
     assert_eq!(status(&mut c)[0].name, "Portão");
+    // o decodificador em uso aparece no estado (CPU aqui: sem GPU nos testes)
+    assert!(
+        wait_until(15, || status(&mut c)[0].decoder.is_some()),
+        "o decodificador nunca apareceu no status: {:?}",
+        status(&mut c)
+    );
+    let cam0 = &status(&mut c)[0];
+    assert!(
+        cam0.decoder.as_deref().is_some_and(|d| d.contains("264")),
+        "{cam0:?}"
+    );
 
     // gravação manual pelo canal
     let Response::Recording { recording, .. } =

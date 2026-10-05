@@ -27,11 +27,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM debian:bookworm-slim
 # good/bad/ugly/libav: decodebin, hlsdemux, x264enc (gravação) e os decodificadores.
 # curl: o webhook de aviso (`[webhook]`) o usa como subprocesso.
+# intel-media-va-driver + vainfo: decodificação por GPU Intel (VA-API) quando o contêiner recebe
+# /dev/dri (compose.vaapi.yaml). Sem o dispositivo, o GStreamer cai para a CPU sozinho.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       libgstreamer1.0-0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
       gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
       ca-certificates tzdata curl \
+      intel-media-va-driver vainfo \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /rrv-daemon /rrvctl /usr/local/bin/
