@@ -70,7 +70,7 @@ pub struct GStreamerBridge {
     pub(crate) decoder_scan_done: bool,
     pub(crate) decoder_scan_attempts: u32,
     pub(crate) start_time: Instant,
-    pub(crate) recording_config: RecordingConfig,
+    pub recording_config: RecordingConfig,
     pub(crate) recording: Option<RecordingBranch>,
     /// Bumped on every `start_recording` so each recording branch gets uniquely
     /// named elements. Without this, a reconnect that stops then immediately

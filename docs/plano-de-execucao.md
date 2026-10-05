@@ -35,7 +35,7 @@ de saída, tamanhos e decisões pendentes (o como e o quando). Estado real do c�
 | 0.4 | Baseline real em 1/4/16 câmeras, main × sub → `docs/baseline.md` | CPU, RSS, fps, banda, VRAM por cenário (**D2**) | M | [ ] |
 | 0.5 | Spike `gstreamer` 0.25 + `iced` 0.14 em branch, limite de 3 dias | decisão go/no-go documentada | G | [ ] |
 | 0.6 | Spike `ort`: ONNX Runtime + CUDA + cuDNN, YOLO-n a 320 na GTX 1650 | ms/inferência e VRAM medidos | M | [ ] |
-| 0.7 | Testes de integração (`tests/`) com `videotestsrc`: troca sub/main, reconexão, recuperação de falha na partida | fluxos hoje validados à mão viram teste | M | [ ] |
+| 0.7 | Testes de integração (`tests/`) com `videotestsrc`: troca sub/main, reconexão, recuperação de falha na partida | fluxos hoje validados à mão viram teste | M | [x] |
 | 0.8 | Validação de config com mensagem por campo e `--check` | erro aponta campo e linha; `--check` | M | [x] |
 
 Gate M0: baseline real publicado, 0.5 decidido, ADRs "Proposta" promovidos ou rejeitados.
