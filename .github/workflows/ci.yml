@@ -72,3 +72,31 @@ jobs:
 
       - name: Compila no MSRV
         run: cargo check --workspace --all-targets
+
+  # A imagem do daemon sem janela (ADR 0010) tem de continuar compilando. Não
+  # publica nada: só constrói, com cache de camadas do GitHub Actions.
+  docker:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Constrói a imagem rrv-daemon
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: rust-rtsp-viewer/rrv-daemon:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Sem câmeras o daemon se recusa a subir: prova que o binário roda na
+      # imagem (bibliotecas e plugins do GStreamer presentes) e valida o config.
+      - name: Valida o config de exemplo dentro da imagem
+        run: |
+          docker run --rm \
+            -v "$PWD/config.docker.toml.example:/config/config.toml:ro" \
+            rust-rtsp-viewer/rrv-daemon:ci --check
+

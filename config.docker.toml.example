@@ -1,0 +1,20 @@
+# Configuração do rrv-daemon em Docker. Copie para `config.docker.toml` (esse nome
+# está no .gitignore) e ajuste. As câmeras e demais chaves são as mesmas do
+# `config.toml.example`; só os caminhos mudam: dentro do contêiner, as gravações
+# vão para /data e o estado (logs, zonas) para /state.
+
+[recording]
+dir = "/data"
+on_motion = true
+motion_post_roll_secs = 15
+
+[logs]
+dir = "/state/logs"
+
+[motion]
+enabled = true
+
+[[cameras]]
+name = "Portão"
+url = "rtsp://usuario:senha@192.168.0.10:554/stream1"
+# sub_url = "rtsp://usuario:senha@192.168.0.10:554/stream2"

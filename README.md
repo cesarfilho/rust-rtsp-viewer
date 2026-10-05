@@ -287,6 +287,36 @@ finalize o arquivo antes de o branch ser removido.
 
 ---
 
+## Gravar e detectar com a janela fechada (Docker)
+
+O `rrv-daemon` é o motor sem janela: captura as câmeras, reconecta, grava e detecta movimento
+mesmo com a janela fechada. Roda em Docker; só o daemon vai para o contêiner (a janela continua
+nativa).
+
+```bash
+cp config.docker.toml.example config.docker.toml   # edite as câmeras (o arquivo é ignorado pelo git)
+mkdir -p recordings state
+docker compose up -d --build
+docker compose logs -f rrv
+```
+
+- **Gravações** em `./recordings` (ou `RRV_RECORDINGS`), **estado** (logs, zonas) em `./state`.
+- **UID/GID:** os arquivos saem com o dono certo se `RRV_UID`/`RRV_GID` forem os seus (`id -u`, `id -g`);
+  o padrão é 1000.
+- **Rede:** `network_mode: host`, porque o RTP/UDP de volta das câmeras não atravessa bem a NAT do
+  bridge do Docker.
+- **Parar:** `docker compose stop` envia SIGTERM e o daemon **finaliza as gravações em curso**
+  antes de sair (`stop_grace_period: 30s`). Um `kill -9` deixa o segmento aberto ilegível.
+- **Saúde:** `healthcheck` do Docker lê um batimento que o laço do daemon escreve a cada segundo.
+  Uma câmera fora do ar *não* deixa o contêiner doente: reiniciá-lo não a consertaria.
+- **Validar a configuração** sem subir nada: `docker run --rm -v ./config.docker.toml:/config/config.toml:ro rust-rtsp-viewer/rrv-daemon:local --check`.
+- Fora do Docker: `cargo run -p rrv-daemon -- config.toml` (mesmos `--check` e `--health`).
+
+Ainda não há decodificação por GPU no contêiner (a iGPU Intel por VA-API é a tarefa 2.5.10, a
+NVIDIA exige o `nvidia-container-toolkit`), nem aviso de movimento com a janela fechada (webhook,
+tarefa 2.5.11): por ora os eventos vão para `docker compose logs`. A imagem tem ~1 GB (plugins
+`bad`/`ugly`/`libav` do GStreamer).
+
 ## Teclas de Atalho
 
 | Tecla | Ação |

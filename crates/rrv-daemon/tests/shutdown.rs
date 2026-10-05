@@ -126,3 +126,56 @@ fn check_validates_the_config_and_exits_without_running() {
     assert!(!missing.status.success());
     assert!(String::from_utf8_lossy(&missing.stderr).contains("cannot read"));
 }
+
+fn health(file: &std::path::Path) -> std::process::Output {
+    Command::new(DAEMON)
+        .arg("--health")
+        .arg("--health-file")
+        .arg(file)
+        .output()
+        .unwrap()
+}
+
+/// O healthcheck do contêiner: saudável enquanto o laço bate o coração, mesmo
+/// com uma câmera fora do ar; doente com batimento velho ou ausente.
+#[test]
+fn the_health_check_follows_the_daemon_loop_not_the_cameras() {
+    let tmp = TempDir::new("daemon-health");
+    // câmera que nunca atende: o contêiner continua saudável
+    let config = write_config(&tmp, "rtsp://127.0.0.1:9/never");
+    let beat = tmp.path("beat");
+
+    assert!(
+        !health(&beat).status.success(),
+        "sem daemon rodando, não pode estar saudável"
+    );
+
+    let mut child = Command::new(DAEMON)
+        .arg(&config)
+        .arg("--health-file")
+        .arg(&beat)
+        .env("XDG_STATE_HOME", tmp.path("state"))
+        .stderr(Stdio::null())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !beat.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(beat.exists(), "o daemon não escreveu o batimento");
+    let ok = health(&beat);
+    assert!(ok.status.success(), "{ok:?}");
+
+    // batimento velho = laço travado
+    std::fs::write(tmp.path("old"), "1000 1 0\n").unwrap();
+    let stale = health(&tmp.path("old"));
+    assert!(!stale.status.success());
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("parou"));
+
+    let _ = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status();
+    let _ = child.wait();
+    assert!(!beat.exists(), "o batimento deve sumir ao desligar");
+}

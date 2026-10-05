@@ -1,0 +1,36 @@
+# O NVR sem janela: grava e detecta mesmo com a janela fechada (ADR 0010).
+#
+#   cp config.docker.toml.example config.docker.toml   # e edite as câmeras
+#   mkdir -p recordings state
+#   docker compose up -d --build
+#   docker compose logs -f rrv
+#
+# `docker compose stop` envia SIGTERM e espera o daemon finalizar as gravações.
+services:
+  rrv:
+    build: .
+    image: rust-rtsp-viewer/rrv-daemon:local
+    container_name: rrv
+    restart: unless-stopped
+
+    # RTP/UDP de volta das câmeras não atravessa bem a NAT do bridge; o modo host
+    # é o mais simples. Alternativa: `protocols=tcp` nas câmeras e rede bridge.
+    network_mode: host
+
+    # Mesmo UID/GID do dono dos volumes (`id -u` / `id -g`), para os arquivos de
+    # gravação ficarem seus. Exporte RRV_UID/RRV_GID se forem diferentes de 1000.
+    user: "${RRV_UID:-1000}:${RRV_GID:-1000}"
+
+    # Tempo para finalizar os segmentos de gravação antes do SIGKILL.
+    stop_grace_period: 30s
+
+    environment:
+      TZ: "${TZ:-America/Sao_Paulo}"
+
+    volumes:
+      - ./config.docker.toml:/config/config.toml:ro
+      - ${RRV_RECORDINGS:-./recordings}:/data
+      - ./state:/state
+
+    # Decodificação por GPU Intel (VA-API) é a tarefa 2.5.10:
+    # devices: ["/dev/dri:/dev/dri"]

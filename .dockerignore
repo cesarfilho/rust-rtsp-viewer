@@ -1,0 +1,19 @@
+# Nunca para dentro da imagem: o config.toml tem a senha das câmeras.
+config.toml
+config *.toml
+*.local.toml
+.claude
+.env
+recordings
+state
+
+# Ruído e peso
+target
+.git
+.github
+docs
+assets
+*.png
+*.md
+!README.md
+scripts

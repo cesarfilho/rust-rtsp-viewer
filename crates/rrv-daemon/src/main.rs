@@ -5,6 +5,7 @@
 //! SIGTERM/SIGINT/SIGHUP finaliza as gravações em curso antes de sair: um
 //! processo encerrado sem isso deixa um arquivo vazio e ilegível.
 
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -28,7 +29,20 @@ struct Cli {
     /// Valida o arquivo de configuração e sai (0 = usável, 1 = erros)
     #[arg(long)]
     check: bool,
+
+    /// Healthcheck: sai com 0 se o daemon em execução bateu o coração há pouco
+    /// (para o `HEALTHCHECK` do Docker)
+    #[arg(long)]
+    health: bool,
+
+    /// Arquivo de batimento do daemon
+    #[arg(long, env = "RRV_HEALTH_FILE", default_value = DEFAULT_HEALTH_FILE)]
+    health_file: PathBuf,
 }
+
+const DEFAULT_HEALTH_FILE: &str = "/tmp/rrv-daemon.health";
+/// O batimento é gravado a cada tick de 1 s; mais velho que isso = laço travado.
+const HEALTH_MAX_AGE: Duration = Duration::from_secs(15);
 
 fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -43,6 +57,9 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: &Cli) -> Result<(), String> {
+    if cli.health {
+        return check_health(&cli.health_file);
+    }
     let (config, warnings) = load_config(&cli.config, "rrv-daemon")?;
     let mut cameras = config.cameras.clone().unwrap_or_default();
     merge_global_camera_defaults(&mut cameras, &config);
@@ -101,10 +118,15 @@ fn run(cli: &Cli) -> Result<(), String> {
         for event in engine.step(tick) {
             log_event(&engine, &event);
         }
+        // Uma vez por segundo, o batimento que o healthcheck lê.
+        if tick.is_multiple_of(10) {
+            write_heartbeat(&cli.health_file, &engine);
+        }
         tick += 1;
         std::thread::sleep(period.saturating_sub(started.elapsed()));
     }
 
+    let _ = std::fs::remove_file(&cli.health_file);
     log::info!("sinal de parada recebido: finalizando gravações");
     engine.shutdown();
     log::info!("rrv-daemon encerrado");
@@ -123,4 +145,45 @@ fn log_event(engine: &Engine, event: &EngineEvent) {
     if let Some((title, body)) = &event.notification {
         log::info!("[{name}] notificação: {title} — {body}");
     }
+}
+
+fn unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// `<segundos unix> <câmeras> <ao vivo>`: o healthcheck só olha a hora; o resto
+/// é para quem abrir o arquivo.
+fn write_heartbeat(path: &Path, engine: &Engine) {
+    use rrv_core::domain::camera_status::CameraStatus;
+    let live = engine
+        .status
+        .iter()
+        .filter(|s| matches!(s, CameraStatus::Live | CameraStatus::Recording))
+        .count();
+    let line = format!("{} {} {live}\n", unix_secs(), engine.camera_count());
+    // Grava num temporário e renomeia: o healthcheck nunca lê pela metade.
+    let tmp = path.with_extension("tmp");
+    if std::fs::write(&tmp, line).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
+}
+
+/// Saudável = o laço do daemon bateu o coração há menos de [`HEALTH_MAX_AGE`].
+/// Uma câmera fora do ar não torna o contêiner doente: reiniciá-lo não a
+/// consertaria, e perderia as gravações das outras.
+fn check_health(path: &Path) -> Result<(), String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("sem batimento em {}: {e}", path.display()))?;
+    let beat: u64 = text
+        .split_whitespace()
+        .next()
+        .and_then(|t| t.parse().ok())
+        .ok_or_else(|| format!("batimento ilegível em {}", path.display()))?;
+    let age = unix_secs().saturating_sub(beat);
+    if age > HEALTH_MAX_AGE.as_secs() {
+        return Err(format!("o laço do daemon parou há {age} s"));
+    }
+    Ok(())
 }

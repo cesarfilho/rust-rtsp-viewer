@@ -11,3 +11,8 @@ node_modules
 # Local agent-tool plans
 .mimocode/
 .opencode/
+
+# Docker (compose.yaml)
+config.docker.toml
+recordings/
+state/
