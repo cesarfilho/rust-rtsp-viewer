@@ -12,18 +12,35 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::config::CameraConfig;
+use crate::config::{CameraConfig, LogsConfigFile};
 use crate::domain::camera_status::{CameraStatus, StatusReading};
 use crate::domain::motion::MotionConfig;
 use crate::domain::multi_stream::StreamQuality;
 use crate::domain::multi_stream::{MultiStreamConfig, desired_quality, stream_url_for_quality};
 use crate::domain::notify::NotifyConfig;
+use crate::domain::recording::RecordingConfig;
 use crate::domain::timeline::EventType;
 use crate::domain::zones::ZoneConfig;
 use crate::infrastructure::reconnect::{ReconnectDecision, ReconnectState};
+use crate::infrastructure::zone_state::ZonesFile;
 use std::sync::atomic::Ordering;
 
 use backoff::BackoffState;
+
+/// Everything [`Engine::new`] needs from the configuration.
+pub struct EngineSettings<'a> {
+    pub cameras: &'a [CameraConfig],
+    pub recording: &'a RecordingConfig,
+    pub motion: MotionConfig,
+    pub notify: NotifyConfig,
+    pub logs: &'a LogsConfigFile,
+    /// `[view] pause_hidden`.
+    pub pause_hidden: bool,
+    /// `[view] stagger_ms`.
+    pub stagger: Duration,
+    /// Persisted zones (`zones.toml`), keyed by camera display name.
+    pub zones: &'a ZonesFile,
+}
 
 /// How long a freshly (re)started pipeline shows `Connecting` instead of
 /// flapping to `Reconnecting`/`Offline` while it hand-shakes.
@@ -84,6 +101,150 @@ pub struct Engine {
     pub notify: NotifyConfig,
     /// Last desktop notification per (camera, event kind), for the cooldown.
     pub notify_last: HashMap<(usize, &'static str), Instant>,
+}
+
+impl Engine {
+    /// Build the engine from the configuration. Pipelines are **not** started
+    /// here (a dozen HLS streams all connecting during construction froze the
+    /// window on launch): every camera is queued in index order and the host
+    /// drains the queue one camera per `stagger`. Use [`Engine::set_start_order`]
+    /// to start in another order.
+    ///
+    /// A camera whose bridge cannot be built is dropped from every per-camera
+    /// vector, so indices stay in lockstep; read the surviving cameras back from
+    /// `camera_configs` and `names`.
+    pub fn new(settings: EngineSettings<'_>) -> Self {
+        let _ = gstreamer::init();
+        let EngineSettings {
+            cameras,
+            recording,
+            motion,
+            notify,
+            logs,
+            pause_hidden,
+            stagger,
+            zones,
+        } = settings;
+
+        // Per-camera log directory (default: ~/logs/rust-rtsp-viewer).
+        let log_dir = crate::infrastructure::recording_paths::ensure_log_dir(
+            logs.dir
+                .as_deref()
+                .unwrap_or(std::path::Path::new("~/logs/rust-rtsp-viewer")),
+        )
+        .unwrap_or_else(|_| std::path::PathBuf::from("logs"));
+        let retention_days = logs.retention_days.unwrap_or(7);
+
+        let mut kept: Vec<CameraConfig> = Vec::with_capacity(cameras.len());
+        let mut names: Vec<String> = Vec::with_capacity(cameras.len());
+        let mut bridges = Vec::with_capacity(cameras.len());
+        // Labels must be unique: two cameras with the same (or `safe_filename`-
+        // colliding) label would share one log file and fight over rotation.
+        let mut used_labels = std::collections::HashSet::new();
+
+        for cam in cameras {
+            let mut bridge = match bridge::GStreamerBridge::new(1920, 1080) {
+                Ok(b) => b,
+                Err(e) => {
+                    log::error!(
+                        "Skipping camera {:?}: {e}",
+                        cam.label
+                            .as_deref()
+                            .or(cam.name.as_deref())
+                            .unwrap_or(cam.url.as_str())
+                    );
+                    continue;
+                }
+            };
+            bridge.recording_config = recording.clone();
+            bridge.detect_enabled = motion.enabled;
+            let base_label = cam
+                .label
+                .clone()
+                .or_else(|| cam.name.clone())
+                .unwrap_or_else(|| format!("Camera {}", kept.len() + 1));
+            // Disambiguate on the `safe_filename` form (which is lossy), so
+            // "Centro: A" and "Centro A" still get separate log files.
+            let mut label = base_label.clone();
+            let mut dup = 2;
+            while !used_labels.insert(crate::infrastructure::recording_paths::safe_filename(
+                &label,
+            )) {
+                label = format!("{base_label} ({dup})");
+                dup += 1;
+            }
+            let log_path = crate::infrastructure::recording_paths::log_path(&log_dir, &label);
+            if let Ok(logger) = crate::infrastructure::recording_paths::CameraLogger::new(
+                log_path,
+                &label,
+                retention_days,
+            ) {
+                bridge.set_logger(Arc::new(logger));
+            }
+            bridges.push(Arc::new(Mutex::new(bridge)));
+            kept.push(cam.clone());
+            names.push(label);
+        }
+
+        let count = bridges.len();
+        let motion_recording = recording.on_motion;
+        if pause_hidden
+            && crate::domain::motion::needs_background_watch(
+                motion.enabled,
+                motion_recording,
+                notify.enabled,
+            )
+        {
+            log::info!(
+                "[view] pause_hidden is overridden: on_motion / notifications need every \
+                 camera decoding so hidden cameras are not blind"
+            );
+        }
+        let zone_configs = names.iter().map(|n| zones.zone_config_for(n)).collect();
+
+        Engine {
+            bridges,
+            pause_hidden,
+            stagger,
+            start_queue: (0..count).collect(),
+            next_start_at: Instant::now(),
+            active_stream: vec![false; count],
+            connecting_since: vec![None; count],
+            reconnect_states: (0..count).map(|_| ReconnectState::new(15)).collect(),
+            backoff_states: (0..count).map(|_| BackoffState::new()).collect(),
+            stream_quality: vec![StreamQuality::Main; count],
+            names,
+            events: Vec::new(),
+            status: vec![CameraStatus::Connecting; count],
+            camera_configs: kept,
+            camera_enabled: vec![true; count],
+            motion_config: motion,
+            prev_motion_frames: vec![None; count],
+            motion_active: vec![false; count],
+            motion_recording,
+            motion_post_roll_secs: recording.motion_post_roll_secs,
+            last_motion_at: vec![None; count],
+            auto_recording: vec![false; count],
+            zones: zone_configs,
+            notify,
+            notify_last: HashMap::new(),
+        }
+    }
+
+    /// Start the queued cameras in `order` (camera indices) instead of index
+    /// order, so the page the user sees first comes up first.
+    pub fn set_start_order(&mut self, order: &[usize]) {
+        self.start_queue = order
+            .iter()
+            .copied()
+            .filter(|&i| i < self.bridges.len())
+            .collect();
+    }
+
+    /// Number of cameras the engine runs.
+    pub fn camera_count(&self) -> usize {
+        self.bridges.len()
+    }
 }
 
 impl Engine {
@@ -1035,5 +1196,153 @@ mod tests {
         let mut e = engine(1);
         e.set_camera_enabled(7, false);
         assert!(e.camera_enabled[0]);
+    }
+
+    // ---- Engine::new ----
+
+    fn cams(toml_cams: &str) -> Vec<CameraConfig> {
+        #[derive(serde::Deserialize)]
+        struct W {
+            cameras: Vec<CameraConfig>,
+        }
+        toml::from_str::<W>(toml_cams).unwrap().cameras
+    }
+
+    /// Build an engine in a throwaway log directory.
+    fn built(cameras: &[CameraConfig], motion_on: bool, zones: &ZonesFile) -> Engine {
+        let dir = std::env::temp_dir().join(format!("rrv-engine-new-{}", std::process::id()));
+        let logs = LogsConfigFile {
+            dir: Some(dir),
+            ..LogsConfigFile::default()
+        };
+        Engine::new(EngineSettings {
+            cameras,
+            recording: &RecordingConfig::default(),
+            motion: MotionConfig {
+                enabled: motion_on,
+                ..MotionConfig::default()
+            },
+            notify: NotifyConfig {
+                enabled: false,
+                ..NotifyConfig::default()
+            },
+            logs: &logs,
+            pause_hidden: true,
+            stagger: Duration::from_millis(250),
+            zones,
+        })
+    }
+
+    #[test]
+    fn new_names_cameras_and_keeps_every_vec_in_lockstep() {
+        let c = cams(
+            "[[cameras]]\nurl = \"rtsp://a/s\"\nname = \"Portão\"\n\
+             [[cameras]]\nurl = \"rtsp://b/s\"\nlabel = \"Garagem\"\n\
+             [[cameras]]\nurl = \"rtsp://c/s\"\n",
+        );
+        let e = built(&c, false, &ZonesFile::default());
+        assert_eq!(e.camera_count(), 3);
+        assert_eq!(e.names, vec!["Portão", "Garagem", "Camera 3"]);
+        for len in [
+            e.active_stream.len(),
+            e.connecting_since.len(),
+            e.reconnect_states.len(),
+            e.backoff_states.len(),
+            e.stream_quality.len(),
+            e.status.len(),
+            e.camera_configs.len(),
+            e.camera_enabled.len(),
+            e.prev_motion_frames.len(),
+            e.zones.len(),
+        ] {
+            assert_eq!(len, 3);
+        }
+        assert!(e.status.iter().all(|s| *s == CameraStatus::Connecting));
+    }
+
+    #[test]
+    fn new_disambiguates_duplicate_and_filename_colliding_labels() {
+        let c = cams(
+            "[[cameras]]\nurl = \"rtsp://a/s\"\nname = \"Cam\"\n\
+             [[cameras]]\nurl = \"rtsp://b/s\"\nname = \"Cam\"\n\
+             [[cameras]]\nurl = \"rtsp://c/s\"\nname = \"Centro: A\"\n\
+             [[cameras]]\nurl = \"rtsp://d/s\"\nname = \"Centro A\"\n",
+        );
+        let e = built(&c, false, &ZonesFile::default());
+        assert_eq!(e.names[0], "Cam");
+        assert_eq!(e.names[1], "Cam (2)");
+        assert_eq!(e.names[2], "Centro: A");
+        assert_eq!(
+            e.names[3], "Centro A (2)",
+            "labels that sanitise to the same file name must not share a log"
+        );
+    }
+
+    #[test]
+    fn new_queues_every_camera_and_starts_none() {
+        let c = cams("[[cameras]]\nurl = \"rtsp://a/s\"\n[[cameras]]\nurl = \"rtsp://b/s\"\n");
+        let e = built(&c, false, &ZonesFile::default());
+        assert_eq!(e.start_queue, VecDeque::from([0, 1]));
+        assert!(
+            e.active_stream.iter().all(|a| !a),
+            "nothing starts in new()"
+        );
+        assert!(
+            e.bridges
+                .iter()
+                .all(|b| b.lock().unwrap().pipeline().is_none())
+        );
+    }
+
+    #[test]
+    fn set_start_order_reorders_and_drops_unknown_indices() {
+        let c = cams(
+            "[[cameras]]\nurl = \"rtsp://a/s\"\n[[cameras]]\nurl = \"rtsp://b/s\"\n\
+             [[cameras]]\nurl = \"rtsp://c/s\"\n",
+        );
+        let mut e = built(&c, false, &ZonesFile::default());
+        e.set_start_order(&[2, 9, 0]);
+        assert_eq!(e.start_queue, VecDeque::from([2, 0]));
+    }
+
+    #[test]
+    fn new_enables_the_detection_branch_only_when_motion_is_on() {
+        let c = cams("[[cameras]]\nurl = \"rtsp://a/s\"\n");
+        let on = built(&c, true, &ZonesFile::default());
+        let off = built(&c, false, &ZonesFile::default());
+        assert!(on.bridges[0].lock().unwrap().detect_enabled);
+        assert!(!off.bridges[0].lock().unwrap().detect_enabled);
+    }
+
+    #[test]
+    fn new_loads_persisted_zones_by_camera_name() {
+        let c = cams(
+            "[[cameras]]\nurl = \"rtsp://a/s\"\nname = \"Portão\"\n\
+             [[cameras]]\nurl = \"rtsp://b/s\"\nname = \"Garagem\"\n",
+        );
+        let mut zones = ZonesFile::default();
+        zones.cameras.insert(
+            "Garagem".into(),
+            vec![crate::domain::zones::MotionZoneFile {
+                name: "z".into(),
+                vertices: vec![
+                    crate::domain::zones::PointFile { x: 0.1, y: 0.1 },
+                    crate::domain::zones::PointFile { x: 0.9, y: 0.1 },
+                    crate::domain::zones::PointFile { x: 0.5, y: 0.9 },
+                ],
+                enabled: Some(true),
+            }],
+        );
+        let e = built(&c, false, &zones);
+        assert!(!e.zones[0].has_active(), "Portão has no zones");
+        assert!(e.zones[1].has_active(), "Garagem's zone is found by name");
+    }
+
+    #[test]
+    fn new_with_no_cameras_is_an_empty_engine() {
+        let e = built(&[], false, &ZonesFile::default());
+        assert_eq!(e.camera_count(), 0);
+        assert!(e.start_queue.is_empty());
+        assert!(e.enabled_cameras().is_empty());
     }
 }

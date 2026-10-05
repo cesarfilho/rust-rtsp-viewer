@@ -1,7 +1,6 @@
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iced::Task;
@@ -11,12 +10,10 @@ use crate::domain::recording::RecordingConfig;
 use crate::domain::snapshot::SnapshotConfig;
 use crate::domain::view::ViewSettings;
 use crate::infrastructure::audio::AudioLevelState;
-use crate::infrastructure::reconnect::ReconnectState;
 
-use super::bridge::GStreamerBridge;
 use super::message::{LayoutMode, Message};
 use super::sidebar;
-use super::state::{BackoffState, ContextMenu, Toast};
+use super::state::{ContextMenu, Toast};
 use super::theme::Theme;
 use super::video_widget::VideoWidget;
 
@@ -156,100 +153,49 @@ pub fn new_app(
         "opencode" => Theme::OpenCode,
         _ => Theme::Cosmic,
     };
-    let mut bridges = Vec::new();
-    let mut videos = Vec::new();
-    let mut camera_infos = Vec::new();
-    let mut audio_pipelines = Vec::new();
-    let mut audio_urls = Vec::new();
-    let mut audio_level_states = Vec::new();
-    let mut reconnect_states = Vec::new();
-    let mut backoff_states = Vec::new();
-    let mut vu_peaks = Vec::new();
-    let mut vu_peak_since: Vec<Option<Instant>> = Vec::new();
+    // The engine builds one bridge per camera (and drops any that cannot be
+    // built); everything the window needs per camera is derived from it so the
+    // indices stay in lockstep. Pipelines are NOT started here — `update_frame`
+    // drains the engine's start queue one camera per `stagger`.
+    let zones_file = crate::infrastructure::zone_state::load();
+    let mut engine = crate::engine::Engine::new(crate::engine::EngineSettings {
+        cameras: &cameras,
+        recording: &recording_config,
+        motion: motion_config,
+        notify: notify_config,
+        logs: &logs_config,
+        pause_hidden: view_config.pause_hidden(),
+        stagger: Duration::from_millis(view_config.stagger_ms()),
+        zones: &zones_file,
+    });
+    let count = engine.camera_count();
 
-    // Per-camera log directory (default: ~/logs/rust-rtsp-viewer).
-    let log_dir = crate::infrastructure::recording_paths::ensure_log_dir(
-        logs_config
-            .dir
-            .as_deref()
-            .unwrap_or(std::path::Path::new("~/logs/rust-rtsp-viewer")),
-    )
-    .unwrap_or_else(|_| std::path::PathBuf::from("logs"));
-    let retention_days = logs_config.retention_days.unwrap_or(7);
-
-    // Cameras whose bridge could not be constructed are dropped from every
-    // parallel vec so the indices stay in lockstep; `camera_configs` is built
-    // from this rather than the raw input for the same reason.
-    let mut kept_cameras: Vec<crate::config::CameraConfig> = Vec::with_capacity(cameras.len());
-    // Labels must be unique: two cameras with the same (or `safe_filename`-
-    // colliding) label would share one log file and fight over rotation.
-    let mut used_labels: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    for cam in &cameras {
-        let mut bridge = match GStreamerBridge::new(1920, 1080) {
-            Ok(b) => b,
-            Err(e) => {
-                log::error!(
-                    "Skipping camera {:?}: {e}",
-                    cam.label
-                        .as_deref()
-                        .or(cam.name.as_deref())
-                        .unwrap_or(cam.url.as_str())
-                );
-                continue;
+    let videos: Vec<VideoWidget> = engine
+        .bridges
+        .iter()
+        .map(|b| VideoWidget::new(b.clone()))
+        .collect();
+    let audio_pipelines: Vec<_> = (0..count).map(|_| Rc::new(RefCell::new(None))).collect();
+    let audio_urls: Vec<String> = engine
+        .camera_configs
+        .iter()
+        .map(|c| c.url.clone())
+        .collect();
+    let audio_level_states: Vec<_> = (0..count)
+        .map(|_| Arc::new(AudioLevelState::new()))
+        .collect();
+    let camera_infos: Vec<sidebar::CameraInfo> = engine
+        .names
+        .iter()
+        .zip(&engine.camera_configs)
+        .map(|(name, cam)| sidebar::CameraInfo {
+            name: name.clone(),
+            kind: if cam.url.starts_with("http") {
+                "HLS"
+            } else {
+                "RTSP"
             }
-        };
-        bridge.recording_config = recording_config.clone();
-        bridge.detect_enabled = motion_config.enabled;
-        let base_label = cam
-            .label
-            .clone()
-            .or_else(|| cam.name.clone())
-            .unwrap_or_else(|| format!("Camera {}", camera_infos.len() + 1));
-        // Disambiguate on the `safe_filename` form (which is lossy), so
-        // "Centro: A" and "Centro A" still get separate log files.
-        let mut label = base_label.clone();
-        let mut dup = 2;
-        while !used_labels.insert(crate::infrastructure::recording_paths::safe_filename(
-            &label,
-        )) {
-            label = format!("{base_label} ({dup})");
-            dup += 1;
-        }
-        let log_path = crate::infrastructure::recording_paths::log_path(&log_dir, &label);
-        if let Ok(logger) = crate::infrastructure::recording_paths::CameraLogger::new(
-            log_path,
-            &label,
-            retention_days,
-        ) {
-            bridge.set_logger(Arc::new(logger));
-        }
-        // Pipelines are NOT started here — a dozen HLS streams all connecting
-        // inside `new_app` froze the window on launch. `update_frame` drains
-        // `start_queue` one camera per `stagger`, and only for cameras that
-        // should actually be visible.
-        let bridge = Arc::new(Mutex::new(bridge));
-        let video = VideoWidget::new(bridge.clone());
-        kept_cameras.push(cam.clone());
-        bridges.push(bridge);
-        videos.push(video);
-        audio_pipelines.push(Rc::new(RefCell::new(None)));
-        audio_urls.push(cam.url.clone());
-        audio_level_states.push(Arc::new(AudioLevelState::new()));
-        reconnect_states.push(ReconnectState::new(15));
-        backoff_states.push(BackoffState::new());
-        vu_peaks.push(0.0);
-        vu_peak_since.push(None);
-
-        let kind = if cam.url.starts_with("http") || cam.url.starts_with("https") {
-            "HLS"
-        } else {
-            "RTSP"
-        };
-
-        camera_infos.push(sidebar::CameraInfo {
-            name: label,
-            kind: kind.into(),
+            .into(),
             status: sidebar::CameraStatus::Connecting,
             fps: 0.0,
             bitrate: "\u{2014}".into(),
@@ -258,10 +204,8 @@ pub fn new_app(
             is_recording: false,
             enabled: true,
             fps_history: Vec::new(),
-        });
-    }
-
-    let count = bridges.len();
+        })
+        .collect();
 
     // Groups reference camera indices; drop the whole set if any is invalid
     // rather than silently filtering to a broken view.
@@ -279,8 +223,6 @@ pub fn new_app(
     // `view.toml` (which wins). `pause_hidden` / `stagger_ms` stay
     // config-only — they are deployment knobs, not per-session tweaks.
     let mut view = view_config.into_settings(count);
-    let pause_hidden = view_config.pause_hidden();
-    let stagger = Duration::from_millis(view_config.stagger_ms());
     let mut layout_mode = if view_config.layout_is_flex() {
         LayoutMode::Flex
     } else {
@@ -317,61 +259,15 @@ pub fn new_app(
     {
         sidebar.active_group = Some(g);
     }
-    let motion_recording = recording_config.on_motion;
-    if pause_hidden
-        && crate::domain::motion::needs_background_watch(
-            motion_config.enabled,
-            motion_recording,
-            notify_config.enabled,
-        )
-    {
-        log::info!(
-            "[view] pause_hidden is overridden: on_motion / notifications need every \
-             camera decoding so hidden cameras are not blind"
-        );
-    }
-    let motion_post_roll_secs = recording_config.motion_post_roll_secs;
-    let zones_file = crate::infrastructure::zone_state::load();
-    let zones: Vec<crate::domain::zones::ZoneConfig> = sidebar
-        .cameras
-        .iter()
-        .map(|c| zones_file.zone_config_for(&c.name))
-        .collect();
     view.sanitize(count);
     sidebar.order = view.order.clone();
 
     // Start pipelines in display order so page 1 comes up first; the
     // `update_frame` drain skips any camera that should stay paused.
-    let start_queue: VecDeque<usize> =
-        crate::domain::view::apply_order(&view.order, &(0..count).collect::<Vec<_>>()).into();
-
-    let engine = crate::engine::Engine {
-        bridges,
-        pause_hidden,
-        stagger,
-        start_queue,
-        next_start_at: Instant::now(),
-        active_stream: vec![false; count],
-        connecting_since: vec![None; count],
-        reconnect_states,
-        backoff_states,
-        stream_quality: vec![crate::domain::multi_stream::StreamQuality::Main; kept_cameras.len()],
-        names: sidebar.cameras.iter().map(|c| c.name.clone()).collect(),
-        events: Vec::new(),
-        status: vec![crate::domain::camera_status::CameraStatus::Connecting; count],
-        camera_configs: kept_cameras,
-        camera_enabled: vec![true; count],
-        motion_config,
-        prev_motion_frames: vec![None; count],
-        motion_active: vec![false; count],
-        motion_recording,
-        motion_post_roll_secs,
-        last_motion_at: vec![None; count],
-        auto_recording: vec![false; count],
-        zones,
-        notify: notify_config,
-        notify_last: std::collections::HashMap::new(),
-    };
+    engine.set_start_order(&crate::domain::view::apply_order(
+        &view.order,
+        &(0..count).collect::<Vec<_>>(),
+    ));
 
     (
         App {

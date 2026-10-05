@@ -1,7 +1,5 @@
 use std::time::Instant;
 
-pub use crate::engine::backoff::BackoffState;
-
 pub const TOAST_DURATION_SECS: u64 = 3;
 pub const VU_PEAK_DECAY_MS: u128 = 1200;
 
