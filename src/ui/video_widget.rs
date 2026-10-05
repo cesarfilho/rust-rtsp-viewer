@@ -35,19 +35,22 @@ impl VideoWidget {
     }
 
     pub fn view(&self) -> Element<'static, Message> {
-        let (handle_opt, w, h, frame_gen) = self
+        let (rgba, w, h, frame_gen) = self
             .bridge
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .read_frame();
 
+        // The handle is built here, on the UI side, and only when the engine
+        // produced a new frame: a fresh handle per `view()` would re-upload the
+        // texture on every redraw.
         if frame_gen != self.last_gen.get() {
             self.last_gen.set(frame_gen);
-            if let Some(handle) = handle_opt
+            if let Some(rgba) = rgba
                 && w > 0
                 && h > 0
             {
-                *self.cached_handle.borrow_mut() = Some(handle);
+                *self.cached_handle.borrow_mut() = Some(Handle::from_rgba(w, h, rgba));
             }
         }
 

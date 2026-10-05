@@ -1144,7 +1144,9 @@ fn update_frame(app: &mut App) -> Task<Message> {
                 bridge.query_latency();
                 bridge.poll_rtp_stats();
             }
-            bridge.update_camera_info(&mut app.sidebar.cameras[i]);
+            if let Some(reading) = bridge.sample_status(&app.sidebar.cameras[i].status) {
+                app.sidebar.cameras[i].apply(reading);
+            }
             let hist = &mut app.sidebar.cameras[i].fps_history;
             hist.push(fps);
             if hist.len() > 16 {

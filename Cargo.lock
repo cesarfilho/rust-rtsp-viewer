@@ -3387,6 +3387,7 @@ dependencies = [
 name = "rust-rtsp-viewer"
 version = "0.8.0"
 dependencies = [
+ "bytes",
  "chrono",
  "clap",
  "env_logger",

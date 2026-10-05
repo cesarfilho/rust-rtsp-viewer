@@ -75,7 +75,7 @@ O NVR grava e detecta com a janela fechada. **Vem antes do M3**: gravação, SQL
 passam a viver no daemon; construí-las dentro de `update.rs` e migrar depois custa muito mais.
 | # | Tarefa | Critério de saída | Tam. |
 |---|---|---|---|
-| 2.5.1 | Desacoplar o iced do motor: `Handle`/`Bytes` fora de `bridge`/`pipeline` (hoje ~5 pontos) | `bridge` e `pipeline` compilam sem `iced` | P |
+| 2.5.1 | Desacoplar o iced do motor: `Handle`/`Bytes` fora de `bridge`/`pipeline` (hoje ~5 pontos) | `bridge` e `pipeline` compilam sem `iced` | P | [x] 2026-10-05 — também moveu `CameraStatus` para `domain/` e separou `sample_status`/`CameraInfo::apply`; guarda em `tests/engine_isolation.rs` |
 | 2.5.2 | Extrair a orquestração de `ui/update.rs` (reconexão, backoff, fila de partida, movimento, gravação por evento, notificações, eventos) para um módulo de motor sem `App` | o cliente atual usa o motor e todos os testes seguem verdes | G |
 | 2.5.3 | Workspace Cargo: `rrv-core` (domain + motor), `rrv-daemon`, cliente | `cargo build --workspace`; mesmo comportamento | M |
 | 2.5.4 | Vídeo ao vivo do daemon para o cliente (**D5**; medir antes com 0.3); porta RTSP local publicada pelo container | cliente mostra 16 câmeras com 1 sessão RTSP por câmera | G |

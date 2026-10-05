@@ -18,7 +18,7 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
 
-use iced::advanced::image::Bytes;
+use bytes::Bytes;
 
 /// Name given to the decoder element so the decode-time probes can find it.
 const DECODER_NAME: &str = "video_decoder";
@@ -312,9 +312,7 @@ fn setup_appsink(pipeline: &gst::Pipeline, bridge: &mut GStreamerBridge) -> Resu
                     sample_image_quality_rgba(&metrics, &bytes, w as usize, h as usize);
                 }
 
-                let handle = iced::widget::image::Handle::from_rgba(w, h, bytes.clone());
                 let mut state = frame.lock().unwrap_or_else(|e| e.into_inner());
-                state.handle = Some(handle);
                 state.width = w;
                 state.height = h;
                 state.raw_rgba = bytes;
@@ -638,7 +636,7 @@ impl GStreamerBridge {
     }
 
     /// Stop recording while the pipeline keeps running (user pressed `r`).
-    /// The EOS drain + teardown runs on a detached thread so the iced update
+    /// The EOS drain + teardown runs on a detached thread so the UI update
     /// loop is not blocked for up to `RECORDING_EOS_TIMEOUT_MS`. Safe because
     /// each branch's elements are uniquely named per `recording_seq`, so a
     /// fresh `start_recording` cannot collide with the in-flight teardown.

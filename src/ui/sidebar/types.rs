@@ -14,49 +14,7 @@ pub enum SidebarView {
     Timeline,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CameraStatus {
-    Live,
-    Offline,
-    Reconnecting,
-    Recording,
-    Disabled,
-    /// Pipeline is starting up (initial staggered launch, or coming back onto
-    /// the visible page) but has not produced a frame yet. Distinct from
-    /// `Offline`, which means the stream actually failed.
-    Connecting,
-    /// Deliberately stopped because the camera is off the visible page and
-    /// `[view] pause_hidden` is on. Costs no CPU; not a fault.
-    Paused,
-}
-
-impl CameraStatus {
-    pub fn label(&self) -> &'static str {
-        match self {
-            CameraStatus::Live => "LIVE",
-            CameraStatus::Offline => "OFFLINE",
-            CameraStatus::Reconnecting => "RECONNECTING",
-            CameraStatus::Recording => "RECORDING",
-            CameraStatus::Disabled => "DESATIVADA",
-            CameraStatus::Connecting => "CONNECTING",
-            CameraStatus::Paused => "PAUSED",
-        }
-    }
-
-    /// Sentence-case Portuguese label for the UI (the all-caps `label` reads as
-    /// shouting).
-    pub fn label_pt(&self) -> &'static str {
-        match self {
-            CameraStatus::Live => "Ao vivo",
-            CameraStatus::Offline => "Offline",
-            CameraStatus::Reconnecting => "Reconectando",
-            CameraStatus::Recording => "Gravando",
-            CameraStatus::Disabled => "Desativada",
-            CameraStatus::Connecting => "Conectando\u{2026}",
-            CameraStatus::Paused => "Pausada",
-        }
-    }
-}
+pub use crate::domain::camera_status::CameraStatus;
 
 #[derive(Clone, Debug)]
 pub struct CameraInfo {
@@ -71,6 +29,19 @@ pub struct CameraInfo {
     pub enabled: bool,
     /// Short tail of recent fps samples for the row sparkline (cap ~16).
     pub fps_history: Vec<f64>,
+}
+
+impl CameraInfo {
+    /// Fold a sample from the video engine into this row.
+    pub fn apply(&mut self, reading: crate::domain::camera_status::StatusReading) {
+        self.fps = reading.fps;
+        if let Some(status) = reading.status {
+            self.status = status;
+        }
+        if let Some(bitrate) = reading.bitrate {
+            self.bitrate = bitrate.display();
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

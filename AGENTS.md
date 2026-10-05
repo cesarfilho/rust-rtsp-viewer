@@ -73,6 +73,7 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
 | File | Key types |
 |------|-----------|
 | `audio.rs` | `AudioConfig`, `AudioState` |
+| `camera_status.rs` | `CameraStatus`, `StatusReading`, `BitrateReading` — what the engine reports per camera (re-exported by `ui::sidebar`) |
 | `bidirectional_audio.rs` | talk-back configuration |
 | `codec.rs` | `enum Codec` (H264/H265/Mjpeg/Vp8/…), `from_caps` |
 | `diagnostics.rs` | `Severity`, `Hint`, `diagnose`, `overall_severity` |
@@ -264,6 +265,18 @@ via `subscription`'s `listen_with`, or any keypress) and auto-hides after
   passwords (`.claude/settings.local.json` is git-ignored). Scan `git ls-files`
   before publishing.
 - **HLS/HTTP sources** auto-detect via URL scheme → `uridecodebin3` (handles fMP4/CMAF HLS, not just MPEG-TS).
+
+## Engine × UI boundary (ADR 0010)
+
+The video engine — `domain/`, `infrastructure/`, `ui/bridge.rs`, `ui/pipeline.rs` — must not
+depend on `iced` or import UI modules, so it can move to a headless daemon. `tests/engine_isolation.rs`
+enforces it. Consequences to keep in mind:
+- `GStreamerBridge::read_frame()` returns shared RGBA `bytes::Bytes`, never an image handle;
+  `VideoWidget` builds the `Handle` only when the frame generation changes.
+- The bridge reports health as a pure `StatusReading` (`sample_status`); the UI folds it into its
+  row with `CameraInfo::apply` and formats the text.
+- Orchestration (reconnect, backoff, start queue, motion→recording, notifications) still lives in
+  `ui/update.rs` mixed with `App`; extracting it is task 2.5.2.
 
 ## Adding new features
 

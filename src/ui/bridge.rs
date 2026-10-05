@@ -5,11 +5,11 @@ use std::time::Instant;
 use gstreamer as gst;
 use gstreamer::prelude::*;
 
-use iced::advanced::image::Bytes;
+use bytes::Bytes;
 
+use crate::domain::camera_status::{BitrateReading, CameraStatus, StatusReading};
 use crate::domain::metrics::{Metrics, PacketStats};
 use crate::domain::recording::RecordingConfig;
-use crate::ui::sidebar::{CameraInfo, CameraStatus};
 
 pub(crate) const EMA_ALPHA_X1000: u64 = 200;
 pub(crate) const SAMPLE_EVERY_N: u64 = 30;
@@ -21,7 +21,6 @@ pub(crate) const SAMPLE_EVERY_N: u64 = 30;
 const RECORDING_EOS_TIMEOUT_MS: u64 = 3000;
 
 pub(crate) struct FrameState {
-    pub handle: Option<iced::widget::image::Handle>,
     pub width: u32,
     pub height: u32,
     pub generation: u64,
@@ -29,7 +28,7 @@ pub(crate) struct FrameState {
     /// Raw RGBA pixels of the most recent frame, kept for snapshots.
     ///
     /// `Bytes` is reference-counted, so the appsink callback can hand the
-    /// same allocation to both the iced `Handle` and this field, and
+    /// same allocation to both the UI's image handle and this field, and
     /// `capture_frame` can clone it, without ever copying the pixel data.
     pub raw_rgba: Bytes,
 }
@@ -126,7 +125,6 @@ impl GStreamerBridge {
         Ok(Self {
             pipeline: None,
             frame: Arc::new(Mutex::new(FrameState {
-                handle: None,
                 width,
                 height,
                 generation: 0,
@@ -609,14 +607,13 @@ impl GStreamerBridge {
         false
     }
 
-    pub fn read_frame(&self) -> (Option<iced::widget::image::Handle>, u32, u32, u64) {
+    /// The latest frame as shared RGBA bytes, its size and a generation that
+    /// changes with every new frame. `None` until the first frame arrives; the
+    /// UI turns the bytes into an image handle only when the generation moves.
+    pub fn read_frame(&self) -> (Option<Bytes>, u32, u32, u64) {
         let state = self.frame.lock().unwrap_or_else(|e| e.into_inner());
-        (
-            state.handle.clone(),
-            state.width,
-            state.height,
-            state.generation,
-        )
+        let rgba = (!state.raw_rgba.is_empty()).then(|| state.raw_rgba.clone());
+        (rgba, state.width, state.height, state.generation)
     }
 
     /// Most recent frame as raw RGBA. Cloning `Bytes` bumps a refcount, so
@@ -674,11 +671,18 @@ impl GStreamerBridge {
         self.is_live.load(Ordering::Relaxed)
     }
 
-    pub fn update_camera_info(&self, info: &mut CameraInfo) {
-        if info.status == CameraStatus::Disabled {
-            return;
+    /// Sample this camera's health. `current` is the status the UI last showed;
+    /// `None` means the camera is disabled and nothing should change.
+    ///
+    /// Pure engine output: the UI folds it into its own row
+    /// (`CameraInfo::apply`) and decides how to render it.
+    pub fn sample_status(&self, current: &CameraStatus) -> Option<StatusReading> {
+        if *current == CameraStatus::Disabled {
+            return None;
         }
-        info.fps = self.update_fps();
+        let fps = self.update_fps();
+        let mut status = None;
+        let mut bitrate = None;
         if self.is_live() {
             if let Some(err) = self
                 .error_message
@@ -686,31 +690,30 @@ impl GStreamerBridge {
                 .unwrap_or_else(|e| e.into_inner())
                 .as_ref()
             {
-                info.status = CameraStatus::Offline;
-                info.bitrate = err.clone();
-            } else if info.fps > 0.0 {
-                info.status = CameraStatus::Live;
-                let kbps = self.update_bitrate_kbps();
-                info.bitrate = if kbps == 0 {
-                    "\u{2014}".into()
-                } else if kbps >= 1000 {
-                    format!("{:.1}M", kbps as f64 / 1000.0)
-                } else {
-                    format!("{}k", kbps)
-                };
+                status = Some(CameraStatus::Offline);
+                bitrate = Some(BitrateReading::Error(err.clone()));
+            } else if fps > 0.0 {
+                status = Some(CameraStatus::Live);
+                bitrate = Some(BitrateReading::Kbps(self.update_bitrate_kbps()));
             }
         } else if self.pipeline.is_some() {
-            info.status = CameraStatus::Reconnecting;
+            status = Some(CameraStatus::Reconnecting);
         } else {
-            info.status = CameraStatus::Offline;
+            status = Some(CameraStatus::Offline);
         }
 
         // A live, recording camera reports `Recording` so the red border/dot
         // survives the next tick. Without this, `update_recording` sets the
         // status and this method overwrites it one frame later.
-        if self.is_recording() && info.status == CameraStatus::Live {
-            info.status = CameraStatus::Recording;
+        let effective = status.as_ref().unwrap_or(current);
+        if self.is_recording() && *effective == CameraStatus::Live {
+            status = Some(CameraStatus::Recording);
         }
+        Some(StatusReading {
+            fps,
+            status,
+            bitrate,
+        })
     }
 }
 

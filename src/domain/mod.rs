@@ -7,6 +7,7 @@
 
 pub mod audio;
 pub mod bidirectional_audio;
+pub mod camera_status;
 pub mod codec;
 pub mod diagnostics;
 pub mod groups;
