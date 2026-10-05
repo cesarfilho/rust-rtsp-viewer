@@ -22,7 +22,7 @@ de saída, tamanhos e decisões pendentes (o como e o quando). Estado real do c�
 | ID | Decisão | Bloqueia |
 |---|---|---|
 | D1 | ~~Posicionamento: video wall nativo ou NVR completo~~ → **decidido em 2026-10-05: NVR completo, com UX/UI muito bem definida** | (liberou M3 e M4) |
-| D2 | Câmeras reais: quantas, modelos, se aceitam 2 sessões RTSP, se têm sub-stream | 0.3, 0.4, 2.5 |
+| D2 | Câmeras reais: quantas, modelos, se aceitam 2 sessões RTSP, se têm sub-stream | 0.3, 0.4, 2.5 | **Respondida:** 1 Intelbras local, as demais são HLS públicas remotas.
 | D3 | Licença do modelo de detecção (YOLO da Ultralytics é AGPL; o projeto também é, confirmar) | 4.1 |
 | D5 | Vídeo ao vivo no cliente: sessão própria (A), redistribuição pelo daemon (B, recomendada) ou memória compartilhada (C) — ADR 0010 | M2.5 (2.5.4), 2.5 |
 | D6 | Instalar `nvidia-container-toolkit` para o container usar a GTX 1650 (decodificação/YOLO em CUDA). Sem isso: VA-API na iGPU ou CPU | 2.5.10, M4 em GPU |
@@ -33,8 +33,8 @@ de saída, tamanhos e decisões pendentes (o como e o quando). Estado real do c�
 |---|---|---|---|---|
 | 0.1 | Corrigir `baseline.sh` (`pgrep -f`) e testar | roda contra o app aberto e gera CSV | P | [x] |
 | 0.2 | CI: `cargo fmt --check`, `deny.toml` (licenças, CVEs), `rust-toolchain.toml`; `cargo test --doc` | CI falha se formatação/licença/CVE falhar | P | [x] |
-| 0.3 | Medir sessões RTSP por modelo (`check_rtsp_sessions.sh`), preencher o ADR 0008 | nº de sessões por modelo (**D2**) | P | [ ] |
-| 0.4 | Baseline real em 1/4/16 câmeras, main × sub → `docs/baseline.md` | CPU, RSS, fps, banda, VRAM por cenário (**D2**) | M | [ ] |
+| 0.3 | Medir sessões RTSP por modelo (`check_rtsp_sessions.sh`), preencher o ADR 0008 | nº de sessões por modelo (**D2**) | P | [x] 4 sessões na principal da Intelbras sem recusa; HLS sem limite. Ver `docs/baseline.md` |
+| 0.4 | Baseline real em 1/4/16 câmeras, main × sub → `docs/baseline.md` | CPU, RSS, fps, banda, VRAM por cenário (**D2**) | M | [x] 1 Intelbras + 11 HLS medidos (`docs/baseline.md`); 16 câmeras simultâneas não (só há 12) |
 | 0.5 | Spike `gstreamer` 0.25 + `iced` 0.14 em branch, limite de 3 dias | decisão go/no-go documentada | G | [ ] |
 | 0.6 | Spike `ort`: ONNX Runtime + CUDA + cuDNN, YOLO-n a 320 na GTX 1650 | ms/inferência e VRAM medidos | M | [ ] |
 | 0.7 | Testes de integração (`tests/`) com `videotestsrc`: troca sub/main, reconexão, recuperação de falha na partida | fluxos hoje validados à mão viram teste | M | [x] |
@@ -78,7 +78,7 @@ passam a viver no daemon; construí-las dentro de `update.rs` e migrar depois cu
 | 2.5.1 | Desacoplar o iced do motor: `Handle`/`Bytes` fora de `bridge`/`pipeline` (hoje ~5 pontos) | `bridge` e `pipeline` compilam sem `iced` | P | [x] também moveu `CameraStatus` para `domain/` e separou `sample_status`/`CameraInfo::apply`; guarda em `tests/engine_isolation.rs` |
 | 2.5.2 | Extrair a orquestração de `ui/update.rs` (reconexão, backoff, fila de partida, movimento, gravação por evento, notificações, eventos) para um módulo de motor sem `App` | o cliente atual usa o motor e todos os testes seguem verdes | G | [x] 2026-10-05: `engine::Engine` (+ `EngineEvent`); 27 testes novos; falta só o construtor `Engine::new` (vai com 2.5.3) |
 | 2.5.3 | Workspace Cargo: `rrv-core` (domain + motor), `rrv-daemon`, cliente | `cargo build --workspace`; mesmo comportamento | M | [x] 2026-10-05: `rrv-core` (388 testes) + cliente (49); `Engine::new` e o crate `rrv-daemon` feitos (2.5.6). **MSRV subiu para 1.92** (glib/gstreamer 0.25) |
-| 2.5.4 | Vídeo ao vivo do daemon para o cliente (**D5**; medir antes com 0.3); porta RTSP local publicada pelo container | cliente mostra 16 câmeras com 1 sessão RTSP por câmera | G | [ ] |
+| 2.5.4 | Vídeo ao vivo do daemon para o cliente (**D5**; medir antes com 0.3); porta RTSP local publicada pelo container | cliente mostra 16 câmeras com 1 sessão RTSP por câmera | G | [ ] adiada: a sessão própria (D5-A) basta: a Intelbras aceita 4 sessões |
 | 2.5.5 | IPC por socket Unix (`0600`): comandos, eventos, versão do protocolo | cliente liga/desliga gravação, edita zonas, recebe eventos | G | [x] 2026-10-05: `rrv_core::ipc` (protocolo, tratador puro, servidor, cliente) + `rrvctl`; 21 testes + 5 com o daemon real; verificado no Docker (rrvctl do host controla o daemon no contêiner). Falta a janela usar o canal (2.5.7) |
 | 2.5.6 | `rrv-daemon` headless (binário sem iced), com shutdown limpo (finaliza segmentos). **Achado em 2026-10-05:** hoje um SIGTERM com gravação em curso deixa o arquivo com 0 bytes e ilegível (o app só finaliza pelo `Ctrl+Q`/Drop); `docker stop` envia SIGTERM | grava e detecta sem janela; SIGTERM fecha os arquivos (teste: matar durante a gravação e tocar o arquivo) | M | [x] 2026-10-05: `crates/rrv-daemon`, `Engine::step`/`shutdown`; teste de processo com SIGTERM durante a gravação (sai 0, arquivo tocável). Achou e corrigiu 2 congelamentos de pipeline |
 | 2.5.7 | Cliente com estados de daemon (conectado, iniciando, ausente → motor embutido) e **spec de UX** (`docs/specs/ux-daemon.md`) | UX escrita antes do código; contraste testado | M | [x] 2026-10-05: spec aprovada e implementada (`DaemonLink`, `DaemonState`, `display_only`, chip/menu/banner/confirmações). Verificado na tela com daemon real: motor local, conectado + REC pelo daemon, `SIGSTOP` → banner, `SIGCONT` → reconecta. Critérios 3–9 cobertos por testes (77 na janela, 8 do link, 5 de display-only); contraste dos novos estados testado em todos os temas; **não verificado na tela**: a confirmação ao sair (só em teste) |
