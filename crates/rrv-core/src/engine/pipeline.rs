@@ -269,90 +269,102 @@ fn setup_appsink(pipeline: &gst::Pipeline, bridge: &mut GStreamerBridge) -> Resu
         // format flows on to the recording and detection branches.
         filter.set_property("caps", gst::Caps::new_empty_simple("video/x-raw"));
     }
+    // The same handler serves `new_sample` (playing) and `new_preroll` (the frame a
+    // paused pipeline shows after a seek or a step), so scrubbing a recording works.
+    let on_sample = move |appsink: &gst_app::AppSink, preroll: bool| {
+        // `pull_sample` inside the preroll callback would block forever: the sample
+        // only exists once preroll is done.
+        let sample = if preroll {
+            appsink.pull_preroll()
+        } else {
+            appsink.pull_sample()
+        }
+        .map_err(|_| gst::FlowError::Error)?;
+        let gst_buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
+        let caps = sample.caps().ok_or(gst::FlowError::Error)?;
+        let structure = caps.structure(0).ok_or(gst::FlowError::Error)?;
+        let w = structure.get::<i32>("width").unwrap_or(0) as u32;
+        let h = structure.get::<i32>("height").unwrap_or(0) as u32;
+
+        // Headless: nobody looks at the picture, so the frame is not
+        // converted to RGBA nor copied; it only proves flow.
+        let bytes = if headless {
+            Bytes::new()
+        } else {
+            let map = gst_buffer
+                .map_readable()
+                .map_err(|_| gst::FlowError::Error)?;
+            // A frame whose byte count disagrees with its caps would
+            // make `Handle::from_rgba` render garbage and the snapshot
+            // encoder panic. Drop it instead.
+            let expected = w as usize * h as usize * 4;
+            if w == 0 || h == 0 || map.len() != expected {
+                log::debug!(
+                    "Dropping malformed frame: {}x{} with {} bytes (expected {})",
+                    w,
+                    h,
+                    map.len(),
+                    expected
+                );
+                return Ok(gst::FlowSuccess::Ok);
+            }
+            // Reference-counted, so the handle and the snapshot buffer
+            // share one allocation instead of each taking a full copy.
+            Bytes::copy_from_slice(&map)
+        };
+
+        // Frames are flowing → the stream is live, whatever a stale
+        // bus error left `is_live` at. Without this, one transient
+        // error on a flaky HLS feed pins `is_live=false` forever
+        // (nothing else flips it back while the pipeline stays in
+        // PLAYING), and the reconnect watchdog then rebuilds the
+        // pipeline every 15 s — freezing every camera on the UI thread.
+        is_live.store(true, Ordering::Relaxed);
+
+        // `bytes_counter` (bitrate) is fed from the decoder's sink pad
+        // — see `GStreamerBridge::discover_decoder`.
+        metrics.frame_count.fetch_add(1, Ordering::Relaxed);
+
+        let now_ns = metrics.mono_ns();
+        let prev_ns = metrics.last_frame_mono_ns.swap(now_ns, Ordering::Relaxed);
+        if prev_ns > 0 {
+            let delta_ns = now_ns.saturating_sub(prev_ns);
+            let si = metrics.snapshot_stream_info();
+            let expected_ns = match (si.framerate_num, si.framerate_den) {
+                (Some(n), Some(d)) if n > 0 && d > 0 => Some((d as u64 * 1_000_000_000) / n as u64),
+                _ => None,
+            };
+            let sample_ns = match expected_ns {
+                Some(exp) => delta_ns.abs_diff(exp),
+                None => delta_ns,
+            };
+            let prev = metrics.jitter_ema_ns.load(Ordering::Relaxed);
+            metrics.jitter_ema_ns.store(
+                ema_update(prev, sample_ns, EMA_ALPHA_X1000),
+                Ordering::Relaxed,
+            );
+        }
+
+        let frame_count = metrics.frame_count.load(Ordering::Relaxed);
+        if !headless && frame_count.is_multiple_of(SAMPLE_EVERY_N) {
+            sample_image_quality_rgba(&metrics, &bytes, w as usize, h as usize);
+        }
+
+        let mut state = frame.lock().unwrap_or_else(|e| e.into_inner());
+        state.width = w;
+        state.height = h;
+        state.raw_rgba = bytes;
+        state.generation = state.generation.wrapping_add(1);
+        state.frame_count = state.frame_count.wrapping_add(1);
+        Ok(gst::FlowSuccess::Ok)
+    };
     appsink.set_callbacks(
         gst_app::AppSinkCallbacks::builder()
-            .new_sample(move |appsink| {
-                let sample = appsink.pull_sample().map_err(|_| gst::FlowError::Error)?;
-                let gst_buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
-                let caps = sample.caps().ok_or(gst::FlowError::Error)?;
-                let structure = caps.structure(0).ok_or(gst::FlowError::Error)?;
-                let w = structure.get::<i32>("width").unwrap_or(0) as u32;
-                let h = structure.get::<i32>("height").unwrap_or(0) as u32;
-
-                // Headless: nobody looks at the picture, so the frame is not
-                // converted to RGBA nor copied; it only proves flow.
-                let bytes = if headless {
-                    Bytes::new()
-                } else {
-                    let map = gst_buffer
-                        .map_readable()
-                        .map_err(|_| gst::FlowError::Error)?;
-                    // A frame whose byte count disagrees with its caps would
-                    // make `Handle::from_rgba` render garbage and the snapshot
-                    // encoder panic. Drop it instead.
-                    let expected = w as usize * h as usize * 4;
-                    if w == 0 || h == 0 || map.len() != expected {
-                        log::debug!(
-                            "Dropping malformed frame: {}x{} with {} bytes (expected {})",
-                            w,
-                            h,
-                            map.len(),
-                            expected
-                        );
-                        return Ok(gst::FlowSuccess::Ok);
-                    }
-                    // Reference-counted, so the handle and the snapshot buffer
-                    // share one allocation instead of each taking a full copy.
-                    Bytes::copy_from_slice(&map)
-                };
-
-                // Frames are flowing → the stream is live, whatever a stale
-                // bus error left `is_live` at. Without this, one transient
-                // error on a flaky HLS feed pins `is_live=false` forever
-                // (nothing else flips it back while the pipeline stays in
-                // PLAYING), and the reconnect watchdog then rebuilds the
-                // pipeline every 15 s — freezing every camera on the UI thread.
-                is_live.store(true, Ordering::Relaxed);
-
-                // `bytes_counter` (bitrate) is fed from the decoder's sink pad
-                // — see `GStreamerBridge::discover_decoder`.
-                metrics.frame_count.fetch_add(1, Ordering::Relaxed);
-
-                let now_ns = metrics.mono_ns();
-                let prev_ns = metrics.last_frame_mono_ns.swap(now_ns, Ordering::Relaxed);
-                if prev_ns > 0 {
-                    let delta_ns = now_ns.saturating_sub(prev_ns);
-                    let si = metrics.snapshot_stream_info();
-                    let expected_ns = match (si.framerate_num, si.framerate_den) {
-                        (Some(n), Some(d)) if n > 0 && d > 0 => {
-                            Some((d as u64 * 1_000_000_000) / n as u64)
-                        }
-                        _ => None,
-                    };
-                    let sample_ns = match expected_ns {
-                        Some(exp) => delta_ns.abs_diff(exp),
-                        None => delta_ns,
-                    };
-                    let prev = metrics.jitter_ema_ns.load(Ordering::Relaxed);
-                    metrics.jitter_ema_ns.store(
-                        ema_update(prev, sample_ns, EMA_ALPHA_X1000),
-                        Ordering::Relaxed,
-                    );
-                }
-
-                let frame_count = metrics.frame_count.load(Ordering::Relaxed);
-                if !headless && frame_count.is_multiple_of(SAMPLE_EVERY_N) {
-                    sample_image_quality_rgba(&metrics, &bytes, w as usize, h as usize);
-                }
-
-                let mut state = frame.lock().unwrap_or_else(|e| e.into_inner());
-                state.width = w;
-                state.height = h;
-                state.raw_rgba = bytes;
-                state.generation = state.generation.wrapping_add(1);
-                state.frame_count = state.frame_count.wrapping_add(1);
-                Ok(gst::FlowSuccess::Ok)
+            .new_sample({
+                let f = on_sample.clone();
+                move |a| f(a, false)
             })
+            .new_preroll(move |a| on_sample(a, true))
             .build(),
     );
 

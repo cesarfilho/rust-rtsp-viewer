@@ -7,6 +7,7 @@
 pub mod backoff;
 pub mod bridge;
 pub mod pipeline;
+pub mod playback;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
