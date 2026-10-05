@@ -1,4 +1,5 @@
 pub mod cell_overlay;
+pub mod daemon;
 pub mod flex_layout;
 pub mod grid_layout;
 pub mod menu;
@@ -12,6 +13,7 @@ use iced::{Element, Length};
 use super::app::{App, TOOLBAR_HEIGHT, ViewFocus};
 use super::message::{LayoutMode, Message};
 use super::theme::Theme;
+use daemon::BANNER_HEIGHT;
 
 /// Sidebar width in the normal layout — a touch more generous than the old
 /// 15%/160–220, and still fully collapsible with `F2`.
@@ -20,6 +22,16 @@ fn sidebar_width(app: &App) -> f32 {
         (app.window_size.width * 0.16).clamp(200.0, 260.0)
     } else {
         0.0
+    }
+}
+
+/// Where the video area starts: the toolbar plus, when there is one, the
+/// daemon banner. Grid sizing and pointer tracking both depend on it.
+fn chrome_top(app: &App) -> f32 {
+    if app.focus.is_normal() && app.daemon.banner().is_some() {
+        TOOLBAR_HEIGHT + BANNER_HEIGHT
+    } else {
+        TOOLBAR_HEIGHT
     }
 }
 
@@ -46,9 +58,16 @@ pub fn view(app: &App) -> Element<'_, Message> {
         layers = layers.push(dismiss_backdrop(Message::ToggleOverflowMenu));
         layers = layers.push(menu);
     }
+    if let Some(menu) = toolbar::daemon_menu_layer(app) {
+        layers = layers.push(dismiss_backdrop(Message::ToggleDaemonMenu));
+        layers = layers.push(menu);
+    }
     if let Some(menu) = overlays::context_menu_layer(app) {
         layers = layers.push(dismiss_backdrop(Message::DismissContextMenu));
         layers = layers.push(menu);
+    }
+    if let Some(m) = app.modal {
+        layers = layers.push(daemon::modal(app, m));
     }
     if !app.toasts.is_empty() {
         layers = layers.push(pinned(
@@ -77,28 +96,29 @@ fn normal_layout(app: &App, bg_color: iced::Color) -> Element<'_, Message> {
                 .style(style::sidebar_panel(app.theme))
                 .into(),
             0.0,
-            TOOLBAR_HEIGHT,
+            chrome_top(app),
         )
     } else {
         iced::widget::column![].into()
     };
 
-    let available_height = app.window_size.height - TOOLBAR_HEIGHT;
+    let available_height = app.window_size.height - chrome_top(app);
     let video_area = track_pointer(
         match app.layout_mode {
             LayoutMode::Grid => grid_layout::grid_layout(app, sw, available_height),
             LayoutMode::Flex => flex_layout::flex_layout(app),
         },
         sw,
-        TOOLBAR_HEIGHT,
+        chrome_top(app),
     );
 
-    let content = iced::widget::column![
-        toolbar::toolbar(app),
-        iced::widget::row![sidebar, video_area].height(Length::Fill),
-    ]
-    .width(Length::Fill)
-    .height(Length::Fill);
+    let mut content = iced::widget::column![toolbar::toolbar(app)]
+        .width(Length::Fill)
+        .height(Length::Fill);
+    if let Some(banner) = daemon::banner(app) {
+        content = content.push(banner);
+    }
+    let content = content.push(iced::widget::row![sidebar, video_area].height(Length::Fill));
 
     fill_bg(content, bg_color)
 }

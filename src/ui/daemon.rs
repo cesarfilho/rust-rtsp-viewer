@@ -69,6 +69,50 @@ pub fn initial_mode(force_embedded: bool, socket_exists: bool) -> Mode {
     }
 }
 
+/// Uma confirmação que a pessoa precisa dar antes de uma ação que não se desfaz
+/// sem custo (spec `ux-daemon.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Modal {
+    /// Trocar para o motor local: pode gravar em dobro se o daemon ainda grava.
+    UseLocalEngine,
+    /// Sair com gravações locais em curso: sair as interrompe.
+    Quit { recordings: usize },
+}
+
+impl Modal {
+    pub fn title(&self) -> &'static str {
+        match self {
+            Modal::UseLocalEngine => "Usar o motor local?",
+            Modal::Quit { .. } => "Sair e interromper as gravações?",
+        }
+    }
+
+    pub fn body(&self) -> String {
+        match self {
+            Modal::UseLocalEngine => "Isto começa a gravar daqui. Se o daemon ainda estiver \
+                gravando, haverá gravações em dobro. Continuar?"
+                .into(),
+            Modal::Quit { recordings } => format!(
+                "Há {recordings} {} em curso. Sair {} interrompe. Para gravar com a janela \
+                 fechada, use o daemon.",
+                if *recordings == 1 {
+                    "gravação"
+                } else {
+                    "gravações"
+                },
+                if *recordings == 1 { "a" } else { "as" },
+            ),
+        }
+    }
+
+    pub fn confirm_label(&self) -> &'static str {
+        match self {
+            Modal::UseLocalEngine => "Usar motor local",
+            Modal::Quit { .. } => "Sair mesmo assim",
+        }
+    }
+}
+
 /// Um pedido à espera de resposta do daemon, para a janela saber o que fazer com
 /// ela (e mostrar "aguardando…" até lá).
 #[derive(Debug, Clone)]
@@ -200,6 +244,19 @@ impl DaemonState {
             Mode::Lost => "Daemon · sem resposta",
             Mode::Incompatible => "Daemon · versão incompatível",
             Mode::NoPermission => "Daemon · sem permissão",
+        }
+    }
+
+    /// A forma da bolinha do chip: cada modo tem a sua, para o estado nunca
+    /// depender só de cor (acessibilidade). Todos existem na fonte embutida.
+    pub fn glyph(&self) -> &'static str {
+        match self.mode {
+            Mode::Embedded => "\u{25CB}",     // ○
+            Mode::Connecting => "\u{25CC}",   // ◌
+            Mode::Connected => "\u{25CF}",    // ●
+            Mode::Lost => "\u{25D0}",         // ◐
+            Mode::Incompatible => "\u{25B2}", // ▲
+            Mode::NoPermission => "\u{25A0}", // ■
         }
     }
 
@@ -480,6 +537,41 @@ mod tests {
                 result: Ok(Response::Ok)
             }
         );
+    }
+
+    #[test]
+    fn every_mode_has_its_own_glyph_as_well_as_its_own_label() {
+        let glyphs: std::collections::HashSet<_> = [
+            Mode::Embedded,
+            Mode::Connecting,
+            Mode::Connected,
+            Mode::Lost,
+            Mode::Incompatible,
+            Mode::NoPermission,
+        ]
+        .into_iter()
+        .map(|m| {
+            let mut s = DaemonState::embedded("/x".into());
+            s.mode = m;
+            s.glyph()
+        })
+        .collect();
+        assert_eq!(glyphs.len(), 6, "dois modos com a mesma forma");
+    }
+
+    #[test]
+    fn the_confirmations_say_what_is_at_stake() {
+        let local = Modal::UseLocalEngine;
+        assert!(local.body().contains("em dobro"));
+        assert_eq!(local.confirm_label(), "Usar motor local");
+        let one = Modal::Quit { recordings: 1 }.body();
+        assert!(
+            one.contains("1 gravação em curso") && one.contains("interrompe"),
+            "{one}"
+        );
+        assert!(one.contains("use o daemon"));
+        let many = Modal::Quit { recordings: 3 }.body();
+        assert!(many.contains("3 gravações em curso"), "{many}");
     }
 
     #[test]

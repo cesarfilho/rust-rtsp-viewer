@@ -28,5 +28,13 @@ pub fn subscription(_state: &App) -> iced::Subscription<Message> {
         _ => None,
     });
 
-    iced::Subscription::batch(vec![resize, keyboard, frame_tick, pointer_top])
+    let close_button = iced::window::close_requests().map(|_| Message::QuitRequested);
+
+    iced::Subscription::batch(vec![
+        resize,
+        keyboard,
+        frame_tick,
+        pointer_top,
+        close_button,
+    ])
 }

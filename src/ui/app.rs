@@ -49,6 +49,8 @@ pub struct App {
     /// Requests sent to the daemon and not answered yet, by token.
     pub pending: std::collections::HashMap<u64, super::daemon::PendingRequest>,
     pub next_token: u64,
+    /// A confirmation waiting for the user (modal for the keyboard).
+    pub modal: Option<super::daemon::Modal>,
     /// The video engine: cameras, pipelines, reconnect, motion, notification state.
     pub engine: crate::engine::Engine,
     pub videos: Vec<VideoWidget>,
@@ -301,6 +303,7 @@ pub fn new_app(
             link,
             pending: std::collections::HashMap::new(),
             next_token: 1,
+            modal: None,
             engine,
             videos,
             theme,

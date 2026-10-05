@@ -389,8 +389,55 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
         Message::RunMenuCommand(inner) => {
             app.show_overflow_menu = false;
             app.context_menu = None;
+            app.daemon.menu_open = false;
             update(app, *inner)
         }
+        Message::QuitRequested => {
+            let recordings = local_recording_count(app);
+            if recordings > 0 {
+                app.modal = Some(super::daemon::Modal::Quit { recordings });
+                Task::none()
+            } else {
+                update(app, Message::Quit)
+            }
+        }
+        Message::ToggleDaemonMenu => {
+            app.daemon.menu_open = !app.daemon.menu_open;
+            app.show_overflow_menu = false;
+            app.context_menu = None;
+            Task::none()
+        }
+        Message::DaemonReconnect => {
+            if let Some(link) = &app.link {
+                link.reconnect_now();
+                toast(app, "Reconectando ao daemon…");
+            }
+            Task::none()
+        }
+        Message::AskUseLocalEngine => {
+            app.modal = Some(super::daemon::Modal::UseLocalEngine);
+            Task::none()
+        }
+        Message::CopyDaemonStartCommand => {
+            toast(app, "Comando copiado: docker compose up -d");
+            iced::clipboard::write("docker compose up -d".to_string())
+        }
+        Message::CopyDaemonSocket => {
+            toast(app, "Caminho do socket copiado");
+            iced::clipboard::write(app.daemon.socket.display().to_string())
+        }
+        Message::ModalCancel => {
+            app.modal = None;
+            Task::none()
+        }
+        Message::ModalConfirm => match app.modal.take() {
+            Some(super::daemon::Modal::UseLocalEngine) => {
+                use_local_engine(app);
+                Task::none()
+            }
+            Some(super::daemon::Modal::Quit { .. }) => update(app, Message::Quit),
+            None => Task::none(),
+        },
         Message::Quit => {
             shutdown(app);
             iced::window::get_latest().and_then(iced::window::close)
@@ -453,9 +500,22 @@ fn handle_key(
     // while the user is typing, so it lives behind a modifier.
     if modifiers.command() {
         return match key.as_ref() {
-            Key::Character("q") => update(app, Message::Quit),
+            Key::Character("q") => update(app, Message::QuitRequested),
             _ => Task::none(),
         };
+    }
+
+    // A confirmation is modal for the keyboard: Enter accepts, Esc declines,
+    // nothing else may fire on the UI behind the scrim.
+    if app.modal.is_some() {
+        return match key.as_ref() {
+            Key::Named(Named::Enter) => update(app, Message::ModalConfirm),
+            Key::Named(Named::Escape) => update(app, Message::ModalCancel),
+            _ => Task::none(),
+        };
+    }
+    if app.daemon.menu_open && matches!(key.as_ref(), Key::Named(Named::Escape)) {
+        return update(app, Message::ToggleDaemonMenu);
     }
 
     // The help popup is modal: only its own toggle / Esc act, so `f`, `s` or
@@ -714,6 +774,36 @@ fn drain_engine_events(app: &mut App) {
         }
         app.sidebar.timeline.push(event);
     }
+}
+
+/// Recordings this window is making itself (zero with a daemon: it records).
+fn local_recording_count(app: &App) -> usize {
+    if app.daemon.is_daemon_mode() {
+        return 0;
+    }
+    app.engine
+        .bridges
+        .iter()
+        .filter(|b| b.lock().unwrap_or_else(|e| e.into_inner()).is_recording())
+        .count()
+}
+
+/// "Usar o motor local": this window takes over recording and detection. Only
+/// after the user confirmed (the daemon may still be recording).
+fn use_local_engine(app: &mut App) {
+    let socket = app.daemon.socket.clone();
+    // Closing the connection joins its thread; do it off the UI thread.
+    if let Some(link) = app.link.take() {
+        std::thread::spawn(move || drop(link));
+    }
+    app.pending.clear();
+    app.daemon = super::daemon::DaemonState::embedded(socket);
+    app.engine.set_display_only(false);
+    sync_active_streams(app);
+    toast(
+        app,
+        "Motor local ativado: esta janela agora grava e detecta",
+    );
 }
 
 // ───────────────────────────── the rrv-daemon ─────────────────────────────

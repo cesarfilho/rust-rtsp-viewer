@@ -69,6 +69,20 @@ pub enum Message {
     RunMenuCommand(Box<Message>),
     SelectCamera(usize),
     Quit,
+    /// `Ctrl+Q` and the window's close button: asks first when closing would cut
+    /// off a recording this window is making itself.
+    QuitRequested,
+    /// Open / close the daemon chip's menu.
+    ToggleDaemonMenu,
+    /// "Reconectar agora".
+    DaemonReconnect,
+    /// "Usar o motor local…": asks for confirmation first.
+    AskUseLocalEngine,
+    CopyDaemonStartCommand,
+    CopyDaemonSocket,
+    /// The open confirmation was declined / accepted.
+    ModalCancel,
+    ModalConfirm,
     ShowHelp,
     /// Right-click on a grid cell — open the per-camera command menu.
     ShowContextMenu(usize),

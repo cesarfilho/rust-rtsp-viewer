@@ -184,6 +184,21 @@ fn view_controls(app: &App, compact: bool) -> Element<'_, Message> {
 /// A thin bar split into one segment per camera, coloured by that camera's
 /// state, with a quiet `live/total` readout — reads "how many, and which, are
 /// up" at a glance.
+/// `live/total`, e com um daemon conectado também quantas ele diz que gravam
+/// (`4/4 · ● 2 gravando`): o que importa num NVR é saber quem grava.
+fn health_label(app: &App, live: usize, total: usize) -> String {
+    let rec = if app.daemon.is_connected() {
+        app.daemon.recording_count()
+    } else {
+        0
+    };
+    if rec > 0 {
+        format!("{live}/{total} \u{b7} \u{25CF} {rec} gravando")
+    } else {
+        format!("{live}/{total}")
+    }
+}
+
 fn health_meter(app: &App) -> Element<'_, Message> {
     let theme = app.theme;
     let colors = theme.colors();
@@ -231,7 +246,7 @@ fn health_meter(app: &App) -> Element<'_, Message> {
     iced::widget::container(
         iced::widget::row![
             bar,
-            iced::widget::text(format!("{live}/{total}"))
+            iced::widget::text(health_label(app, live, total))
                 .size(Theme::TEXT_CAPTION)
                 .color(Theme::color_from_hex(colors.text_secondary)),
         ]
@@ -300,7 +315,21 @@ pub fn toolbar(app: &App) -> Element<'_, Message> {
     // Right cluster: segmented health meter, REC, overflow.
     let health_chip = health_meter(app);
 
-    let rec_badge: Element<'_, Message> = if app.is_recording {
+    // Um pedido de gravação à espera do daemon: nunca mostrar REC antes da
+    // confirmação.
+    let waiting_for_daemon = app.sidebar.selected.is_some_and(|i| {
+        app.sidebar.cameras.get(i).is_some_and(|c| {
+            app.pending.values().any(|p| {
+                matches!(p, super::super::daemon::PendingRequest::ToggleRecording { camera } if *camera == c.name)
+            })
+        })
+    });
+    let rec_badge: Element<'_, Message> = if waiting_for_daemon {
+        iced::widget::text("aguardando o daemon…")
+            .size(Theme::TEXT_CAPTION)
+            .color(Theme::color_from_hex(colors.text_tertiary))
+            .into()
+    } else if app.is_recording {
         iced::widget::container(
             iced::widget::text("REC")
                 .size(Theme::TEXT_CAPTION)
@@ -335,9 +364,14 @@ pub fn toolbar(app: &App) -> Element<'_, Message> {
         theme,
     );
 
-    let right = iced::widget::row![health_chip, rec_badge, overflow]
-        .spacing(Theme::SPACE_2)
-        .align_y(iced::Alignment::Center);
+    let right = iced::widget::row![
+        super::daemon::chip(app, !wide),
+        health_chip,
+        rec_badge,
+        overflow
+    ]
+    .spacing(Theme::SPACE_2)
+    .align_y(iced::Alignment::Center);
 
     let bar = iced::widget::row![left, iced::widget::horizontal_space(), right]
         .padding([4, Theme::SPACE_3 as u16])
@@ -423,6 +457,24 @@ pub fn chrome_rail(app: &App) -> Element<'_, Message> {
 }
 
 /// The `⋯` dropdown — the shared command menu, anchored below the toolbar.
+/// The daemon chip's menu, hanging under the chip at the right end of the bar.
+pub fn daemon_menu_layer(app: &App) -> Option<Element<'_, Message>> {
+    if !app.daemon.menu_open {
+        return None;
+    }
+    Some(super::pinned(
+        super::daemon::menu(app),
+        iced::alignment::Horizontal::Right,
+        iced::alignment::Vertical::Top,
+        iced::Padding {
+            top: TOOLBAR_H + 4.0,
+            right: 8.0,
+            bottom: 0.0,
+            left: 0.0,
+        },
+    ))
+}
+
 pub fn overflow_menu_layer(app: &App) -> Option<Element<'_, Message>> {
     if !app.show_overflow_menu {
         return None;

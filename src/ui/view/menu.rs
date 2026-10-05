@@ -20,7 +20,7 @@ fn run(msg: Message) -> Message {
 }
 
 /// `[ icon ] label ............... [ key ]`
-fn menu_row<'a>(
+pub(super) fn menu_row<'a>(
     theme: Theme,
     icon: &'a str,
     label: impl text::IntoFragment<'a>,

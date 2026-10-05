@@ -52,6 +52,8 @@ pub fn run(
     daemon: DaemonOptions,
 ) -> iced::Result {
     let window = iced::window::Settings {
+        // The window's close button asks first when it would cut off a recording.
+        exit_on_close_request: false,
         size: iced::Size::new(1280.0, 720.0),
         // COSMIC tiles and half-snaps aggressively; below this the toolbar and
         // sidebar stop being usable, so let the compositor clamp instead.
