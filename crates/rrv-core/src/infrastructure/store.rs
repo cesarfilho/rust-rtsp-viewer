@@ -514,7 +514,11 @@ fn apply(store: &Store, cmd: StoreCmd) -> Result<(), StoreError> {
             let bytes = std::fs::metadata(&path)
                 .map(|m| m.len() as i64)
                 .unwrap_or(0);
-            store.segment_closed(&path, ts_end, bytes)?;
+            if bytes == 0 {
+                store.discard_segment(&path)?;
+            } else {
+                store.segment_closed(&path, ts_end, bytes)?;
+            }
         }
         StoreCmd::Event {
             camera,
