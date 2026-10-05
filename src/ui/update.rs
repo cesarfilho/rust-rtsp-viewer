@@ -1485,34 +1485,14 @@ fn update_sidebar(app: &mut App, msg: super::sidebar::Message) -> Task<Message> 
         }
         super::sidebar::Message::CameraToggled(idx, enabled) => {
             if idx < app.engine.camera_enabled.len() {
-                app.engine.camera_enabled[idx] = enabled;
                 app.sidebar.cameras[idx].enabled = enabled;
-
+                app.engine.set_camera_enabled(idx, enabled);
                 if !enabled {
-                    app.engine.bridges[idx]
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .stop();
+                    // Audio is still the UI's: silence it with the video.
                     if let Some(pipeline) = app.audio_pipelines[idx].borrow_mut().take() {
                         let _ = pipeline.set_state(gstreamer::State::Null);
                     }
                     app.audio_states[idx] = AudioState::Muted;
-                    app.engine.active_stream[idx] = false;
-                    app.engine.connecting_since[idx] = None;
-                    app.engine.start_queue.retain(|&q| q != idx);
-                    app.engine.status[idx] = sidebar::CameraStatus::Disabled;
-                    app.engine.reconnect_states[idx].reset();
-                    app.engine.backoff_states[idx] = super::state::BackoffState::new();
-                } else {
-                    // Re-enabled: leave the actual (re)start to
-                    // `sync_active_streams`, which only spins it up if the
-                    // camera is on the visible page.
-                    app.engine.active_stream[idx] = false;
-                    app.engine.backoff_states[idx] = super::state::BackoffState::new();
-                    app.engine.reconnect_states[idx].reset();
-                    if idx < app.sidebar.cameras.len() {
-                        app.engine.status[idx] = sidebar::CameraStatus::Connecting;
-                    }
                 }
                 sync_active_streams(app);
             }

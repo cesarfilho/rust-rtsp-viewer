@@ -592,6 +592,31 @@ impl Engine {
         self.detect_motion(i);
         self.drive_motion_recording(i);
     }
+
+    /// Switch a camera on or off. Off: stop its pipeline and show `Disabled`.
+    /// On: leave the actual (re)start to the host's reconcile, which only spins
+    /// it up if the camera is wanted (on the visible page, or always when
+    /// something reacts to motion).
+    pub fn set_camera_enabled(&mut self, i: usize, enabled: bool) {
+        if i >= self.camera_enabled.len() {
+            return;
+        }
+        self.camera_enabled[i] = enabled;
+        self.active_stream[i] = false;
+        self.backoff_states[i] = BackoffState::new();
+        self.reconnect_states[i].reset();
+        if enabled {
+            self.status[i] = CameraStatus::Connecting;
+        } else {
+            self.bridges[i]
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .stop();
+            self.connecting_since[i] = None;
+            self.start_queue.retain(|&q| q != i);
+            self.status[i] = CameraStatus::Disabled;
+        }
+    }
 }
 
 /// Something that happened in the engine that the host should record and,
@@ -975,5 +1000,40 @@ mod tests {
         let tick = e.tick_camera(0, false);
         assert!(tick.reading.is_none());
         assert_eq!(e.status[0], CameraStatus::Disabled);
+    }
+
+    #[test]
+    fn disabling_a_camera_stops_and_marks_it_disabled() {
+        let mut e = engine(2);
+        e.active_stream[0] = true;
+        e.connecting_since[0] = Some(Instant::now());
+        e.start_queue.push_back(0);
+        e.set_camera_enabled(0, false);
+        assert!(!e.camera_enabled[0]);
+        assert!(!e.active_stream[0]);
+        assert!(e.connecting_since[0].is_none());
+        assert!(e.start_queue.is_empty());
+        assert_eq!(e.status[0], CameraStatus::Disabled);
+        assert_eq!(e.enabled_cameras(), vec![1]);
+    }
+
+    #[test]
+    fn re_enabling_leaves_the_start_to_reconcile() {
+        let mut e = engine(1);
+        e.set_camera_enabled(0, false);
+        e.set_camera_enabled(0, true);
+        assert!(e.camera_enabled[0]);
+        assert!(!e.active_stream[0], "it is not started here");
+        assert_eq!(e.status[0], CameraStatus::Connecting);
+        // the host's reconcile then queues it
+        assert!(e.reconcile(&[0]).is_empty());
+        assert_eq!(e.start_queue, VecDeque::from([0]));
+    }
+
+    #[test]
+    fn toggling_an_unknown_camera_is_ignored() {
+        let mut e = engine(1);
+        e.set_camera_enabled(7, false);
+        assert!(e.camera_enabled[0]);
     }
 }

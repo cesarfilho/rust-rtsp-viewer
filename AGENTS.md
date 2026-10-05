@@ -113,8 +113,8 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
 | `message.rs` | `Message` enum (includes raw `KeyPressed`) |
 | `update.rs` | `update()`, `handle_key`, snapshot/record/audio handlers |
 | `subscription.rs` | keyboard + resize + 100 ms tick (`TICK_MS`) |
-| `bridge.rs` | `GStreamerBridge` — bus, metrics, frame state, recording lifecycle |
-| `pipeline.rs` | `start_rtsp`/`start_hls`/`start_file`, recording branch, probes |
+| `bridge.rs` | (now `engine/bridge.rs`, re-exported as `ui::bridge`) `GStreamerBridge` — bus, metrics, frame state, recording lifecycle |
+| `pipeline.rs` | (now `engine/pipeline.rs`, re-exported as `ui::pipeline`) `start_rtsp`/`start_hls`/`start_file`, recording branch, probes |
 | `video_widget.rs` | `iced::widget::image` integration |
 | `zone_editor.rs` | zone editor canvas, drawn over the spotlight (`flex_layout::spotlight_view`) while `App.zone_edit` is `Some`; opened from the camera menu (`Message::EditZones`). Coordinates map onto the letterboxed video rect |
 | `icons.rs` | embedded DejaVu Sans (`icons::FONT`) for icon glyphs |
@@ -268,6 +268,20 @@ via `subscription`'s `listen_with`, or any keypress) and auto-hides after
 
 ## Engine × UI boundary (ADR 0010)
 
+`src/engine/` is the video engine and owns the per-camera runtime state (`Engine`: bridges, status,
+start queue, backoff, sub/main quality, motion, notification policy). The window (`ui/`) owns one
+(`App.engine`) and drives it from the 100 ms tick. What the engine does, as methods:
+`tick_camera` (bus, fps, reconnect decision, connect grace, online/offline events),
+`reconnect`, `reconcile` + `pop_next_start` (which pipelines run; one start per `stagger`),
+`restart_stream` / `pause_stream` / `wanted_quality`, `set_camera_enabled`, `detect_motion` /
+`drive_motion_recording` / `toggle_recording`, and `emit` / `take_events`.
+The engine never touches the desktop or the UI: it raises `EngineEvent`s (with the notification
+`(title, body)` its cooldown policy allows) and the host (`ui::update::drain_engine_events`) puts
+them on the timeline and sends the notification. `Engine.status` is the source of truth; the
+sidebar rows mirror it once per `update()` (`sync_status_rows`).
+Still in the UI on purpose: view math (page, flex, spotlight → *which cameras are wanted*),
+audio, snapshots/bursts, zone persistence, previews.
+
 The video engine — `domain/`, `infrastructure/`, `ui/bridge.rs`, `ui/pipeline.rs` — must not
 depend on `iced` or import UI modules, so it can move to a headless daemon. `tests/engine_isolation.rs`
 enforces it. Consequences to keep in mind:
@@ -275,8 +289,8 @@ enforces it. Consequences to keep in mind:
   `VideoWidget` builds the `Handle` only when the frame generation changes.
 - The bridge reports health as a pure `StatusReading` (`sample_status`); the UI folds it into its
   row with `CameraInfo::apply` and formats the text.
-- Orchestration (reconnect, backoff, start queue, motion→recording, notifications) still lives in
-  `ui/update.rs` mixed with `App`; extracting it is task 2.5.2.
+- Orchestration lives in `engine::Engine` (task 2.5.2); `ui/update.rs` keeps only view math, audio
+  and presentation.
 
 ## Adding new features
 
