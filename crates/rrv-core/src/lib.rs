@@ -9,6 +9,7 @@ pub mod config_check;
 pub mod domain;
 pub mod engine;
 pub mod infrastructure;
+pub mod ipc;
 pub mod startup;
 
 /// Câmera simulada e utilitários dos testes (feature `testing`).

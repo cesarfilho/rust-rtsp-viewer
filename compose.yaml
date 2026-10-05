@@ -1,7 +1,7 @@
 # O NVR sem janela: grava e detecta mesmo com a janela fechada (ADR 0010).
 #
 #   cp config.docker.toml.example config.docker.toml   # e edite as câmeras
-#   mkdir -p recordings state
+#   mkdir -p recordings state "$XDG_RUNTIME_DIR/rrv"
 #   docker compose up -d --build
 #   docker compose logs -f rrv
 #
@@ -31,6 +31,10 @@ services:
       - ./config.docker.toml:/config/config.toml:ro
       - ${RRV_RECORDINGS:-./recordings}:/data
       - ./state:/state
+      # O socket de controle: a janela (nativa) o encontra em $XDG_RUNTIME_DIR/rrv/rrv.sock.
+      # Crie o diretório antes (`mkdir -p "$XDG_RUNTIME_DIR/rrv"`); senão o Docker o cria
+      # como root e o daemon não consegue abrir o socket.
+      - ${XDG_RUNTIME_DIR:-/tmp}/rrv:/run/rrv
 
     # Decodificação por GPU Intel (VA-API) é a tarefa 2.5.10:
     # devices: ["/dev/dri:/dev/dri"]

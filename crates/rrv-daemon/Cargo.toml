@@ -12,6 +12,10 @@ description = "Motor do rust-rtsp-viewer sem janela: captura, grava e detecta co
 name = "rrv-daemon"
 path = "src/main.rs"
 
+[[bin]]
+name = "rrvctl"
+path = "src/bin/rrvctl.rs"
+
 [dependencies]
 rrv-core = { path = "../rrv-core" }
 gstreamer = "0.25"
@@ -20,6 +24,7 @@ env_logger = "0.10"
 clap = { version = "4", features = ["derive", "env"] }
 # SIGTERM/SIGHUP além de SIGINT: `docker stop` envia SIGTERM.
 ctrlc = { version = "3", features = ["termination"] }
+serde_json = "1"
 
 [dev-dependencies]
 rrv-core = { path = "../rrv-core", features = ["testing"] }

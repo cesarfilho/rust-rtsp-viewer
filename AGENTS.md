@@ -82,6 +82,19 @@ validates a config. Test cameras live in `rrv_core::testing` (feature `testing`)
 `src/domain`, `src/infrastructure`, `src/engine` or `src/config*.rs` now live under
 `crates/rrv-core/src/`.
 
+## Control channel (ADR 0010, plan 2.5.5)
+
+`rrv_core::ipc`: a Unix socket (`$RRV_SOCKET`, else `$XDG_RUNTIME_DIR/rrv/rrv.sock`; dir `0700`,
+socket `0600`, path ≤ 107 bytes), one JSON message per line, versioned (`PROTOCOL_VERSION`; the
+first message must be `Hello`). `protocol` holds the types and pins the wire format with a test,
+`handler::apply(Host, Request) -> Response` is pure (testable without a socket), `server::IpcServer`
+runs one thread per connection that only *forwards* requests to the daemon's main loop (the `Engine`
+is single-threaded) and `client::IpcClient` is the window's / `rrvctl`'s side. Requests: `status`,
+`subscribe` (pushes `WireEvent`s), `toggle_recording`, `set_camera_enabled`, `get_zones`,
+`set_zones` (stored by camera *name*, never by URL). A second daemon on a live socket is refused;
+a stale socket file is replaced. `rrvctl status|record|enable|disable|zones|events` is the CLI.
+The window does not use the channel yet (plan 2.5.7, after its UX spec).
+
 ## Source layout
 
 ### Domain (`src/domain/` — pure logic, no I/O)

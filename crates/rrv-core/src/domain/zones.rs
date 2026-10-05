@@ -95,14 +95,14 @@ pub fn polygon_area(vertices: &[Point]) -> f64 {
 }
 
 /// TOML mirror for a zone entry.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct MotionZoneFile {
     pub name: String,
     pub vertices: Vec<PointFile>,
     pub enabled: Option<bool>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct PointFile {
     pub x: f64,
     pub y: f64,

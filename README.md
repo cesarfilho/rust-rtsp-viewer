@@ -295,7 +295,7 @@ nativa).
 
 ```bash
 cp config.docker.toml.example config.docker.toml   # edite as câmeras (o arquivo é ignorado pelo git)
-mkdir -p recordings state
+mkdir -p recordings state "$XDG_RUNTIME_DIR/rrv"
 docker compose up -d --build
 docker compose logs -f rrv
 ```
@@ -310,6 +310,10 @@ docker compose logs -f rrv
 - **Saúde:** `healthcheck` do Docker lê um batimento que o laço do daemon escreve a cada segundo.
   Uma câmera fora do ar *não* deixa o contêiner doente: reiniciá-lo não a consertaria.
 - **Validar a configuração** sem subir nada: `docker run --rm -v ./config.docker.toml:/config/config.toml:ro rust-rtsp-viewer/rrv-daemon:local --check`.
+- **Controle pelo socket:** o daemon abre `$XDG_RUNTIME_DIR/rrv/rrv.sock` (modo `0600`; no contêiner,
+  `/run/rrv/rrv.sock` num volume compartilhado). A janela e o `rrvctl` falam com ele por aí:
+  `rrvctl status`, `rrvctl record "Portão"`, `rrvctl enable|disable 2`, `rrvctl zones "Portão"`,
+  `rrvctl events`. Dentro do contêiner: `docker exec rrv rrvctl status`.
 - Fora do Docker: `cargo run -p rrv-daemon -- config.toml` (mesmos `--check` e `--health`).
 
 Ainda não há decodificação por GPU no contêiner (a iGPU Intel por VA-API é a tarefa 2.5.10, a

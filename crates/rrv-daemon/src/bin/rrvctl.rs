@@ -1,0 +1,174 @@
+//! `rrvctl`: opera o `rrv-daemon` pelo socket (a mesma porta que a janela usa).
+//!
+//!   rrvctl status
+//!   rrvctl record "Portão"      # liga/desliga a gravação (nome ou índice)
+//!   rrvctl enable 2 / disable 2
+//!   rrvctl zones "Portão"
+//!   rrvctl events               # acompanha os eventos até Ctrl+C
+
+use std::path::PathBuf;
+use std::process::ExitCode;
+use std::time::Duration;
+
+use clap::{Parser, Subcommand};
+use rrv_core::ipc::client::IpcClient;
+use rrv_core::ipc::protocol::{CameraInfo, Request, Response};
+
+#[derive(Parser)]
+#[command(name = "rrvctl", version, about = "Opera o rrv-daemon pelo socket")]
+struct Cli {
+    /// Socket do daemon (padrão: `$RRV_SOCKET`, senão `$XDG_RUNTIME_DIR/rrv/rrv.sock`)
+    #[arg(long, env = "RRV_SOCKET", global = true)]
+    socket: Option<PathBuf>,
+
+    /// Imprime JSON em vez de texto
+    #[arg(long, global = true)]
+    json: bool,
+
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Estado de todas as câmeras
+    Status,
+    /// Liga ou desliga a gravação de uma câmera
+    Record { camera: String },
+    /// Liga uma câmera
+    Enable { camera: String },
+    /// Desliga uma câmera
+    Disable { camera: String },
+    /// Zonas de movimento de uma câmera
+    Zones { camera: String },
+    /// Acompanha os eventos (movimento, gravação, online/offline)
+    Events,
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    match run(&cli) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("rrvctl: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn cameras(c: &mut IpcClient) -> Result<Vec<CameraInfo>, String> {
+    match c.request(&Request::Status)? {
+        Response::Status { cameras } => Ok(cameras),
+        Response::Error { message } => Err(message),
+        other => Err(format!("resposta inesperada: {other:?}")),
+    }
+}
+
+/// Aceita o índice ou o nome (sem diferenciar maiúsculas).
+fn resolve(c: &mut IpcClient, who: &str) -> Result<usize, String> {
+    let all = cameras(c)?;
+    if let Ok(i) = who.parse::<usize>()
+        && i < all.len()
+    {
+        return Ok(i);
+    }
+    all.iter()
+        .find(|cam| cam.name.eq_ignore_ascii_case(who))
+        .map(|cam| cam.index)
+        .ok_or_else(|| {
+            let names: Vec<_> = all.iter().map(|c| c.name.as_str()).collect();
+            format!("câmera '{who}' não encontrada (há: {})", names.join(", "))
+        })
+}
+
+fn expect_ok(r: Response) -> Result<(), String> {
+    match r {
+        Response::Ok => Ok(()),
+        Response::Error { message } => Err(message),
+        other => Err(format!("resposta inesperada: {other:?}")),
+    }
+}
+
+fn run(cli: &Cli) -> Result<(), String> {
+    let socket = cli
+        .socket
+        .clone()
+        .unwrap_or_else(rrv_core::ipc::default_socket_path);
+    let mut c = IpcClient::connect(&socket)?;
+    match &cli.command {
+        Command::Status => {
+            let all = cameras(&mut c)?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&all).unwrap());
+            } else {
+                println!(
+                    "{:<3} {:<24} {:<13} {:<6} gravando",
+                    "#", "câmera", "estado", "stream"
+                );
+                for cam in all {
+                    println!(
+                        "{:<3} {:<24} {:<13} {:<6} {}{}",
+                        cam.index,
+                        cam.name,
+                        cam.status,
+                        cam.stream,
+                        if cam.recording { "sim" } else { "não" },
+                        if cam.motion { "  (movimento)" } else { "" }
+                    );
+                }
+            }
+            Ok(())
+        }
+        Command::Record { camera } => {
+            let i = resolve(&mut c, camera)?;
+            match c.request(&Request::ToggleRecording { camera: i })? {
+                Response::Recording { recording, .. } => {
+                    println!(
+                        "{}",
+                        if recording {
+                            "gravando"
+                        } else {
+                            "parou de gravar"
+                        }
+                    );
+                    Ok(())
+                }
+                Response::Error { message } => Err(message),
+                other => Err(format!("resposta inesperada: {other:?}")),
+            }
+        }
+        Command::Enable { camera } | Command::Disable { camera } => {
+            let enabled = matches!(cli.command, Command::Enable { .. });
+            let i = resolve(&mut c, camera)?;
+            expect_ok(c.request(&Request::SetCameraEnabled { camera: i, enabled })?)
+        }
+        Command::Zones { camera } => {
+            let i = resolve(&mut c, camera)?;
+            match c.request(&Request::GetZones { camera: i })? {
+                Response::Zones { zones, .. } => {
+                    println!("{}", serde_json::to_string_pretty(&zones).unwrap());
+                    Ok(())
+                }
+                Response::Error { message } => Err(message),
+                other => Err(format!("resposta inesperada: {other:?}")),
+            }
+        }
+        Command::Events => {
+            c.subscribe()?;
+            loop {
+                if let Some(ev) = c.next_event(Duration::from_secs(60))? {
+                    if cli.json {
+                        println!("{}", serde_json::to_string(&ev).unwrap());
+                    } else {
+                        println!(
+                            "[{}] {}{}",
+                            ev.name,
+                            ev.kind.label(),
+                            ev.detail.map(|d| format!(": {d}")).unwrap_or_default()
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

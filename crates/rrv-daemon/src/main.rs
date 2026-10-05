@@ -13,6 +13,9 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use rrv_core::engine::{Engine, EngineEvent, EngineSettings, TICK_MS};
+use rrv_core::ipc::handler::Host;
+use rrv_core::ipc::protocol::WireEvent;
+use rrv_core::ipc::server::IpcServer;
 use rrv_core::startup::{load_config, merge_global_camera_defaults};
 
 #[derive(Parser)]
@@ -38,6 +41,11 @@ struct Cli {
     /// Arquivo de batimento do daemon
     #[arg(long, env = "RRV_HEALTH_FILE", default_value = DEFAULT_HEALTH_FILE)]
     health_file: PathBuf,
+
+    /// Socket Unix da janela e do `rrvctl` (padrão: `$RRV_SOCKET`, senão
+    /// `$XDG_RUNTIME_DIR/rrv/rrv.sock`)
+    #[arg(long, env = "RRV_SOCKET")]
+    socket: Option<PathBuf>,
 }
 
 const DEFAULT_HEALTH_FILE: &str = "/tmp/rrv-daemon.health";
@@ -87,7 +95,7 @@ fn run(cli: &Cli) -> Result<(), String> {
         .unwrap_or_default();
     let logs = config.logs.unwrap_or_default();
     let view = config.view.unwrap_or_default();
-    let zones = rrv_core::infrastructure::zone_state::load();
+    let mut zones = rrv_core::infrastructure::zone_state::load();
 
     let mut engine = Engine::new(EngineSettings {
         cameras: &cameras,
@@ -106,6 +114,16 @@ fn run(cli: &Cli) -> Result<(), String> {
         recording.dir.display()
     );
 
+    // O canal da janela e do `rrvctl`. Falhar aqui (por exemplo, outro daemon
+    // já respondendo no socket) é fatal: dois daemons gravariam as mesmas câmeras.
+    let socket = cli
+        .socket
+        .clone()
+        .unwrap_or_else(rrv_core::ipc::default_socket_path);
+    let server = IpcServer::bind(&socket)
+        .map_err(|e| format!("não consegui abrir o socket {}: {e}", socket.display()))?;
+    log::info!("socket de controle em {}", server.path().display());
+
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
     ctrlc::set_handler(move || flag.store(true, Ordering::SeqCst))
@@ -115,8 +133,24 @@ fn run(cli: &Cli) -> Result<(), String> {
     let mut tick = 0u64;
     while !stop.load(Ordering::SeqCst) {
         let started = Instant::now();
-        for event in engine.step(tick) {
-            log_event(&engine, &event);
+        // Pedidos da janela/rrvctl primeiro, depois o tick do motor.
+        server.poll(&mut Host {
+            engine: &mut engine,
+            zones_file: &mut zones,
+            persist: true,
+        });
+        let events = engine.step(tick);
+        let now = unix_secs();
+        let wire: Vec<WireEvent> = events
+            .iter()
+            .map(|e| {
+                let name = engine.names.get(e.camera).map_or("?", String::as_str);
+                WireEvent::from_engine(e, name, now)
+            })
+            .collect();
+        server.publish(&wire);
+        for event in &events {
+            log_event(&engine, event);
         }
         // Uma vez por segundo, o batimento que o healthcheck lê.
         if tick.is_multiple_of(10) {

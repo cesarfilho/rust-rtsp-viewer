@@ -21,7 +21,7 @@ COPY src ./src
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     cargo build --release --locked -p rrv-daemon \
- && cp target/release/rrv-daemon /rrv-daemon
+ && cp target/release/rrv-daemon target/release/rrvctl /
 
 # ---- execução --------------------------------------------------------------
 FROM debian:bookworm-slim
@@ -33,18 +33,19 @@ RUN apt-get update \
       ca-certificates tzdata \
  && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /rrv-daemon /usr/local/bin/rrv-daemon
+COPY --from=build /rrv-daemon /rrvctl /usr/local/bin/
 
 # Não-root. O compose troca o UID/GID para os do dono dos volumes; por isso HOME e
 # o estado ficam em /state (gravável por qualquer UID quando o volume é do dono).
 RUN useradd --uid 1000 --no-create-home --shell /usr/sbin/nologin rrv \
- && mkdir -p /config /data /state && chown 1000:1000 /data /state
+ && mkdir -p /config /data /state /run/rrv && chown 1000:1000 /data /state /run/rrv
 ENV HOME=/state \
     XDG_STATE_HOME=/state \
     RRV_CONFIG=/config/config.toml \
+    RRV_SOCKET=/run/rrv/rrv.sock \
     RUST_LOG=info
 USER rrv
-VOLUME ["/data", "/state"]
+VOLUME ["/data", "/state", "/run/rrv"]
 
 # O contêiner está saudável enquanto o laço do daemon bate o coração. Uma câmera
 # fora do ar não o torna doente: reiniciar não a consertaria.
