@@ -21,7 +21,7 @@ de saída, tamanhos e decisões pendentes (o como e o quando). Estado real do c�
 ## Decisões pendentes
 | ID | Decisão | Bloqueia |
 |---|---|---|
-| D1 | Posicionamento: **video wall nativo** (IA opcional/externa) ou **NVR completo** | M3, M4 inteiros |
+| D1 | ~~Posicionamento: video wall nativo ou NVR completo~~ → **decidido em 2026-10-05: NVR completo, com UX/UI muito bem definida** | (liberou M3 e M4) |
 | D2 | Câmeras reais: quantas, modelos, se aceitam 2 sessões RTSP, se têm sub-stream | 0.3, 0.4, 2.5 |
 | D3 | Licença do modelo de detecção (YOLO da Ultralytics é AGPL; o projeto também é, confirmar) | 4.1 |
 | D4 | Windows/macOS: manter só "compila" (ADR 0001) ou subir o nível | 5.6 |
@@ -68,7 +68,7 @@ Depende de 0.4 e 0.5.
 
 Gate M2: 16 câmeras dentro do orçamento do baseline. Risco principal: 2.3.
 
-## M3 — Gravação e histórico (0.11) — só se D1 = NVR
+## M3 — Gravação e histórico (0.11)
 | # | Tarefa | Critério de saída | Tam. |
 |---|---|---|---|
 | 3.1 | **Gravação sem reencode** (ADR 0007): `rtph264depay ! h264parse ! splitmuxsink` com `tee` antes do decoder (troca o `decodebin` por cadeia manual) | arquivo tocável, sem CPU de encode, com áudio, H.265 | G |
@@ -78,7 +78,7 @@ Gate M2: 16 câmeras dentro do orçamento do baseline. Risco principal: 2.3.
 | 3.5 | Reprodução embutida (seek, velocidade) e exportar clipe (remux) | clipe tocável sem reencode | G |
 | 3.6 | Pré-roll: ring buffer de GOPs codificados (depende de 3.1) | clipe começa no keyframe anterior ao evento | G |
 
-## M4 — Detecção de objetos (0.12) — só se D1 = NVR
+## M4 — Detecção de objetos (0.12)
 Depende de 0.6, 1.2 e D3.
 | # | Tarefa | Critério de saída | Tam. |
 |---|---|---|---|
@@ -90,8 +90,8 @@ Depende de 0.6, 1.2 e D3.
 | 4.6 | Avaliação: conjunto de teste com regressão por IoU/score; fallback em CPU | precisão/recall registrados | M |
 | 4.7 | Empacotar `libonnxruntime` por SO | | M |
 
-Alternativa leve (D1 = video wall): consumir eventos de fora (MQTT do Frigate) e mostrá-los
-na timeline, em vez de 4.1–4.6 (tarefa **M** no lugar de ~**XG**).
+Descartada com D1 = NVR: consumir eventos de fora (MQTT do Frigate) em vez de 4.1–4.6. O MQTT
+entra só como integração de saída (5.4).
 
 ## M5 — Acabamento (1.0)
 | # | Tarefa | Tam. |
@@ -105,12 +105,19 @@ na timeline, em vez de 4.1–4.6 (tarefa **M** no lugar de ~**XG**).
 | 5.7 | Decidir `timelapse` e `bidirectional_audio`: ligar ou remover | P cada |
 | 5.8 | Remover os 10 `allow(dead_code)` restantes e os módulos descartados | P |
 
+## Princípio de UX/UI (decorre de D1)
+O produto é um NVR completo **e** precisa de UX/UI muito bem definida: cada tela nova do M3/M4
+(linha do tempo, reprodução, revisão de eventos, caixas de detecção, retenção) tem **spec de
+interface escrita antes do código** (`docs/specs/ux-*.md`): fluxo, estados vazio/erro/carregando,
+atalhos, contraste (testes de tema) e critério de aceite visual. Reaproveitar a base atual:
+`command_menu` único, `ThemeColors`, pip de status, `view::pinned`, ícones `icons::FONT`.
+
 ## Caminho crítico
 Depois de M0, `0.1 → 0.4 → M2` (escala) e `0.6 → M4` (IA) andam em paralelo. Ordens que
 não podem inverter: 0.5 antes de 2.3 · 3.1 antes de 3.6 · 1.2 antes de 4.3 · 0.4 antes de
 qualquer otimização.
 
-## Sprint 1 (sem depender de câmeras reais)
+## Sprint 1 (sem depender de câmeras reais) — concluída
 1. 0.1 — conserto do `baseline.sh`.
 2. 0.2 — `fmt`, `deny` e `rust-toolchain` no CI.
 3. 1.1 — cegueira do `pause_hidden`, com teste.
@@ -120,4 +127,4 @@ qualquer otimização.
 ## Riscos
 - Os tamanhos são palpite; o baseline real (0.4) pode mudar a ordem de M2.
 - Toda a GPU de exibição depende de 2.3, o item mais incerto.
-- M3 + M4 equivalem a construir um NVR: se D1 for "video wall", cerca de metade do plano some.
+- M3 + M4 equivalem a construir um NVR (D1 decidido): é a maior parte do trabalho restante e o maior risco de prazo.
