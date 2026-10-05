@@ -1,6 +1,6 @@
 # Spec de UX — Gravações, histórico e reprodução (plano 3.1–3.6)
 
-Estado: **proposta, aguardando as decisões [D] do fim.** Depende do ADR 0010 (o daemon grava
+Estado: **aprovada em 2026-10-05** (decisões no fim). Depende do ADR 0010 (o daemon grava
 sem a janela), 0006 (SQLite), 0007 (pré-captura) e da spec `ux-daemon.md`.
 
 ## Por que isto existe
@@ -82,12 +82,10 @@ para protegido, ícone para tipo de evento. Texto em pt-BR; horas no fuso local,
 Busca por pessoa/placa (M4), exportação para a nuvem, áudio bidirecional, vários servidores,
 Windows/macOS.
 
-## Decisões [D] (recomendação em negrito)
-- **D-H1 — modo padrão de gravação por câmera:** **movimento com pré-roll de 5 s** (economiza
-  disco, é o que a maioria quer) × contínuo × desligado. Contínuo fica a um clique.
-- **D-H2 — retenção padrão:** **7 dias contínuo / 30 dias movimento / limite de 80% do disco**
-  × valores fixos mais altos.
-- **D-H3 — reprodução:** **embutida na janela** (decodifica o `.mp4` com o mesmo motor) × abrir
-  no player externo (`xdg-open`) na primeira versão, para entregar antes.
-- **D-H4 — onde ficam as gravações no Docker:** **volume dedicado montado em `/recordings`** (já
-  é assim) × diretório do usuário.
+## Decisões (resolvidas pelo dono em 2026-10-05)
+- **D-H1 — modo padrão:** ✔ **movimento com pré-roll de 5 s**. Contínuo fica a um clique por câmera.
+- **D-H2 — retenção padrão:** ✔ **somente movimento, 7 dias** (sem padrão para contínuo; quem
+  ligar o contínuo define os dias). O limite de espaço continua valendo (padrão 80% do disco), e o
+  que bater primeiro apaga o mais antigo não protegido.
+- **D-H3 — reprodução:** ✔ **embutida na janela** (seek, velocidade, quadro a quadro).
+- **D-H4 — onde ficam as gravações no Docker:** ✔ volume dedicado em `/recordings` (como hoje).

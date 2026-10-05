@@ -92,6 +92,8 @@ o reinicia e não deixa segmento corrompido (testes em `tests/`); `docker compos
 funciona em uma máquina limpa.
 
 ## M3 — Gravação e histórico (0.11)
+
+Spec de UX aprovada: `docs/specs/ux-historico.md` (padrões: movimento + pré-roll 5 s, retenção 7 dias, reprodução embutida).
 | # | Tarefa | Critério de saída | Tam. |
 |---|---|---|---|
 | 3.1 | **Gravação sem reencode** (ADR 0007): `rtph264depay ! h264parse ! splitmuxsink` com `tee` antes do decoder (troca o `decodebin` por cadeia manual) | arquivo tocável, sem CPU de encode, com áudio, H.265 | G |
