@@ -24,6 +24,10 @@ const AXIS_H: f32 = 22.0;
 const GUTTER: f32 = 96.0;
 /// Quanto cada `←`/`→` pula.
 const SKIP_MS: i64 = 10_000;
+/// Um evento abre a gravação alguns segundos antes dele, para ver o que o causou.
+const EVENT_LEAD_MS: i64 = 5_000;
+/// Largura da coluna de eventos.
+const EVENTS_W: f32 = 270.0;
 
 #[derive(Debug, Clone)]
 pub enum RecMsg {
@@ -50,6 +54,13 @@ pub enum RecMsg {
     Export,
     /// Protege / solta o segmento que está tocando.
     ToggleProtect,
+    /// Clicou num evento da lista: toca de 5 s antes dele.
+    EventClicked {
+        camera: String,
+        ts_ms: i64,
+    },
+    /// Mostra só os eventos de movimento.
+    ToggleMotionOnly,
     Live,
 }
 
@@ -77,6 +88,8 @@ pub struct RecordingsView {
     pub mark_in: Option<i64>,
     pub mark_out: Option<i64>,
     pub truncated: bool,
+    /// Filtro da lista de eventos: só movimento.
+    pub motion_only: bool,
 }
 
 fn now_ms() -> i64 {
@@ -186,6 +199,20 @@ pub fn update(app: &mut App, msg: RecMsg) -> Task<Message> {
         RecMsg::MarkOut => mark(app, false),
         RecMsg::Export => export(app),
         RecMsg::ToggleProtect => toggle_protect(app),
+        RecMsg::ToggleMotionOnly => {
+            if let Some(v) = app.recordings.as_mut() {
+                v.motion_only = !v.motion_only;
+            }
+        }
+        RecMsg::EventClicked { camera, ts_ms } => {
+            let lane = app
+                .recordings
+                .as_ref()
+                .and_then(|v| v.lanes.iter().position(|l| *l == camera));
+            if let Some(lane) = lane {
+                click(app, lane, ts_ms - EVENT_LEAD_MS);
+            }
+        }
         RecMsg::Live => return update(app, RecMsg::Close),
     }
     Task::none()
@@ -211,6 +238,7 @@ fn open(app: &mut App) {
         mark_in: None,
         mark_out: None,
         truncated: false,
+        motion_only: false,
     });
     request_history(app);
 }
@@ -738,6 +766,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
             background: Some(iced::Background::Color(iced::Color::BLACK)),
             ..container::Style::default()
         });
+    let stage = row![stage, events_column(app, v)]
+        .spacing(8)
+        .height(Length::Fill);
 
     // ── os controles
     let controls: Element<'_, Message> = match &v.player {
@@ -821,6 +852,84 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .into()
 }
 
+/// O nome de um evento do histórico, em português.
+pub fn event_label(kind: &str) -> &'static str {
+    match kind {
+        "motion" => "Movimento",
+        "recording_start" => "Gravação iniciada",
+        "recording_stop" => "Gravação parou",
+        "offline" => "Câmera offline",
+        "online" => "Câmera online",
+        "snapshot" => "Foto",
+        "disk_low" => "Disco quase cheio",
+        _ => "Evento",
+    }
+}
+
+/// Os eventos que a lista mostra: do mais novo ao mais antigo, com o filtro aplicado.
+pub fn visible_events(
+    events: &[HistoryEvent],
+    motion_only: bool,
+    limit: usize,
+) -> Vec<&HistoryEvent> {
+    events
+        .iter()
+        .rev()
+        .filter(|e| !motion_only || e.kind == "motion")
+        .take(limit)
+        .collect()
+}
+
+fn events_column<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message> {
+    let colors = app.theme.colors();
+    let dim = Theme::color_from_hex(colors.text_secondary);
+    let text_color = Theme::color_from_hex(colors.text);
+    let shown = visible_events(&v.events, v.motion_only, 200);
+    let mut list = column![].spacing(2).width(Length::Fill);
+    if shown.is_empty() {
+        list = list.push(text("Nenhum evento neste período").size(12).color(dim));
+    }
+    for e in shown {
+        let playable = v.lanes.contains(&e.camera);
+        let line = row![
+            text(format_clock(e.ts)).size(11).color(dim),
+            text(format!("{} · {}", e.camera, event_label(&e.kind)))
+                .size(12)
+                .color(text_color),
+        ]
+        .spacing(8);
+        let b = button(line)
+            .width(Length::Fill)
+            .padding(iced::Padding::from([3, 6]))
+            .style(style::pill(app.theme, Intent::Ghost));
+        list = list.push(if playable {
+            b.on_press(Message::Recordings(RecMsg::EventClicked {
+                camera: e.camera.clone(),
+                ts_ms: e.ts,
+            }))
+        } else {
+            b
+        });
+    }
+    column![
+        row![
+            text("Eventos").size(13).color(text_color),
+            iced::widget::horizontal_space(),
+            pill_button(
+                app,
+                "Só movimento",
+                RecMsg::ToggleMotionOnly,
+                sel(v.motion_only)
+            ),
+        ]
+        .align_y(iced::Alignment::Center),
+        iced::widget::scrollable(list).height(Length::Fill),
+    ]
+    .spacing(6)
+    .width(EVENTS_W)
+    .into()
+}
+
 fn sel(on: bool) -> Intent {
     if on { Intent::Selected } else { Intent::Ghost }
 }
@@ -844,6 +953,58 @@ fn format_clock(ms: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ev(id: i64, kind: &str) -> HistoryEvent {
+        HistoryEvent {
+            id,
+            camera: "Garagem".into(),
+            ts: id,
+            kind: kind.into(),
+            label: String::new(),
+            segment_id: None,
+        }
+    }
+
+    #[test]
+    fn the_event_list_is_newest_first_and_can_filter_motion() {
+        let events = [
+            ev(1, "motion"),
+            ev(2, "recording_start"),
+            ev(3, "motion"),
+            ev(4, "offline"),
+        ];
+        let all: Vec<i64> = visible_events(&events, false, 10)
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(all, [4, 3, 2, 1]);
+        let motion: Vec<i64> = visible_events(&events, true, 10)
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(motion, [3, 1]);
+        assert_eq!(
+            visible_events(&events, false, 2).len(),
+            2,
+            "respeita o limite"
+        );
+    }
+
+    #[test]
+    fn every_known_event_kind_has_a_portuguese_label() {
+        for k in [
+            "motion",
+            "recording_start",
+            "recording_stop",
+            "offline",
+            "online",
+            "snapshot",
+            "disk_low",
+        ] {
+            assert_ne!(event_label(k), "Evento", "{k}");
+        }
+        assert_eq!(event_label("algo_novo"), "Evento");
+    }
 
     #[test]
     fn mmss_formats() {

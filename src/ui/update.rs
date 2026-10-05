@@ -2390,6 +2390,57 @@ mod tests {
     }
 
     #[test]
+    fn clicking_an_event_opens_the_recording_5_seconds_before_it() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        app.recordings_dir = std::env::temp_dir().join("rrv-nao-existe-mesmo");
+        let _ = update(&mut app, Message::Recordings(RecMsg::Open));
+        let token = *app.pending.keys().next().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        // o segmento cobre [now-60s, now-10s]; o evento é em now-40s
+        handle_reply(
+            &mut app,
+            token,
+            Ok(history_reply(vec![seg(
+                1,
+                now - 60_000,
+                Some(now - 10_000),
+                "a.mkv",
+            )])),
+        );
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::EventClicked {
+                camera: "Portão".into(),
+                ts_ms: now - 40_000,
+            }),
+        );
+        // caiu dentro do segmento: tentou abrir o arquivo (que não existe nesta pasta)
+        assert!(
+            app.toasts
+                .iter()
+                .any(|t| t.message.contains("Arquivo não encontrado")),
+            "{:?}",
+            app.toasts.iter().map(|t| &t.message).collect::<Vec<_>>()
+        );
+        // câmera desconhecida: nada acontece
+        let n = app.toasts.len();
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::EventClicked {
+                camera: "Outra".into(),
+                ts_ms: now,
+            }),
+        );
+        assert_eq!(app.toasts.len(), n);
+        let _ = update(&mut app, Message::Recordings(RecMsg::ToggleMotionOnly));
+        assert!(app.recordings.as_ref().unwrap().motion_only);
+    }
+
+    #[test]
     fn closing_without_local_recordings_does_not_ask() {
         let mut app = test_app();
         let _ = update(&mut app, Message::QuitRequested);

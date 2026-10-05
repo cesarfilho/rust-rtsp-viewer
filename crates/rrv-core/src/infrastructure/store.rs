@@ -18,6 +18,10 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::domain::retention::{self, Candidate, DiskUsage, RetentionConfig};
 
+/// Um segmento menor que isto não tem vídeo: é só o cabeçalho do contêiner de uma gravação
+/// que parou antes do primeiro keyframe. Ao fechar, é descartado (arquivo e linha).
+pub const MIN_SEGMENT_BYTES: i64 = 4096;
+
 /// Quanto antes da abertura de um segmento um evento ainda é dele.
 pub const LINK_BACK_MS: i64 = 10_000;
 
@@ -515,7 +519,7 @@ fn apply(store: &Store, cmd: StoreCmd) -> Result<(), StoreError> {
             let bytes = std::fs::metadata(&path)
                 .map(|m| m.len() as i64)
                 .unwrap_or(0);
-            if bytes == 0 {
+            if bytes < MIN_SEGMENT_BYTES {
                 store.discard_segment(&path)?;
             } else {
                 store.segment_closed(&path, ts_end, bytes)?;
@@ -781,7 +785,7 @@ mod tests {
         let d = tmp("handle");
         let db = d.join("h.db");
         let f = d.join("a.mkv");
-        std::fs::write(&f, vec![0u8; 50]).unwrap();
+        std::fs::write(&f, vec![0u8; 5000]).unwrap();
         let p = f.to_string_lossy().to_string();
         let h = StoreHandle::spawn(db.clone()).unwrap();
         h.send(StoreCmd::SegmentOpened {
@@ -801,9 +805,10 @@ mod tests {
             path: p,
             ts_end: 200,
         });
-        // um segmento que fechou sem nenhum byte não fica no histórico
+        // só o cabeçalho do contêiner (gravação que parou antes do primeiro keyframe):
+        // não tem vídeo, não fica no histórico
         let empty = d.join("vazio.mkv");
-        std::fs::write(&empty, b"").unwrap();
+        std::fs::write(&empty, vec![0u8; 600]).unwrap();
         let ep = empty.to_string_lossy().to_string();
         h.send(StoreCmd::SegmentOpened {
             camera: "c".into(),
@@ -821,7 +826,7 @@ mod tests {
         assert_eq!(rows.len(), 1, "o segmento vazio foi descartado: {rows:?}");
         assert!(!empty.exists());
         let seg = &rows[0];
-        assert!(seg.closed && seg.bytes == 50 && seg.has_motion);
+        assert!(seg.closed && seg.bytes == 5000 && seg.has_motion);
         assert_eq!(s.events_between(Some("c"), 0, 1_000).unwrap().len(), 1);
         let _ = std::fs::remove_dir_all(&d);
     }
