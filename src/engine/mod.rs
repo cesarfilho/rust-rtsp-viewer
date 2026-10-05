@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::config::CameraConfig;
+use crate::domain::camera_status::CameraStatus;
 use crate::domain::motion::MotionConfig;
 use crate::domain::multi_stream::StreamQuality;
 use crate::domain::notify::NotifyConfig;
@@ -43,6 +44,9 @@ pub struct Engine {
     pub reconnect_states: Vec<ReconnectState>,
     /// Per-camera reconnect backoff.
     pub backoff_states: Vec<BackoffState>,
+    /// What each camera is doing right now (connecting, live, recording, ...). The UI's sidebar
+    /// rows mirror this after every update.
+    pub status: Vec<CameraStatus>,
     /// The configuration each camera was started from.
     pub camera_configs: Vec<CameraConfig>,
     /// Which stream each camera is running on (`Sub` only for cameras with a `sub_url`).

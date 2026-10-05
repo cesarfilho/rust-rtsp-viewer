@@ -356,6 +356,7 @@ pub fn new_app(
         reconnect_states,
         backoff_states,
         stream_quality: vec![crate::domain::multi_stream::StreamQuality::Main; kept_cameras.len()],
+        status: vec![crate::domain::camera_status::CameraStatus::Connecting; count],
         camera_configs: kept_cameras,
         camera_enabled: vec![true; count],
         motion_config,

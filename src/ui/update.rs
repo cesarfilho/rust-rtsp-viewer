@@ -32,6 +32,22 @@ const BLUR_TARGET: &str = "__rrv_blur__";
 const CONNECT_GRACE_SECS: u64 = 12;
 
 pub fn update(app: &mut App, message: Message) -> Task<Message> {
+    let task = update_inner(app, message);
+    sync_status_rows(app);
+    task
+}
+
+/// The engine owns each camera's status; the sidebar rows (read by the views)
+/// mirror it. One place, after every update, keeps them from drifting.
+fn sync_status_rows(app: &mut App) {
+    for (row, status) in app.sidebar.cameras.iter_mut().zip(&app.engine.status) {
+        if row.status != *status {
+            row.status = status.clone();
+        }
+    }
+}
+
+fn update_inner(app: &mut App, message: Message) -> Task<Message> {
     match message {
         Message::FrameUpdate => update_frame(app),
         Message::KeyPressed(key, modifiers) => handle_key(app, key, modifiers),
@@ -619,7 +635,7 @@ fn persist_zones(app: &mut App, idx: usize) {
 fn detect_camera_motion(app: &mut App, i: usize) {
     if !app.engine.motion_config.enabled
         || !matches!(
-            app.sidebar.cameras[i].status,
+            app.engine.status[i],
             sidebar::CameraStatus::Live | sidebar::CameraStatus::Recording
         )
     {
@@ -862,7 +878,7 @@ fn restart_stream(app: &mut App, i: usize, quality: StreamQuality) {
     app.engine.reconnect_states[i].reset();
     app.engine.backoff_states[i] = BackoffState::new();
     if i < app.sidebar.cameras.len() {
-        app.sidebar.cameras[i].status = if result.is_err() {
+        app.engine.status[i] = if result.is_err() {
             sidebar::CameraStatus::Offline
         } else {
             sidebar::CameraStatus::Connecting
@@ -943,7 +959,7 @@ fn pause_stream(app: &mut App, i: usize) {
     app.engine.backoff_states[i] = BackoffState::new();
     app.engine.start_queue.retain(|&q| q != i);
     if i < app.sidebar.cameras.len() {
-        app.sidebar.cameras[i].status = sidebar::CameraStatus::Paused;
+        app.engine.status[i] = sidebar::CameraStatus::Paused;
     }
 }
 
@@ -964,9 +980,9 @@ fn sync_active_streams(app: &mut App) {
                 app.engine.start_queue.push_back(i);
             }
             if i < app.sidebar.cameras.len()
-                && app.sidebar.cameras[i].status == sidebar::CameraStatus::Paused
+                && app.engine.status[i] == sidebar::CameraStatus::Paused
             {
-                app.sidebar.cameras[i].status = sidebar::CameraStatus::Connecting;
+                app.engine.status[i] = sidebar::CameraStatus::Connecting;
             }
         } else if !should_run && app.engine.active_stream[i] {
             pause_stream(app, i);
@@ -975,9 +991,9 @@ fn sync_active_streams(app: &mut App) {
             // (unless it never started and is still in the launch queue).
             app.engine.start_queue.retain(|&q| q != i);
             if i < app.sidebar.cameras.len()
-                && app.sidebar.cameras[i].status == sidebar::CameraStatus::Connecting
+                && app.engine.status[i] == sidebar::CameraStatus::Connecting
             {
-                app.sidebar.cameras[i].status = sidebar::CameraStatus::Paused;
+                app.engine.status[i] = sidebar::CameraStatus::Paused;
             }
         }
     }
@@ -1134,7 +1150,7 @@ fn update_frame(app: &mut App) -> Task<Message> {
         }
 
         let was_offline = matches!(
-            app.sidebar.cameras[i].status,
+            app.engine.status[i],
             sidebar::CameraStatus::Offline | sidebar::CameraStatus::Reconnecting
         );
 
@@ -1170,7 +1186,10 @@ fn update_frame(app: &mut App) -> Task<Message> {
                 bridge.query_latency();
                 bridge.poll_rtp_stats();
             }
-            if let Some(reading) = bridge.sample_status(&app.sidebar.cameras[i].status) {
+            if let Some(reading) = bridge.sample_status(&app.engine.status[i]) {
+                if let Some(status) = &reading.status {
+                    app.engine.status[i] = status.clone();
+                }
                 app.sidebar.cameras[i].apply(reading);
             }
             let hist = &mut app.sidebar.cameras[i].fps_history;
@@ -1227,7 +1246,7 @@ fn update_frame(app: &mut App) -> Task<Message> {
 
         // Log connectivity transitions once the status has been refreshed.
         let now_offline = matches!(
-            app.sidebar.cameras[i].status,
+            app.engine.status[i],
             sidebar::CameraStatus::Offline | sidebar::CameraStatus::Reconnecting
         );
         if was_offline && !now_offline {
@@ -1240,15 +1259,15 @@ fn update_frame(app: &mut App) -> Task<Message> {
         // CONNECTING rather than flapping to RECONNECTING/OFFLINE while it
         // hand-shakes. Cleared once it actually goes live.
         match app.engine.connecting_since[i] {
-            Some(_) if app.sidebar.cameras[i].status == sidebar::CameraStatus::Live => {
+            Some(_) if app.engine.status[i] == sidebar::CameraStatus::Live => {
                 app.engine.connecting_since[i] = None;
             }
             Some(t) if t.elapsed().as_secs() < CONNECT_GRACE_SECS => {
                 if matches!(
-                    app.sidebar.cameras[i].status,
+                    app.engine.status[i],
                     sidebar::CameraStatus::Offline | sidebar::CameraStatus::Reconnecting
                 ) {
-                    app.sidebar.cameras[i].status = sidebar::CameraStatus::Connecting;
+                    app.engine.status[i] = sidebar::CameraStatus::Connecting;
                 }
             }
             Some(_) => app.engine.connecting_since[i] = None,
@@ -1261,7 +1280,7 @@ fn update_frame(app: &mut App) -> Task<Message> {
         // is stuck on "Reconectando" forever (the watchdog only covers live
         // RTSP stalls).
         let down = matches!(
-            app.sidebar.cameras[i].status,
+            app.engine.status[i],
             sidebar::CameraStatus::Offline | sidebar::CameraStatus::Reconnecting
         );
         if !needs_reconnect
@@ -1385,7 +1404,7 @@ fn reconnect_camera(app: &mut App, i: usize, cam_label: &str) {
     }
 
     if i < app.sidebar.cameras.len() {
-        app.sidebar.cameras[i].status = sidebar::CameraStatus::Reconnecting;
+        app.engine.status[i] = sidebar::CameraStatus::Reconnecting;
     }
     if restarted && was_recording {
         push_event(
@@ -1688,7 +1707,7 @@ fn toggle_camera_recording(app: &mut App, idx: usize) -> Result<bool, String> {
     };
     app.is_recording = is_recording;
     if idx < app.sidebar.cameras.len() {
-        app.sidebar.cameras[idx].status = if is_recording {
+        app.engine.status[idx] = if is_recording {
             sidebar::CameraStatus::Recording
         } else {
             sidebar::CameraStatus::Live
@@ -1921,7 +1940,7 @@ fn update_sidebar(app: &mut App, msg: super::sidebar::Message) -> Task<Message> 
                     app.engine.active_stream[idx] = false;
                     app.engine.connecting_since[idx] = None;
                     app.engine.start_queue.retain(|&q| q != idx);
-                    app.sidebar.cameras[idx].status = sidebar::CameraStatus::Disabled;
+                    app.engine.status[idx] = sidebar::CameraStatus::Disabled;
                     app.engine.reconnect_states[idx].reset();
                     app.engine.backoff_states[idx] = super::state::BackoffState::new();
                 } else {
@@ -1932,7 +1951,7 @@ fn update_sidebar(app: &mut App, msg: super::sidebar::Message) -> Task<Message> 
                     app.engine.backoff_states[idx] = super::state::BackoffState::new();
                     app.engine.reconnect_states[idx].reset();
                     if idx < app.sidebar.cameras.len() {
-                        app.sidebar.cameras[idx].status = sidebar::CameraStatus::Connecting;
+                        app.engine.status[idx] = sidebar::CameraStatus::Connecting;
                     }
                 }
                 sync_active_streams(app);
