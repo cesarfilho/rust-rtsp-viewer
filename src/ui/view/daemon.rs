@@ -136,11 +136,18 @@ pub fn banner(app: &App) -> Option<Element<'_, Message>> {
     let theme = app.theme;
     let colors = theme.colors();
     let accent = tone_color(theme, b.tone);
+    // Sobre o tom translúcido do banner o texto secundário ficava em 4,4:1 no
+    // tema Dark; os botões usam o texto principal (ver o teste de contraste).
+    let ink = hex(colors.text);
     let small = |label: &'static str, msg: Message, intent: Intent| {
         button(text(label).size(Theme::TEXT_CAPTION))
             .on_press(msg)
             .padding([2, 8])
-            .style(style::pill(theme, intent))
+            .style(move |t: &iced::Theme, status| {
+                let mut st = style::pill(theme, intent)(t, status);
+                st.text_color = ink;
+                st
+            })
     };
     let bar = row![
         text(app.daemon.glyph())

@@ -2,7 +2,7 @@
 
 Estado: **aprovada em 2026-10-05** (as três decisões abertas foram resolvidas como recomendado;
 ver o fim). Implementada (plano 2.5.7). Cobertura dos critérios de aceite:
-1 `a_window_without_a_daemon_starts_in_the_local_engine`; 2 `link` + captura; 3 `with_a_daemon_the_window_only_shows` e `display_only_…` (headless); 4 `a_silent_daemon_is_lost_…` + captura com `SIGSTOP`; 5 `incompatible_…`; 6 `recording_is_only_shown_after_the_daemon_confirms`; 7 `quitting_asks_only_when_…` e `with_a_daemon_closing_never_asks`; 8 `zones_stay_in_the_editor_when_the_daemon_refuses`; 9 **pendente** (contraste dos novos estados em todos os temas). Depende do
+1 `a_window_without_a_daemon_starts_in_the_local_engine`; 2 `link` + captura; 3 `with_a_daemon_the_window_only_shows` e `display_only_…` (headless); 4 `a_silent_daemon_is_lost_…` + captura com `SIGSTOP`; 5 `incompatible_…`; 6 `recording_is_only_shown_after_the_daemon_confirms`; 7 `quitting_asks_only_when_…` e `with_a_daemon_closing_never_asks`; 8 `zones_stay_in_the_editor_when_the_daemon_refuses`; 9 `the_daemon_states_meet_contrast_targets` (corrigiu os botões do banner no tema Dark, que ficavam em 4,4:1). Depende do
 ADR 0010 e do canal da 2.5.5 (`rrv_core::ipc`, já pronto). Decisões que dependem do dono estão
 marcadas **[D]** no fim, com a recomendação.
 

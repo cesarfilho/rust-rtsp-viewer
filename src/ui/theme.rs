@@ -370,4 +370,62 @@ mod tests {
         let red = Theme::color_from_hex(Theme::Cosmic.colors().accent_red);
         assert_eq!(Theme::readable_on(red), Color::BLACK);
     }
+
+    /// Composição de `fg` (com alfa) sobre `bg` opaco, como o renderizador faz.
+    fn over(fg: Color, bg: Color) -> Color {
+        Color::from_rgb(
+            fg.r * fg.a + bg.r * (1.0 - fg.a),
+            fg.g * fg.a + bg.g * (1.0 - fg.a),
+            fg.b * fg.a + bg.b * (1.0 - fg.a),
+        )
+    }
+
+    /// Os estados da janela com o daemon (spec `ux-daemon.md`, critério 9):
+    /// o texto do banner sobre o tom translúcido e o botão perigoso das
+    /// confirmações, em todos os temas e em todos os estados do botão.
+    #[test]
+    fn the_daemon_states_meet_contrast_targets() {
+        for &t in Theme::all() {
+            let c = t.colors();
+            let hex = Theme::color_from_hex;
+            // O banner (alfa 0,16 do tom) fica sobre o fundo da janela; as
+            // confirmações, sobre a superfície elevada.
+            for (name, tone) in [("amber", c.accent_amber), ("red", c.accent_red)] {
+                for base in [c.background, c.surface] {
+                    let tinted = over(
+                        Color {
+                            a: 0.16,
+                            ..hex(tone)
+                        },
+                        hex(base),
+                    );
+                    let text = Theme::contrast_ratio(hex(c.text), tinted);
+                    assert!(
+                        text >= 7.0,
+                        "{t}: texto do banner {name} sobre {base}: {text:.1}"
+                    );
+                    // Os botões do banner usam o mesmo texto principal (`view::daemon`).
+                }
+            }
+            // O botão perigoso: preto ou branco sobre o vermelho, e nos estados
+            // hover (clareia 10%) e pressed (escurece 8%).
+            let red = hex(c.accent_red);
+            let ink = Theme::readable_on(red);
+            let mix = |a: Color, b: Color, k: f32| {
+                Color::from_rgb(
+                    a.r + (b.r - a.r) * k,
+                    a.g + (b.g - a.g) * k,
+                    a.b + (b.b - a.b) * k,
+                )
+            };
+            for (state, bg) in [
+                ("normal", red),
+                ("hover", mix(red, Color::WHITE, 0.10)),
+                ("pressed", mix(red, Color::BLACK, 0.08)),
+            ] {
+                let r = Theme::contrast_ratio(ink, bg);
+                assert!(r >= 4.5, "{t}: botão perigoso ({state}): {r:.1}");
+            }
+        }
+    }
 }
