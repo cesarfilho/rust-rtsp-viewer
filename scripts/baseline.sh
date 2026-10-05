@@ -10,7 +10,9 @@ set -euo pipefail
 
 DUR="${1:-60}"; STEP="${2:-2}"; NAME="${3:-rust-rtsp-viewer}"
 [ -r /proc/self/stat ] || { echo "requer /proc (Linux)" >&2; exit 1; }
-PID="$(pgrep -xn "$NAME" || true)"
+# O kernel guarda só os 15 primeiros caracteres do nome do processo (/proc/PID/comm), então
+# `pgrep -x rust-rtsp-viewer` (16 caracteres) nunca casava e o script saía sem medir nada.
+PID="$(pgrep -xn "${NAME:0:15}" || true)"
 [ -n "$PID" ] || { echo "processo '$NAME' não encontrado" >&2; exit 1; }
 
 HZ="$(getconf CLK_TCK)"
