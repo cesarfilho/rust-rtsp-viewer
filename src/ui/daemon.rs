@@ -314,13 +314,16 @@ impl DaemonState {
                     }
                 )
             }
-            Mode::Lost => match self.retry_in {
-                Some(d) => format!(
-                    "Sem resposta do daemon. Nova tentativa em {} s.",
-                    d.as_secs().max(1)
-                ),
-                None => "Sem resposta do daemon.".into(),
-            },
+            Mode::Lost => {
+                let why = self.reason_suffix();
+                match self.retry_in {
+                    Some(d) => format!(
+                        "Sem resposta do daemon{why}. Nova tentativa em {} s.",
+                        d.as_secs().max(1)
+                    ),
+                    None => format!("Sem resposta do daemon{why}."),
+                }
+            }
             Mode::Incompatible => self
                 .detail
                 .clone()
@@ -331,14 +334,26 @@ impl DaemonState {
         }
     }
 
+    /// ` (motivo)` quando o link disse por que perdeu o contato (ex.: o caminho do
+    /// socket passa de 107 bytes), senão nada. Sem o motivo a pessoa só veria "sem
+    /// resposta" e não teria como saber que o problema é de configuração.
+    fn reason_suffix(&self) -> String {
+        match self.detail.as_deref().map(str::trim) {
+            Some(r) if !r.is_empty() => format!(" ({r})"),
+            _ => String::new(),
+        }
+    }
+
     /// O aviso fino sob a barra, quando há algo a dizer.
     pub fn banner(&self) -> Option<Banner> {
         match self.mode {
             Mode::Lost => Some(Banner {
                 tone: Tone::Warning,
-                text: "Sem resposta do daemon. As câmeras podem não estar gravando. \
-                       Tentando reconectar…"
-                    .into(),
+                text: format!(
+                    "Sem resposta do daemon{}. As câmeras podem não estar gravando. \
+                     Tentando reconectar…",
+                    self.reason_suffix()
+                ),
             }),
             Mode::Incompatible => Some(Banner {
                 tone: Tone::Error,
@@ -384,6 +399,21 @@ mod tests {
             cameras: vec![cam(0, "Portão", true), cam(1, "Garagem", false)],
         });
         s
+    }
+
+    #[test]
+    fn a_lost_daemon_says_why_so_a_config_problem_is_not_just_silence() {
+        let mut s = DaemonState::connecting("/x".into());
+        s.apply(LinkEvent::Lost {
+            reason: "o caminho do socket tem 137 bytes e o limite do Unix é 107".into(),
+            retry_in: Duration::from_secs(4),
+        });
+        let banner = s.banner().unwrap().text;
+        assert!(banner.contains("137 bytes"), "{banner}");
+        assert!(s.summary().contains("137 bytes"));
+        // sem motivo, o texto continua o de sempre (sem parênteses vazios)
+        s.detail = None;
+        assert!(!s.banner().unwrap().text.contains("()"));
     }
 
     #[test]
