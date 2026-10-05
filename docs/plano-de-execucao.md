@@ -25,6 +25,7 @@ de saída, tamanhos e decisões pendentes (o como e o quando). Estado real do c�
 | D2 | Câmeras reais: quantas, modelos, se aceitam 2 sessões RTSP, se têm sub-stream | 0.3, 0.4, 2.5 |
 | D3 | Licença do modelo de detecção (YOLO da Ultralytics é AGPL; o projeto também é, confirmar) | 4.1 |
 | D5 | Vídeo ao vivo no cliente: sessão própria (A), redistribuição pelo daemon (B, recomendada) ou memória compartilhada (C) — ADR 0010 | M2.5 (2.5.4), 2.5 |
+| D6 | Instalar `nvidia-container-toolkit` para o container usar a GTX 1650 (decodificação/YOLO em CUDA). Sem isso: VA-API na iGPU ou CPU | 2.5.10, M4 em GPU |
 | D4 | Windows/macOS: manter só "compila" (ADR 0001) ou subir o nível | 5.6 |
 
 ## M0 — Fundação e medição (0.8.x)
@@ -69,7 +70,7 @@ Depende de 0.4 e 0.5.
 
 Gate M2: 16 câmeras dentro do orçamento do baseline. Risco principal: 2.3.
 
-## M2.5 — Motor sem janela (0.10.x) — ADR 0010
+## M2.5 — Motor sem janela, em Docker (0.10.x) — ADR 0010
 O NVR grava e detecta com a janela fechada. **Vem antes do M3**: gravação, SQLite, retenção e IA
 passam a viver no daemon; construí-las dentro de `update.rs` e migrar depois custa muito mais.
 | # | Tarefa | Critério de saída | Tam. |
@@ -77,14 +78,18 @@ passam a viver no daemon; construí-las dentro de `update.rs` e migrar depois cu
 | 2.5.1 | Desacoplar o iced do motor: `Handle`/`Bytes` fora de `bridge`/`pipeline` (hoje ~5 pontos) | `bridge` e `pipeline` compilam sem `iced` | P |
 | 2.5.2 | Extrair a orquestração de `ui/update.rs` (reconexão, backoff, fila de partida, movimento, gravação por evento, notificações, eventos) para um módulo de motor sem `App` | o cliente atual usa o motor e todos os testes seguem verdes | G |
 | 2.5.3 | Workspace Cargo: `rrv-core` (domain + motor), `rrv-daemon`, cliente | `cargo build --workspace`; mesmo comportamento | M |
-| 2.5.4 | Vídeo ao vivo do daemon para o cliente (**D5**; medir antes com 0.3) | cliente mostra 16 câmeras com 1 sessão RTSP por câmera | G |
+| 2.5.4 | Vídeo ao vivo do daemon para o cliente (**D5**; medir antes com 0.3); porta RTSP local publicada pelo container | cliente mostra 16 câmeras com 1 sessão RTSP por câmera | G |
 | 2.5.5 | IPC por socket Unix (`0600`): comandos, eventos, versão do protocolo | cliente liga/desliga gravação, edita zonas, recebe eventos | G |
-| 2.5.6 | `rrv-daemon` headless + unit systemd de usuário (`Restart=on-failure`) | grava e detecta com a janela fechada; reinicia sozinho | M |
+| 2.5.6 | `rrv-daemon` headless (binário sem iced), com shutdown limpo (finaliza segmentos) | grava e detecta sem janela; SIGTERM fecha os arquivos | M |
 | 2.5.7 | Cliente com estados de daemon (conectado, iniciando, ausente → motor embutido) e **spec de UX** (`docs/specs/ux-daemon.md`) | UX escrita antes do código; contraste testado | M |
-| 2.5.8 | Credenciais no keyring (antecipa 5.3): dois processos não devem repassar senha em texto | senha fora do `config.toml` e do IPC | M |
+| 2.5.8 | Segredos fora do `config.toml` (Docker secrets/variáveis; keyring no cliente — antecipa 5.3) | senha fora do `config.toml`, do IPC e da imagem | M |
+| 2.5.9 | **Docker**: `Dockerfile` multi-estágio (usuário não-root, GStreamer + x264), `compose.yaml` (`restart: unless-stopped`, `network_mode: host`, volumes `/data` `/state`, config `:ro`, `TZ`), `healthcheck` e build da imagem no CI | `docker compose up -d` sobe o NVR; `kill -9` no processo o reinicia sem segmento corrompido | M |
+| 2.5.10 | GPU no container: VA-API por `/dev/dri` (Intel) agora; NVIDIA só com **D6** | `Decoder` no Inspector mostra GPU dentro do container | M |
+| 2.5.11 | Notificação com a janela fechada: webhook/MQTT de saída (antecipa 5.4) | aviso de movimento chega sem a janela aberta | M |
 
-Gate M2.5: fechar a janela não interrompe uma gravação em curso; matar o daemon com `kill -9`
-o reinicia e não deixa segmento corrompido (testes em `tests/`).
+Gate M2.5: fechar a janela não interrompe uma gravação em curso; matar o container com `kill -9`
+o reinicia e não deixa segmento corrompido (testes em `tests/`); `docker compose up -d` do zero
+funciona em uma máquina limpa.
 
 ## M3 — Gravação e histórico (0.11)
 | # | Tarefa | Critério de saída | Tam. |
