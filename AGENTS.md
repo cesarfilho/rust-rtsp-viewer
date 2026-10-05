@@ -66,6 +66,17 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
   frame reads, FPS, bitrate, VU decay, toast expiry, burst capture, timeline
   events, and reconnect checks.
 
+## Workspace
+
+Two crates (ADR 0010): **`crates/rrv-core`** is the video engine — `domain/`, `infrastructure/`,
+`engine/`, `config.rs`, `config_check.rs` — with **no `iced`** (the compiler enforces it;
+`crates/rrv-core/tests/no_ui_dependency.rs` stops anyone adding it to its `Cargo.toml`). The root
+crate `rust-rtsp-viewer` is the window (`src/ui/`, `src/bin/iced_viewer.rs`) and re-exports the
+core modules (`src/lib.rs`), so `crate::domain::…` and `rust_rtsp_viewer::config` still resolve.
+The headless `rrv-daemon` crate arrives with plan task 2.5.6. Paths below that start with
+`src/domain`, `src/infrastructure`, `src/engine` or `src/config*.rs` now live under
+`crates/rrv-core/src/`.
+
 ## Source layout
 
 ### Domain (`src/domain/` — pure logic, no I/O)
@@ -155,10 +166,10 @@ staggered start — *initial* values; runtime tweaks persist to
 ## Build/test
 
 ```bash
-cargo build           # zero warnings expected
-cargo fmt --check     # CI enforces rustfmt (run `cargo fmt` to fix)
-cargo clippy --all-targets -- -D warnings
-cargo test            # all green (MSRV 1.88: let-chains, checked by the CI `msrv` job)
+cargo build --workspace            # zero warnings expected
+cargo fmt --all --check            # CI enforces rustfmt (run `cargo fmt --all` to fix)
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace             # all green (integration tests in tests/ included) (MSRV 1.92: glib/gstreamer 0.25 require it, checked by the CI `msrv` job)
 cargo deny check      # licences / RustSec advisories / sources (deny.toml)
 ```
 

@@ -1,0 +1,22 @@
+[package]
+name = "rrv-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false # aplicativo, não vai para o crates.io
+description = "Motor de vídeo do rust-rtsp-viewer: captura, reconexão, gravação, movimento. Sem interface."
+
+# Sem `iced` aqui, nunca: este crate é o que o daemon sem janela executa (ADR 0010).
+[dependencies]
+gstreamer = "0.25"
+gstreamer-app = "0.25"
+bytes = "1"
+log = "0.4"
+toml = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_ignored = "0.1.14"
+thiserror = "1"
+chrono = { version = "0.4", features = ["clock"] }
+image = { version = "0.25", default-features = false, features = ["png"] }

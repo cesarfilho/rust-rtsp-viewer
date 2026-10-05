@@ -34,6 +34,7 @@ confidence-threshold = 0.9
 [bans]
 multiple-versions = "allow" # a árvore do iced/wgpu tem várias versões duplicadas
 wildcards = "deny"
+allow-wildcard-paths = true # rrv-core é uma dependência por caminho do próprio workspace
 
 [sources]
 unknown-registry = "deny"

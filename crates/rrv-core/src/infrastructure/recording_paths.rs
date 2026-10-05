@@ -357,7 +357,7 @@ pub fn ensure_log_dir(dir: &Path) -> Result<PathBuf, String> {
 /// Build a safe filename from a camera label: lowercase, replace
 /// spaces and most punctuation with underscores, strip anything that
 /// isn't alphanumeric/underscore/dash/dot.
-pub(crate) fn safe_filename(label: &str) -> String {
+pub fn safe_filename(label: &str) -> String {
     let cleaned: String = label
         .to_lowercase()
         .chars()

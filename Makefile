@@ -10,13 +10,13 @@ APP_ID  = rust-rtsp-viewer
 all: build
 
 build:
-	cargo build
+	cargo build --workspace
 
 run:
 	cargo run
 
 test:
-	cargo test
+	cargo test --workspace
 
 clean:
 	cargo clean

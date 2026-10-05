@@ -1,11 +1,22 @@
-[package]
-name = "rust-rtsp-viewer"
+[workspace]
+members = [".", "crates/rrv-core"]
+
+[workspace.package]
 version = "0.8.0"
 edition = "2024"
-rust-version = "1.88"
-description = "Visualizador RTSP/HLS de baixa latência com grade multi-câmera, gravação, zonas de movimento e GUI Iced + GStreamer"
+rust-version = "1.92"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/cesarfilho/rust-rtsp-viewer"
+
+[package]
+name = "rust-rtsp-viewer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Visualizador RTSP/HLS de baixa latência com grade multi-câmera, gravação, zonas de movimento e GUI Iced + GStreamer"
+license.workspace = true
+repository.workspace = true
+publish = false # aplicativo, não vai para o crates.io
 readme = "README.md"
 keywords = ["rtsp", "hls", "gstreamer", "iced", "cctv"]
 categories = ["multimedia::video", "gui"]
@@ -15,20 +26,18 @@ default-run = "rust-rtsp-viewer"
 default = []
 
 [dependencies]
+rrv-core = { path = "crates/rrv-core" }
 gstreamer = "0.25"
-gstreamer-app = "0.25"
 log = "0.4"
 env_logger = "0.10"
-toml = "0.8"
-serde = { version = "1.0", features = ["derive"] }
 clap = { version = "4", features = ["derive", "env"] }
-thiserror = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 iced = { version = "0.13", features = ["image", "tokio", "advanced", "canvas"] }
 chrono = { version = "0.4", features = ["clock"] }
-serde_ignored = "0.1.14"
-bytes = "1"
 
 [[bin]]
 name = "rust-rtsp-viewer"
 path = "src/bin/iced_viewer.rs"
+
+[dev-dependencies]
+toml = "0.8"

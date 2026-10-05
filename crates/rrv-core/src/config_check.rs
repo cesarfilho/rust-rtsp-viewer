@@ -384,7 +384,7 @@ mod tests {
 
     #[test]
     fn the_shipped_example_has_no_issues() {
-        let (_, issues) = check(include_str!("../config.toml.example")).unwrap();
+        let (_, issues) = check(include_str!("../../../config.toml.example")).unwrap();
         assert!(issues.is_empty(), "{issues:?}");
     }
 

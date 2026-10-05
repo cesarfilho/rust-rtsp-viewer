@@ -15,7 +15,7 @@ A meta declarada é ML (ADR 0003), então M4 segue no plano, mas vale confirmar 
 
 ## M0 — Fundação e medição
 - [x] CI em Linux (clippy `-D warnings` + testes). Windows/macOS: ainda sem build no CI (ADR 0001).
-- [x] LICENSE (AGPL-3.0), `license` e `rust-version = 1.88` no `Cargo.toml` (ADR 0009).
+- [x] LICENSE (AGPL-3.0), `license` e `rust-version` no `Cargo.toml` (ADR 0009; 1.92 desde o GStreamer 0.25).
 - [x] `cargo build && cargo test` registrados: 387 testes passando, clippy limpo.
 - [ ] `cargo fmt --check` no CI; `deny.toml`; `rust-toolchain.toml`.
 - [ ] Rodar `scripts/check_rtsp_sessions.sh` em cada modelo de câmera (limite de sessões, ADR 0008).

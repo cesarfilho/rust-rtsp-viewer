@@ -556,7 +556,7 @@ mod tests {
     /// keep parsing as the schema evolves.
     #[test]
     fn example_config_parses() {
-        let cfg: Config = toml::from_str(include_str!("../config.toml.example"))
+        let cfg: Config = toml::from_str(include_str!("../../../config.toml.example"))
             .expect("config.toml.example must stay valid");
         assert!(cfg.cameras.is_some_and(|c| !c.is_empty()));
     }

@@ -30,17 +30,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Formatação
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
-      # Os testes de gravação rodam pipelines GStreamer reais (~6 s).
+      # Inclui os testes de integração (`tests/`): gravação e reconexão rodam
+      # pipelines GStreamer reais (~10 s). O de estresse é `#[ignore]`.
       - name: Testes
-        run: cargo test --lib --bins
+        run: cargo test --workspace
 
       - name: Testes de documentação
-        run: cargo test --doc
+        run: cargo test --workspace --doc
 
   # Licenças, vulnerabilidades conhecidas (RustSec) e fontes — ver deny.toml.
   deny:
@@ -54,7 +55,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       # Sobrepõe o rust-toolchain.toml (que pede "stable").
-      RUSTUP_TOOLCHAIN: "1.88"
+      RUSTUP_TOOLCHAIN: "1.92"
     steps:
       - uses: actions/checkout@v4
 
@@ -65,9 +66,9 @@ jobs:
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             libxkbcommon-dev libwayland-dev pkg-config
 
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.92
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Compila no MSRV
-        run: cargo check --all-targets
+        run: cargo check --workspace --all-targets

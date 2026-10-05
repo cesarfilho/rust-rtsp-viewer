@@ -1,4 +1,4 @@
-# Toolchain usada localmente e no CI. O MSRV (1.88, let-chains) é verificado
+# Toolchain usada localmente e no CI. O MSRV (1.92: `glib`/`gstreamer` 0.25 o exigem; let-chains já vinham do 1.88) é verificado
 # à parte no job `msrv` do CI.
 [toolchain]
 channel = "stable"

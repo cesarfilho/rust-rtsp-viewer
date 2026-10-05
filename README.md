@@ -12,7 +12,7 @@ Plataforma-alvo: **Linux** (Wayland/X11; integração com COSMIC/GNOME).
 
 ### Pré-requisitos
 
-- Rust 1.88+ (edition 2024)
+- Rust 1.92+ (edition 2024)
 - GStreamer 1.20+ com os seguintes plugins:
 
 ```bash
