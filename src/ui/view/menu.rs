@@ -35,7 +35,13 @@ fn menu_row<'a>(
         Theme::color_from_hex(colors.text_secondary)
     };
     let mut r = row![
-        container(text(icon).font(crate::ui::icons::FONT).size(Theme::TEXT_BODY).color(icon_color)).width(18),
+        container(
+            text(icon)
+                .font(crate::ui::icons::FONT)
+                .size(Theme::TEXT_BODY)
+                .color(icon_color)
+        )
+        .width(18),
         text(label).size(Theme::TEXT_BODY),
         iced::widget::horizontal_space(),
     ]
@@ -66,15 +72,17 @@ fn section_header(theme: Theme, title: impl Into<String>) -> Element<'static, Me
             .size(Theme::TEXT_CAPTION - 1)
             .color(Theme::color_from_hex(theme.colors().text_tertiary)),
     )
-    .padding(iced::Padding { top: 6.0, right: 10.0, bottom: 3.0, left: 10.0 })
+    .padding(iced::Padding {
+        top: 6.0,
+        right: 10.0,
+        bottom: 3.0,
+        left: 10.0,
+    })
     .into()
 }
 
 /// A joined segmented control (text labels), inside one rounded frame.
-fn segmented<'a>(
-    theme: Theme,
-    items: Vec<(String, bool, Message)>,
-) -> Element<'a, Message> {
+fn segmented<'a>(theme: Theme, items: Vec<(String, bool, Message)>) -> Element<'a, Message> {
     let mut r = row![].spacing(2);
     for (label, active, msg) in items {
         r = r.push(
@@ -105,7 +113,11 @@ fn density_row(app: &App) -> Element<'_, Message> {
     )];
     for &(c, r) in view::FIXED_PRESETS.iter() {
         let m = GridMode::Fixed { cols: c, rows: r };
-        items.push((format!("{c}×{r}"), app.view.mode == m, Message::GridModeChanged(m)));
+        items.push((
+            format!("{c}×{r}"),
+            app.view.mode == m,
+            Message::GridModeChanged(m),
+        ));
     }
     segmented(app.theme, items)
 }
@@ -152,7 +164,12 @@ fn theme_row(app: &App) -> Element<'_, Message> {
         );
     }
     container(r)
-        .padding(iced::Padding { top: 2.0, right: 10.0, bottom: 6.0, left: 10.0 })
+        .padding(iced::Padding {
+            top: 2.0,
+            right: 10.0,
+            bottom: 6.0,
+            left: 10.0,
+        })
         .into()
 }
 
@@ -176,17 +193,32 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
     let mut col = column![
         section_header(theme, "Exibição"),
         container(density_row(app)).padding(iced::Padding::from([0, 10])),
-        container(layout_row(app))
-            .padding(iced::Padding { top: 3.0, right: 10.0, bottom: 0.0, left: 10.0 }),
+        container(layout_row(app)).padding(iced::Padding {
+            top: 3.0,
+            right: 10.0,
+            bottom: 0.0,
+            left: 10.0
+        }),
         menu_row(
             theme,
             "\u{25F1}",
-            if immersive { "Sair do modo imersivo" } else { "Modo imersivo" },
+            if immersive {
+                "Sair do modo imersivo"
+            } else {
+                "Modo imersivo"
+            },
             Some("h"),
             Message::ToggleImmersive,
             false,
         ),
-        menu_row(theme, "\u{25F2}", "Tela cheia", Some("F11"), Message::ToggleFullscreen, false),
+        menu_row(
+            theme,
+            "\u{25F2}",
+            "Tela cheia",
+            Some("F11"),
+            Message::ToggleFullscreen,
+            false
+        ),
     ]
     .spacing(1)
     .width(MENU_WIDTH);
@@ -199,18 +231,50 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
             col = col
                 .push(hairline(theme))
                 .push(section_header(theme, format!("Câmera · {}", cam.name)))
-                .push(menu_row(theme, "\u{25A3}", "Spotlight", Some("f"), Message::EnterSpotlight(idx), false))
-                .push(menu_row(theme, "\u{25C9}", "Snapshot", Some("s"), Message::Snapshot, false))
+                .push(menu_row(
+                    theme,
+                    "\u{25A3}",
+                    "Spotlight",
+                    Some("f"),
+                    Message::EnterSpotlight(idx),
+                    false,
+                ))
+                .push(menu_row(
+                    theme,
+                    "\u{25C9}",
+                    "Snapshot",
+                    Some("s"),
+                    Message::Snapshot,
+                    false,
+                ))
                 .push(menu_row(
                     theme,
                     "\u{25CF}",
-                    if cam.status == sidebar::CameraStatus::Recording { "Parar gravação" } else { "Gravar" },
+                    if cam.status == sidebar::CameraStatus::Recording {
+                        "Parar gravação"
+                    } else {
+                        "Gravar"
+                    },
                     Some("r"),
                     Message::ToggleRecording,
                     false,
                 ))
-                .push(menu_row(theme, "\u{266A}", "Áudio", Some("m"), Message::ToggleAudio, false))
-                .push(menu_row(theme, "\u{2B21}", "Zonas de movimento", None, Message::EditZones(idx), false))
+                .push(menu_row(
+                    theme,
+                    "\u{266A}",
+                    "Áudio",
+                    Some("m"),
+                    Message::ToggleAudio,
+                    false,
+                ))
+                .push(menu_row(
+                    theme,
+                    "\u{2B21}",
+                    "Zonas de movimento",
+                    None,
+                    Message::EditZones(idx),
+                    false,
+                ))
                 .push(menu_row(
                     theme,
                     "\u{25D0}",
@@ -227,8 +291,22 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
         .push(section_header(theme, "Aparência"))
         .push(theme_row(app))
         .push(hairline(theme))
-        .push(menu_row(theme, "?", "Ajuda", Some("?"), Message::ShowHelp, false))
-        .push(menu_row(theme, "\u{25CF}", "Sair", Some("Ctrl Q"), Message::Quit, true));
+        .push(menu_row(
+            theme,
+            "?",
+            "Ajuda",
+            Some("?"),
+            Message::ShowHelp,
+            false,
+        ))
+        .push(menu_row(
+            theme,
+            "\u{25CF}",
+            "Sair",
+            Some("Ctrl Q"),
+            Message::Quit,
+            true,
+        ));
 
     container(col)
         .padding(4)

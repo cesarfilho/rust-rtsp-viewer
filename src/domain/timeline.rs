@@ -56,7 +56,12 @@ pub struct TimelineEvent {
 
 impl TimelineEvent {
     pub fn new(timestamp_secs: u64, camera_idx: usize, event_type: EventType) -> Self {
-        Self { timestamp_secs, camera_idx, event_type, description: None }
+        Self {
+            timestamp_secs,
+            camera_idx,
+            event_type,
+            description: None,
+        }
     }
 
     pub fn with_description(mut self, desc: impl Into<String>) -> Self {
@@ -76,7 +81,10 @@ pub struct TimelineConfig {
 
 impl Default for TimelineConfig {
     fn default() -> Self {
-        Self { max_events: 1000, window_secs: 3600 }
+        Self {
+            max_events: 1000,
+            window_secs: 3600,
+        }
     }
 }
 
@@ -90,8 +98,12 @@ pub struct TimelineConfigFile {
 impl TimelineConfigFile {
     pub fn into_config(self) -> TimelineConfig {
         let mut config = TimelineConfig::default();
-        if let Some(m) = self.max_events { config.max_events = m.clamp(10, 100_000); }
-        if let Some(w) = self.window_secs { config.window_secs = w.clamp(60, 86400); }
+        if let Some(m) = self.max_events {
+            config.max_events = m.clamp(10, 100_000);
+        }
+        if let Some(w) = self.window_secs {
+            config.window_secs = w.clamp(60, 86400);
+        }
         config
     }
 }
@@ -105,7 +117,10 @@ pub struct EventTimeline {
 
 impl EventTimeline {
     pub fn new(max_events: usize) -> Self {
-        Self { events: Vec::new(), max_events }
+        Self {
+            events: Vec::new(),
+            max_events,
+        }
     }
 
     /// Add an event to the timeline.
@@ -120,14 +135,16 @@ impl EventTimeline {
 
     /// Get events within a time window (from_secs..to_secs).
     pub fn events_in_range(&self, from_secs: u64, to_secs: u64) -> Vec<&TimelineEvent> {
-        self.events.iter()
+        self.events
+            .iter()
             .filter(|e| e.timestamp_secs >= from_secs && e.timestamp_secs <= to_secs)
             .collect()
     }
 
     /// Get events for a specific camera.
     pub fn events_for_camera(&self, camera_idx: usize) -> Vec<&TimelineEvent> {
-        self.events.iter()
+        self.events
+            .iter()
             .filter(|e| e.camera_idx == camera_idx)
             .collect()
     }
@@ -213,7 +230,10 @@ mod tests {
 
     #[test]
     fn timeline_config_file_overrides() {
-        let f = TimelineConfigFile { max_events: Some(500), window_secs: Some(7200) };
+        let f = TimelineConfigFile {
+            max_events: Some(500),
+            window_secs: Some(7200),
+        };
         let c = f.into_config();
         assert_eq!(c.max_events, 500);
         assert_eq!(c.window_secs, 7200);
@@ -221,7 +241,10 @@ mod tests {
 
     #[test]
     fn timeline_config_file_clamps() {
-        let f = TimelineConfigFile { max_events: Some(1), window_secs: Some(1) };
+        let f = TimelineConfigFile {
+            max_events: Some(1),
+            window_secs: Some(1),
+        };
         let c = f.into_config();
         assert_eq!(c.max_events, 10);
         assert_eq!(c.window_secs, 60);
@@ -229,8 +252,7 @@ mod tests {
 
     #[test]
     fn event_with_description() {
-        let e = TimelineEvent::new(100, 0, EventType::Motion)
-            .with_description("front yard");
+        let e = TimelineEvent::new(100, 0, EventType::Motion).with_description("front yard");
         assert_eq!(e.description.as_deref(), Some("front yard"));
     }
 }

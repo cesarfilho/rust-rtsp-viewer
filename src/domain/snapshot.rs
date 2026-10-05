@@ -239,9 +239,10 @@ fn unix_secs_to_ymdhms(unix_secs: u64) -> (i32, u32, u32, u32, u32, u32) {
 
 fn default_pictures_dir() -> PathBuf {
     if let Ok(p) = std::env::var("XDG_PICTURES_DIR")
-        && !p.is_empty() {
-            return PathBuf::from(p);
-        }
+        && !p.is_empty()
+    {
+        return PathBuf::from(p);
+    }
     if let Ok(home) = std::env::var("HOME") {
         return PathBuf::from(home).join("Pictures");
     }

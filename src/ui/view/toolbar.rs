@@ -21,7 +21,10 @@ fn page_info(app: &App) -> (usize, usize) {
     let ordered = view::apply_order(&app.view.order, &visible);
     let page_size = app.view.mode.page_size(ordered.len());
     let page_count = view::page_count(ordered.len(), page_size);
-    (view::clamp_page(app.current_page, page_count) + 1, page_count)
+    (
+        view::clamp_page(app.current_page, page_count) + 1,
+        page_count,
+    )
 }
 
 /// `(live, total)` and a colour hint for the health dot.
@@ -73,12 +76,10 @@ fn pill<'a>(
 fn density_segments(app: &App) -> Element<'_, Message> {
     let theme = app.theme;
     let seg = |label: String, active: bool, msg: Message| {
-        iced::widget::button(
-            iced::widget::text(label).size(Theme::TEXT_CAPTION),
-        )
-        .padding(iced::Padding::from([4, 7]))
-        .on_press(msg)
-        .style(style::segment(theme, active))
+        iced::widget::button(iced::widget::text(label).size(Theme::TEXT_CAPTION))
+            .padding(iced::Padding::from([4, 7]))
+            .on_press(msg)
+            .style(style::segment(theme, active))
     };
     let mut r = iced::widget::row![seg(
         "Auto".into(),
@@ -88,7 +89,11 @@ fn density_segments(app: &App) -> Element<'_, Message> {
     .spacing(1);
     for &(c, rr) in view::FIXED_PRESETS.iter() {
         let m = GridMode::Fixed { cols: c, rows: rr };
-        r = r.push(seg(format!("{c}×{rr}"), app.view.mode == m, Message::GridModeChanged(m)));
+        r = r.push(seg(
+            format!("{c}×{rr}"),
+            app.view.mode == m,
+            Message::GridModeChanged(m),
+        ));
     }
     iced::widget::container(r)
         .padding(2)
@@ -141,14 +146,20 @@ fn view_controls(app: &App, compact: bool) -> Element<'_, Message> {
             })
             .font(crate::ui::icons::FONT)
             .size(Theme::TEXT_BODY),
-            if rotate_on { Intent::Selected } else { Intent::Ghost },
+            if rotate_on {
+                Intent::Selected
+            } else {
+                Intent::Ghost
+            },
             Message::ToggleRotate,
             theme,
         ));
         if rotate_on && !compact {
             nav = nav
                 .push(pill(
-                    iced::widget::text("\u{2212}").font(crate::ui::icons::FONT).size(12),
+                    iced::widget::text("\u{2212}")
+                        .font(crate::ui::icons::FONT)
+                        .size(12),
                     Intent::Ghost,
                     Message::RotateIntervalStep(false),
                     theme,
@@ -238,7 +249,9 @@ pub fn toolbar(app: &App) -> Element<'_, Message> {
     let wide = app.window_size.width >= 820.0;
 
     let hamburger = pill(
-        iced::widget::text("\u{2630}").font(crate::ui::icons::FONT).size(14),
+        iced::widget::text("\u{2630}")
+            .font(crate::ui::icons::FONT)
+            .size(14),
         if app.sidebar.visible {
             Intent::Selected
         } else {
@@ -295,7 +308,9 @@ pub fn toolbar(app: &App) -> Element<'_, Message> {
         )
         .padding([2, 6])
         .style(move |_: &iced::Theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(Theme::color_from_hex(colors.accent_red))),
+            background: Some(iced::Background::Color(Theme::color_from_hex(
+                colors.accent_red,
+            ))),
             border: iced::Border {
                 radius: 4.0.into(),
                 ..iced::Border::default()
@@ -308,7 +323,9 @@ pub fn toolbar(app: &App) -> Element<'_, Message> {
     };
 
     let overflow = pill(
-        iced::widget::text("\u{22EF}").font(crate::ui::icons::FONT).size(15),
+        iced::widget::text("\u{22EF}")
+            .font(crate::ui::icons::FONT)
+            .size(15),
         if app.show_overflow_menu {
             Intent::Selected
         } else {
@@ -342,7 +359,9 @@ pub fn chrome_rail(app: &App) -> Element<'_, Message> {
     let colors = theme.colors();
 
     let exit = pill(
-        iced::widget::text("\u{2715} sair").font(crate::ui::icons::FONT).size(Theme::TEXT_BODY),
+        iced::widget::text("\u{2715} sair")
+            .font(crate::ui::icons::FONT)
+            .size(Theme::TEXT_BODY),
         Intent::Ghost,
         Message::ExitFocus,
         theme,
@@ -363,7 +382,8 @@ pub fn chrome_rail(app: &App) -> Element<'_, Message> {
     let mut r = iced::widget::row![exit]
         .spacing(Theme::SPACE_2)
         .align_y(iced::Alignment::Center);
-    if matches!(app.layout_mode, LayoutMode::Grid) && app.focus == super::super::app::ViewFocus::Immersive
+    if matches!(app.layout_mode, LayoutMode::Grid)
+        && app.focus == super::super::app::ViewFocus::Immersive
     {
         r = r.push(view_controls(app, true));
     }
@@ -394,7 +414,8 @@ pub fn chrome_rail(app: &App) -> Element<'_, Message> {
     );
 
     iced::widget::container(
-        r.padding([5, Theme::SPACE_3 as u16]).align_y(iced::Alignment::Center),
+        r.padding([5, Theme::SPACE_3 as u16])
+            .align_y(iced::Alignment::Center),
     )
     .width(Length::Fill)
     .style(style::floating_bar(theme))
@@ -406,12 +427,15 @@ pub fn overflow_menu_layer(app: &App) -> Option<Element<'_, Message>> {
     if !app.show_overflow_menu {
         return None;
     }
-    Some(
-        super::pinned(
-            super::menu::command_menu(app, None),
-            iced::alignment::Horizontal::Right,
-            iced::alignment::Vertical::Top,
-            iced::Padding { top: TOOLBAR_H + 4.0, right: 8.0, bottom: 0.0, left: 0.0 },
-        ),
-    )
+    Some(super::pinned(
+        super::menu::command_menu(app, None),
+        iced::alignment::Horizontal::Right,
+        iced::alignment::Vertical::Top,
+        iced::Padding {
+            top: TOOLBAR_H + 4.0,
+            right: 8.0,
+            bottom: 0.0,
+            left: 0.0,
+        },
+    ))
 }

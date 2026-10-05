@@ -1,8 +1,8 @@
 use std::cell::{Cell, RefCell};
 use std::sync::{Arc, Mutex};
 
-use iced::{Element, Length};
 use iced::widget::image::Handle;
+use iced::{Element, Length};
 
 use crate::ui::bridge::GStreamerBridge;
 
@@ -44,9 +44,11 @@ impl VideoWidget {
         if frame_gen != self.last_gen.get() {
             self.last_gen.set(frame_gen);
             if let Some(handle) = handle_opt
-                && w > 0 && h > 0 {
-                    *self.cached_handle.borrow_mut() = Some(handle);
-                }
+                && w > 0
+                && h > 0
+            {
+                *self.cached_handle.borrow_mut() = Some(handle);
+            }
         }
 
         let handle = self.cached_handle.borrow().clone().unwrap_or_else(|| {
@@ -68,9 +70,7 @@ mod tests {
 
     #[test]
     fn video_widget_creation() {
-        let bridge = Arc::new(Mutex::new(
-            GStreamerBridge::new(640, 480).unwrap(),
-        ));
+        let bridge = Arc::new(Mutex::new(GStreamerBridge::new(640, 480).unwrap()));
         let widget = VideoWidget::new(bridge);
         assert_eq!(widget.width, 640);
         assert_eq!(widget.height, 480);
@@ -78,18 +78,14 @@ mod tests {
 
     #[test]
     fn video_widget_view_no_frame() {
-        let bridge = Arc::new(Mutex::new(
-            GStreamerBridge::new(320, 240).unwrap(),
-        ));
+        let bridge = Arc::new(Mutex::new(GStreamerBridge::new(320, 240).unwrap()));
         let widget = VideoWidget::new(bridge);
         let _ = widget.view();
     }
 
     #[test]
     fn video_widget_sizes() {
-        let bridge = Arc::new(Mutex::new(
-            GStreamerBridge::new(1920, 1080).unwrap(),
-        ));
+        let bridge = Arc::new(Mutex::new(GStreamerBridge::new(1920, 1080).unwrap()));
         let widget = VideoWidget::new(bridge);
         assert_eq!(widget.width, 1920);
         assert_eq!(widget.height, 1080);

@@ -1,11 +1,15 @@
-use iced::{Element, Length};
 use iced::widget::{button, column, container, row, scrollable, text};
+use iced::{Element, Length};
 
 use crate::ui::theme::{self, ThemeColors};
 
 use super::types::{Message, Sidebar};
 
-pub(super) fn timeline_view<'a>(sidebar: &'a Sidebar, timeline: &'a crate::domain::timeline::EventTimeline, colors: ThemeColors) -> Element<'a, Message> {
+pub(super) fn timeline_view<'a>(
+    sidebar: &'a Sidebar,
+    timeline: &'a crate::domain::timeline::EventTimeline,
+    colors: ThemeColors,
+) -> Element<'a, Message> {
     let text_secondary = theme::Theme::color_from_hex(colors.text_secondary);
     let text_color = theme::Theme::color_from_hex(colors.text);
 
@@ -17,7 +21,8 @@ pub(super) fn timeline_view<'a>(sidebar: &'a Sidebar, timeline: &'a crate::domai
     let window = 3600u64;
     let from = now.saturating_sub(window);
 
-    let events: Vec<_> = timeline.events_in_range(from, now)
+    let events: Vec<_> = timeline
+        .events_in_range(from, now)
         .into_iter()
         .rev()
         .take(200)
@@ -25,7 +30,9 @@ pub(super) fn timeline_view<'a>(sidebar: &'a Sidebar, timeline: &'a crate::domai
 
     if events.is_empty() {
         return column![
-            text("Nenhum evento na última hora").color(text_secondary).size(12),
+            text("Nenhum evento na última hora")
+                .color(text_secondary)
+                .size(12),
         ]
         .width(Length::Fill)
         .padding(8)
@@ -37,7 +44,9 @@ pub(super) fn timeline_view<'a>(sidebar: &'a Sidebar, timeline: &'a crate::domai
         let color = theme::Theme::color_from_hex(event.event_type.color_hex());
         let time_str = format_timestamp(event.timestamp_secs);
         let label = event.event_type.label();
-        let cam_name = sidebar.cameras.get(event.camera_idx)
+        let cam_name = sidebar
+            .cameras
+            .get(event.camera_idx)
             .map(|c| c.name.as_str())
             .unwrap_or("???");
 
@@ -55,14 +64,25 @@ pub(super) fn timeline_view<'a>(sidebar: &'a Sidebar, timeline: &'a crate::domai
             });
 
         let desc = event.description.as_deref().unwrap_or("");
-        let detail = format!("{}{}", cam_name, if desc.is_empty() { String::new() } else { format!(" - {}", desc) });
+        let detail = format!(
+            "{}{}",
+            cam_name,
+            if desc.is_empty() {
+                String::new()
+            } else {
+                format!(" - {}", desc)
+            }
+        );
 
         let row_content = row![
             dot,
             column![
-                row![text(time_str).color(text_secondary).size(10), text(label).color(color).size(11)]
-                    .spacing(4)
-                    .align_y(iced::Alignment::Center),
+                row![
+                    text(time_str).color(text_secondary).size(10),
+                    text(label).color(color).size(11)
+                ]
+                .spacing(4)
+                .align_y(iced::Alignment::Center),
                 text(detail).color(text_secondary).size(9),
             ]
             .spacing(1)
@@ -88,9 +108,12 @@ pub(super) fn timeline_view<'a>(sidebar: &'a Sidebar, timeline: &'a crate::domai
         );
     }
 
-    let header = text(format!("{} eventos (última hora) · clique para abrir a câmera", events.len()))
-        .color(text_color)
-        .size(11);
+    let header = text(format!(
+        "{} eventos (última hora) · clique para abrir a câmera",
+        events.len()
+    ))
+    .color(text_color)
+    .size(11);
 
     column![header, scrollable(event_rows).height(Length::Fill)]
         .width(Length::Fill)

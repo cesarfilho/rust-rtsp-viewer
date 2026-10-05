@@ -16,7 +16,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -142,7 +142,8 @@ impl CameraLogger {
                 let log_dir = inner.log_dir.clone();
                 let label = inner.label.clone();
                 let retention_days = inner.retention_days;
-                if let Err(e) = Self::rotate_inner(inner, &today, &log_dir, &label, retention_days) {
+                if let Err(e) = Self::rotate_inner(inner, &today, &log_dir, &label, retention_days)
+                {
                     eprintln!("camera logger rotation failed: {e}");
                 }
             }
@@ -283,13 +284,18 @@ impl CameraLogger {
                 None => continue,
             };
             let mut parts = stem.rsplitn(4, '-');
-            let (Some(dd), Some(mm), Some(yyyy)) = (parts.next(), parts.next(), parts.next()) else {
+            let (Some(dd), Some(mm), Some(yyyy)) = (parts.next(), parts.next(), parts.next())
+            else {
                 continue;
             };
             let is_date = yyyy.len() == 4
                 && mm.len() == 2
                 && dd.len() == 2
-                && yyyy.bytes().chain(mm.bytes()).chain(dd.bytes()).all(|b| b.is_ascii_digit());
+                && yyyy
+                    .bytes()
+                    .chain(mm.bytes())
+                    .chain(dd.bytes())
+                    .all(|b| b.is_ascii_digit());
             if !is_date {
                 continue;
             }
@@ -388,9 +394,10 @@ pub fn log_path(log_dir: &std::path::Path, label: &str) -> PathBuf {
 fn expand_tilde(path: &std::path::Path) -> PathBuf {
     let s = path.to_string_lossy();
     if let Some(rest) = s.strip_prefix("~/")
-        && let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(rest);
-        }
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join(rest);
+    }
     path.to_path_buf()
 }
 
@@ -446,10 +453,7 @@ mod tests {
 
     #[test]
     fn ensure_dir_creates_missing_dir() {
-        let dir = std::env::temp_dir().join(format!(
-            "rrv-rec-paths-test-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("rrv-rec-paths-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         assert!(!dir.exists());
         ensure_dir(&dir).unwrap();
@@ -459,10 +463,8 @@ mod tests {
 
     #[test]
     fn ensure_dir_rejects_existing_file() {
-        let path = std::env::temp_dir().join(format!(
-            "rrv-rec-paths-test-file-{}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("rrv-rec-paths-test-file-{}", std::process::id()));
         std::fs::write(&path, b"x").unwrap();
         let err = ensure_dir(&path).unwrap_err();
         assert!(err.contains("not a directory"));
@@ -488,7 +490,10 @@ mod tests {
             .filter_map(|e| e.ok())
             .collect();
         assert_eq!(entries.len(), 1, "only the current file should exist");
-        assert_eq!(entries[0].file_name(), std::ffi::OsString::from(format!("{safe}.log")));
+        assert_eq!(
+            entries[0].file_name(),
+            std::ffi::OsString::from(format!("{safe}.log"))
+        );
 
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("day-one-line"));
@@ -527,15 +532,24 @@ mod tests {
 
         // The original path should now hold only the second write.
         let current = fs::read_to_string(&path).unwrap();
-        assert!(current.contains("day-two"), "current file holds post-rotation writes");
-        assert!(!current.contains("day-one"), "pre-rotation content was moved away");
+        assert!(
+            current.contains("day-two"),
+            "current file holds post-rotation writes"
+        );
+        assert!(
+            !current.contains("day-one"),
+            "pre-rotation content was moved away"
+        );
 
         // A rotated file should exist with today's date stamp.
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
         let rotated = dir.join(format!("{safe}-{today}.log"));
         assert!(rotated.exists(), "rotated file should exist at {rotated:?}");
         let rotated_content = fs::read_to_string(&rotated).unwrap();
-        assert!(rotated_content.contains("day-one"), "rotated file holds pre-rotation content");
+        assert!(
+            rotated_content.contains("day-one"),
+            "rotated file holds pre-rotation content"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -591,7 +605,10 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
 
         let safe = safe_filename("Rio Águas Vermelhas");
-        assert!(safe.contains('á'), "test relies on a multibyte stem: {safe}");
+        assert!(
+            safe.contains('á'),
+            "test relies on a multibyte stem: {safe}"
+        );
         let path = dir.join(format!("{safe}.log"));
         let logger = CameraLogger::new(path.clone(), "Rio Águas Vermelhas", 2).unwrap();
         logger.info("seed");
@@ -607,7 +624,10 @@ mod tests {
         logger.info("after-rotation");
         logger.flush();
 
-        assert!(!old_path.exists(), "stale rotated file should have been pruned");
+        assert!(
+            !old_path.exists(),
+            "stale rotated file should have been pruned"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

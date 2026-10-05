@@ -1,15 +1,15 @@
-pub mod style;
-pub mod menu;
-pub mod toolbar;
 pub mod cell_overlay;
-pub mod grid_layout;
 pub mod flex_layout;
+pub mod grid_layout;
+pub mod menu;
 pub mod overlays;
+pub mod style;
+pub mod toolbar;
 
 use iced::alignment::{Horizontal, Vertical};
 use iced::{Element, Length};
 
-use super::app::{App, ViewFocus, TOOLBAR_HEIGHT};
+use super::app::{App, TOOLBAR_HEIGHT, ViewFocus};
 use super::message::{LayoutMode, Message};
 use super::theme::Theme;
 
@@ -55,7 +55,12 @@ pub fn view(app: &App) -> Element<'_, Message> {
             overlays::toast_overlay(app),
             Horizontal::Right,
             Vertical::Bottom,
-            iced::Padding { top: 0.0, right: 8.0, bottom: 32.0, left: 0.0 },
+            iced::Padding {
+                top: 0.0,
+                right: 8.0,
+                bottom: 32.0,
+                left: 0.0,
+            },
         ));
     }
     layers.into()

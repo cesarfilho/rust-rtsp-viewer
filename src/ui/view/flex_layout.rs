@@ -108,17 +108,20 @@ fn zone_editor_layer<'a>(
         .unwrap_or_else(|e| e.into_inner())
         .read_frame();
     let program = crate::ui::zone_editor::ZoneEditorProgram {
-        zones: app.zones.get(idx).map(|c| c.zones.clone()).unwrap_or_default(),
+        zones: app
+            .zones
+            .get(idx)
+            .map(|c| c.zones.clone())
+            .unwrap_or_default(),
         adding_mode: true,
         temp_vertices: edit.temp_vertices.clone(),
         video_width: w as f32,
         video_height: h as f32,
     };
-    crate::ui::zone_editor::zone_editor_widget_element(program)
-        .map(|m| match m {
-            crate::ui::zone_editor::ZoneEditorMessage::VertexAdded(x, y) => Message::ZoneVertex(x, y),
-            crate::ui::zone_editor::ZoneEditorMessage::CloseRequested => Message::ZoneFinish,
-        })
+    crate::ui::zone_editor::zone_editor_widget_element(program).map(|m| match m {
+        crate::ui::zone_editor::ZoneEditorMessage::VertexAdded(x, y) => Message::ZoneVertex(x, y),
+        crate::ui::zone_editor::ZoneEditorMessage::CloseRequested => Message::ZoneFinish,
+    })
 }
 
 /// Hint + actions for the zone editor, pinned to the top of the picture.
@@ -126,7 +129,10 @@ fn zone_editor_bar(edit: &super::super::app::ZoneEdit) -> Element<'_, Message> {
     let hint = if edit.temp_vertices.is_empty() {
         "Clique no vídeo para marcar os cantos da zona".to_string()
     } else {
-        format!("{} ponto(s) · Enter ou clique no 1º ponto conclui", edit.temp_vertices.len())
+        format!(
+            "{} ponto(s) · Enter ou clique no 1º ponto conclui",
+            edit.temp_vertices.len()
+        )
     };
     iced::widget::container(
         iced::widget::row![
@@ -190,10 +196,15 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
 
     let main_idx = app.flex_main_idx.min(app.videos.len().saturating_sub(1));
     let is_main_disabled = !app.camera_enabled.get(main_idx).copied().unwrap_or(true);
-    let is_audio_main = app.audio_states.get(main_idx)
+    let is_audio_main = app
+        .audio_states
+        .get(main_idx)
         .map(|s| s.is_audible())
         .unwrap_or(false);
-    let is_recording_main = app.sidebar.cameras.get(main_idx)
+    let is_recording_main = app
+        .sidebar
+        .cameras
+        .get(main_idx)
         .map(|c| c.status == super::super::sidebar::CameraStatus::Recording)
         .unwrap_or(false);
     let main_border_color = if is_main_disabled {
@@ -205,10 +216,17 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
     } else {
         border_color
     };
-    let main_border_width = if is_main_disabled || is_audio_main || is_recording_main { 2.0 } else { 1.0 };
+    let main_border_width = if is_main_disabled || is_audio_main || is_recording_main {
+        2.0
+    } else {
+        1.0
+    };
 
     let main_cell: iced::widget::Container<'_, Message> = if is_main_disabled {
-        let cam_name = app.sidebar.cameras.get(main_idx)
+        let cam_name = app
+            .sidebar
+            .cameras
+            .get(main_idx)
             .map(|c| c.name.clone())
             .unwrap_or_default();
         iced::widget::container(
@@ -241,20 +259,18 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
             ..iced::widget::container::Style::default()
         })
     } else {
-        iced::widget::container(
-            app.videos[main_idx].view().map(|_| Message::FrameUpdate),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(move |_: &iced::Theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(video_bg)),
-            border: iced::Border {
-                color: main_border_color,
-                width: main_border_width,
-                radius: tile_radius,
-            },
-            ..iced::widget::container::Style::default()
-        })
+        iced::widget::container(app.videos[main_idx].view().map(|_| Message::FrameUpdate))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |_: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(video_bg)),
+                border: iced::Border {
+                    color: main_border_color,
+                    width: main_border_width,
+                    radius: tile_radius,
+                },
+                ..iced::widget::container::Style::default()
+            })
     };
 
     let main: Element<'_, Message> = if is_audio_main {
@@ -266,9 +282,9 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
         )
         .padding(2)
         .style(move |_: &iced::Theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(
-                Theme::color_from_hex(colors.accent_green),
-            )),
+            background: Some(iced::Background::Color(Theme::color_from_hex(
+                colors.accent_green,
+            ))),
             border: iced::Border {
                 radius: 3.0.into(),
                 ..iced::Border::default()
@@ -293,7 +309,9 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
             continue;
         }
         let is_selected = i == main_idx;
-        let is_audio_thumb = app.audio_states.get(i)
+        let is_audio_thumb = app
+            .audio_states
+            .get(i)
             .map(|s| s.is_audible())
             .unwrap_or(false);
         let thumb_border_color = if is_audio_thumb {
@@ -315,33 +333,41 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
             .unwrap_or_else(|e| e.into_inner())
             .capture_frame()
             .is_some();
-        let thumb_pic: Element<'_, Message> = if has_frame || app.active_stream.get(i).copied().unwrap_or(false) {
-            app.videos[i].view().map(move |_| Message::FlexMainSelected(i))
-        } else {
-            let name = app.sidebar.cameras.get(i).map(|c| c.name.clone()).unwrap_or_default();
-            iced::widget::container(
-                iced::widget::text(name)
-                    .size(Theme::TEXT_CAPTION)
-                    .color(Theme::color_from_hex(colors.text_secondary)),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill)
-            .into()
-        };
+        let thumb_pic: Element<'_, Message> =
+            if has_frame || app.active_stream.get(i).copied().unwrap_or(false) {
+                app.videos[i]
+                    .view()
+                    .map(move |_| Message::FlexMainSelected(i))
+            } else {
+                let name = app
+                    .sidebar
+                    .cameras
+                    .get(i)
+                    .map(|c| c.name.clone())
+                    .unwrap_or_default();
+                iced::widget::container(
+                    iced::widget::text(name)
+                        .size(Theme::TEXT_CAPTION)
+                        .color(Theme::color_from_hex(colors.text_secondary)),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .into()
+            };
         let thumb_cell = iced::widget::container(thumb_pic)
-        .width(160.0)
-        .height(90.0)
-        .style(move |_: &iced::Theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(video_bg)),
-            border: iced::Border {
-                color: thumb_border_color,
-                width: thumb_border_width,
-                radius: (Theme::RADIUS_SM).into(),
-            },
-            ..iced::widget::container::Style::default()
-        });
+            .width(160.0)
+            .height(90.0)
+            .style(move |_: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(video_bg)),
+                border: iced::Border {
+                    color: thumb_border_color,
+                    width: thumb_border_width,
+                    radius: (Theme::RADIUS_SM).into(),
+                },
+                ..iced::widget::container::Style::default()
+            });
 
         let thumb_inner: Element<'_, Message> = if is_audio_thumb {
             let badge = iced::widget::container(
@@ -352,9 +378,9 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
             )
             .padding(1)
             .style(move |_: &iced::Theme| iced::widget::container::Style {
-                background: Some(iced::Background::Color(
-                    Theme::color_from_hex(colors.accent_green),
-                )),
+                background: Some(iced::Background::Color(Theme::color_from_hex(
+                    colors.accent_green,
+                ))),
                 border: iced::Border {
                     radius: 2.0.into(),
                     ..iced::Border::default()
@@ -389,7 +415,9 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
         .height(Length::Fill)
         .padding(6)
         .style(move |_: &iced::Theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(Theme::color_from_hex(colors.surface))),
+            background: Some(iced::Background::Color(Theme::color_from_hex(
+                colors.surface,
+            ))),
             border: iced::Border {
                 color: border_color,
                 width: 1.0,

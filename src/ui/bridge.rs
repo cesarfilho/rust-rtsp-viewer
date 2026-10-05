@@ -147,7 +147,10 @@ impl GStreamerBridge {
     /// Attach a per-camera logger. Called once at startup — the bridge
     /// must already exist because `Arc::new(Mutex::new(bridge))` happens
     /// in `new_app`, and we need a strong reference to set the logger.
-    pub fn set_logger(&mut self, logger: Arc<crate::infrastructure::recording_paths::CameraLogger>) {
+    pub fn set_logger(
+        &mut self,
+        logger: Arc<crate::infrastructure::recording_paths::CameraLogger>,
+    ) {
         self.logger = Some(logger);
     }
 
@@ -278,9 +281,10 @@ impl GStreamerBridge {
                 }
                 gst::MessageView::Latency(_latency) => {
                     if let Some(obj) = msg.src()
-                        && let Ok(pl) = obj.clone().downcast::<gst::Pipeline>() {
-                            let _ = pl.recalculate_latency();
-                        }
+                        && let Ok(pl) = obj.clone().downcast::<gst::Pipeline>()
+                    {
+                        let _ = pl.recalculate_latency();
+                    }
                 }
                 gst::MessageView::Qos(qos) => {
                     // Count only. QoS "frames dropped" messages arrive in a
@@ -338,11 +342,12 @@ impl GStreamerBridge {
 
     pub fn query_latency(&self) {
         if let Some(ref pipeline) = self.pipeline
-            && let Some(latency) = pipeline.latency() {
-                self.metrics
-                    .actual_latency_ns
-                    .store(latency.nseconds(), Ordering::Relaxed);
-            }
+            && let Some(latency) = pipeline.latency()
+        {
+            self.metrics
+                .actual_latency_ns
+                .store(latency.nseconds(), Ordering::Relaxed);
+        }
     }
 
     /// Find which video decoder `decodebin` / `uridecodebin3` actually chose
@@ -360,11 +365,15 @@ impl GStreamerBridge {
             self.decoder_scan_done = true;
             return;
         }
-        let Some(ref pipeline) = self.pipeline else { return };
+        let Some(ref pipeline) = self.pipeline else {
+            return;
+        };
         let mut iter = pipeline.iterate_recurse();
         let mut found = None;
         while let Ok(Some(el)) = iter.next() {
-            let Some(factory) = el.factory() else { continue };
+            let Some(factory) = el.factory() else {
+                continue;
+            };
             let klass = factory.metadata("klass").unwrap_or_default();
             if let Some(hw) = crate::domain::metrics::video_decoder_kind(klass) {
                 found = Some((factory.name().to_string(), hw, el.clone()));
@@ -508,9 +517,10 @@ impl GStreamerBridge {
     /// which is reconnecting regardless.
     pub fn stop(&mut self) {
         if self.is_recording()
-            && let Err(e) = self.stop_recording_blocking() {
-                self.camera_log("WARN", &format!("Failed to finalise recording: {e}"));
-            }
+            && let Err(e) = self.stop_recording_blocking()
+        {
+            self.camera_log("WARN", &format!("Failed to finalise recording: {e}"));
+        }
         // A `stop_recording()` issued just before this may still be draining.
         for handle in self.finalisers.drain(..) {
             let _ = handle.join();
@@ -886,7 +896,10 @@ mod tests {
         let bridge = GStreamerBridge::new(640, 480).unwrap();
 
         // Pretend the stream has been running a while and already moved 10 MB.
-        bridge.metrics.bytes_counter.store(10_000_000, Ordering::Relaxed);
+        bridge
+            .metrics
+            .bytes_counter
+            .store(10_000_000, Ordering::Relaxed);
         {
             let mut calc = bridge.fps_calc.lock().unwrap();
             calc.last_bytes = 10_000_000;
@@ -910,7 +923,10 @@ mod tests {
         let bridge = GStreamerBridge::new(640, 480).unwrap();
         // Interval below the 0.5s sampling floor: keep the previous reading
         // rather than dividing by a near-zero elapsed time.
-        bridge.metrics.bytes_counter.store(500_000, Ordering::Relaxed);
+        bridge
+            .metrics
+            .bytes_counter
+            .store(500_000, Ordering::Relaxed);
         assert_eq!(bridge.update_bitrate_kbps(), 0);
     }
 

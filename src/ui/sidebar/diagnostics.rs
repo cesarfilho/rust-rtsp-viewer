@@ -1,5 +1,5 @@
-use iced::{Element, Length};
 use iced::widget::{column, horizontal_rule, row, rule, scrollable, text};
+use iced::{Element, Length};
 
 use crate::domain::diagnostics::Severity;
 use crate::ui::theme::{self, ThemeColors};
@@ -58,9 +58,7 @@ pub(super) fn diagnostics_view(sidebar: &Sidebar, colors: ThemeColors) -> Elemen
             .spacing(2)
             .padding(iced::Padding::from([4, 8]))
             .width(Length::Fill);
-            scrollable(diag_content)
-                .height(Length::Fill)
-                .into()
+            scrollable(diag_content).height(Length::Fill).into()
         } else {
             scrollable(
                 column![text("Câmera não encontrada").color(text_secondary)]

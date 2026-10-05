@@ -294,19 +294,29 @@ mod tests {
         };
         // Zone covering only top-left quadrant (0..0.5, 0..0.5)
         let zone_config = ZoneConfig {
-            zones: vec![MotionZone::new("top-left", vec![
-                Point::new(0.0, 0.0),
-                Point::new(0.5, 0.0),
-                Point::new(0.5, 0.5),
-                Point::new(0.0, 0.5),
-            ])],
+            zones: vec![MotionZone::new(
+                "top-left",
+                vec![
+                    Point::new(0.0, 0.0),
+                    Point::new(0.5, 0.0),
+                    Point::new(0.5, 0.5),
+                    Point::new(0.0, 0.5),
+                ],
+            )],
         };
         // Without zones: ~25% motion detected
         let without = detect_motion(&a, &b, 64, 64, &config, None).unwrap();
-        assert!(without.motion_level > 0.15, "without zones: {}", without.motion_level);
+        assert!(
+            without.motion_level > 0.15,
+            "without zones: {}",
+            without.motion_level
+        );
         // With zone filtering: 0% motion (change is outside the zone)
         let with_zone = detect_motion(&a, &b, 64, 64, &config, Some(&zone_config)).unwrap();
-        assert_eq!(with_zone.changed_pixels, 0, "zone should filter out all changes");
+        assert_eq!(
+            with_zone.changed_pixels, 0,
+            "zone should filter out all changes"
+        );
         assert!(!with_zone.motion_active);
     }
 
@@ -326,15 +336,22 @@ mod tests {
             ..MotionConfig::default()
         };
         let zone_config = ZoneConfig {
-            zones: vec![MotionZone::new("top-left", vec![
-                Point::new(0.0, 0.0),
-                Point::new(0.5, 0.0),
-                Point::new(0.5, 0.5),
-                Point::new(0.0, 0.5),
-            ])],
+            zones: vec![MotionZone::new(
+                "top-left",
+                vec![
+                    Point::new(0.0, 0.0),
+                    Point::new(0.5, 0.0),
+                    Point::new(0.5, 0.5),
+                    Point::new(0.0, 0.5),
+                ],
+            )],
         };
         let result = detect_motion(&a, &b, 64, 64, &config, Some(&zone_config)).unwrap();
-        assert!(result.motion_level > 0.15, "zone should pass motion: {}", result.motion_level);
+        assert!(
+            result.motion_level > 0.15,
+            "zone should pass motion: {}",
+            result.motion_level
+        );
     }
 
     #[test]
@@ -353,12 +370,15 @@ mod tests {
             ..MotionConfig::default()
         };
         let zone_config = ZoneConfig {
-            zones: vec![MotionZone::new("corner", vec![
-                Point::new(0.0, 0.0),
-                Point::new(0.1, 0.0),
-                Point::new(0.1, 0.1),
-                Point::new(0.0, 0.1),
-            ])],
+            zones: vec![MotionZone::new(
+                "corner",
+                vec![
+                    Point::new(0.0, 0.0),
+                    Point::new(0.1, 0.0),
+                    Point::new(0.1, 0.1),
+                    Point::new(0.0, 0.1),
+                ],
+            )],
         };
         let r = detect_motion(&a, &b, 100, 100, &config, Some(&zone_config)).unwrap();
         assert!(r.motion_active, "level {}", r.motion_level);

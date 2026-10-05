@@ -17,21 +17,21 @@ pub fn toast_overlay(app: &App) -> iced::widget::Container<'_, Message> {
             .color(toast_text_color)
             .size(12);
         let card = iced::widget::container(label)
-                .padding(iced::Padding::from([8, 14]))
-                .style(move |_: &iced::Theme| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(toast_bg)),
-                    border: iced::Border {
-                        color: toast_accent,
-                        width: 1.0,
-                        radius: Theme::RADIUS_MD.into(),
-                    },
-                    shadow: iced::Shadow {
-                        color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.4),
-                        offset: iced::Vector::new(0.0, 6.0),
-                        blur_radius: 24.0,
-                    },
-                    ..iced::widget::container::Style::default()
-                });
+            .padding(iced::Padding::from([8, 14]))
+            .style(move |_: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(toast_bg)),
+                border: iced::Border {
+                    color: toast_accent,
+                    width: 1.0,
+                    radius: Theme::RADIUS_MD.into(),
+                },
+                shadow: iced::Shadow {
+                    color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.4),
+                    offset: iced::Vector::new(0.0, 6.0),
+                    blur_radius: 24.0,
+                },
+                ..iced::widget::container::Style::default()
+            });
         let card: Element<'_, Message> = match &toast.open_dir {
             Some(dir) => iced::widget::button(card)
                 .padding(0)
@@ -68,10 +68,16 @@ pub fn help_overlay<'a>(app: &App, main_content: Element<'a, Message>) -> Elemen
     let row = |keys: &'a str, desc: &'a str| {
         iced::widget::row![
             iced::widget::container(
-                iced::widget::text(keys).color(accent).size(12).font(help_font(keys))
+                iced::widget::text(keys)
+                    .color(accent)
+                    .size(12)
+                    .font(help_font(keys))
             )
             .width(120),
-            iced::widget::text(desc).color(primary).size(12).font(help_font(desc)),
+            iced::widget::text(desc)
+                .color(primary)
+                .size(12)
+                .font(help_font(desc)),
         ]
         .spacing(8)
     };
@@ -138,14 +144,17 @@ pub fn context_menu_layer(app: &App) -> Option<Element<'_, Message>> {
     );
     let (x, y) = (origin.x, origin.y);
 
-    Some(
-        super::pinned(
-            super::menu::command_menu(app, Some(ctx.camera_idx)),
-            iced::alignment::Horizontal::Left,
-            iced::alignment::Vertical::Top,
-            iced::Padding { top: y, right: 0.0, bottom: 0.0, left: x },
-        ),
-    )
+    Some(super::pinned(
+        super::menu::command_menu(app, Some(ctx.camera_idx)),
+        iced::alignment::Horizontal::Left,
+        iced::alignment::Vertical::Top,
+        iced::Padding {
+            top: y,
+            right: 0.0,
+            bottom: 0.0,
+            left: x,
+        },
+    ))
 }
 
 /// Tallest the command menu gets (camera section included), used to keep it
@@ -165,7 +174,10 @@ fn menu_origin(anchor: iced::Point, window: iced::Size, w: f32, h: f32) -> iced:
 mod tests {
     use super::*;
 
-    const WIN: iced::Size = iced::Size { width: 1000.0, height: 800.0 };
+    const WIN: iced::Size = iced::Size {
+        width: 1000.0,
+        height: 800.0,
+    };
 
     #[test]
     fn menu_opens_at_the_anchor_when_it_fits() {
@@ -181,13 +193,21 @@ mod tests {
 
     #[test]
     fn menu_larger_than_window_pins_to_origin() {
-        let p = menu_origin(iced::Point::new(10.0, 10.0), iced::Size::new(100.0, 100.0), 256.0, 500.0);
+        let p = menu_origin(
+            iced::Point::new(10.0, 10.0),
+            iced::Size::new(100.0, 100.0),
+            256.0,
+            500.0,
+        );
         assert_eq!((p.x, p.y), (0.0, 0.0));
     }
 
     #[test]
     fn arrow_strings_use_the_embedded_font() {
-        assert_eq!(help_font("\u{2190} / \u{2192}"), super::super::super::icons::FONT);
+        assert_eq!(
+            help_font("\u{2190} / \u{2192}"),
+            super::super::super::icons::FONT
+        );
         assert_eq!(help_font("a \u{2192} b"), super::super::super::icons::FONT);
         assert_eq!(help_font("Tab"), iced::Font::DEFAULT);
     }

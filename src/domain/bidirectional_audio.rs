@@ -52,9 +52,15 @@ pub struct BidirectionalAudioConfigFile {
 impl BidirectionalAudioConfigFile {
     pub fn into_config(self) -> BidirectionalAudioConfig {
         let mut config = BidirectionalAudioConfig::default();
-        if let Some(e) = self.enabled { config.enabled = e; }
-        if let Some(d) = self.device { config.device = Some(d); }
-        if let Some(v) = self.volume { config.volume = v.clamp(0.0, 1.0); }
+        if let Some(e) = self.enabled {
+            config.enabled = e;
+        }
+        if let Some(d) = self.device {
+            config.device = Some(d);
+        }
+        if let Some(v) = self.volume {
+            config.volume = v.clamp(0.0, 1.0);
+        }
         if let Some(enc) = self.encoding {
             config.encoding = match enc.to_lowercase().as_str() {
                 "pcm" => AudioEncoding::Pcm,
@@ -66,8 +72,7 @@ impl BidirectionalAudioConfigFile {
 }
 
 /// Runtime state for bidirectional audio.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MicState {
     /// Microphone is muted.
     #[default]
@@ -75,7 +80,6 @@ pub enum MicState {
     /// Microphone is active (transmitting).
     Active,
 }
-
 
 impl MicState {
     pub fn toggle(self) -> Self {
@@ -140,7 +144,10 @@ mod tests {
 
     #[test]
     fn config_file_volume_clamped() {
-        let f = BidirectionalAudioConfigFile { volume: Some(2.0), ..Default::default() };
+        let f = BidirectionalAudioConfigFile {
+            volume: Some(2.0),
+            ..Default::default()
+        };
         let c = f.into_config();
         assert_eq!(c.volume, 1.0);
     }

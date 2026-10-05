@@ -1,5 +1,5 @@
-use iced::{Element, Length};
 use iced::widget::{button, column, row, text};
+use iced::{Element, Length};
 
 use crate::ui::theme;
 use crate::ui::view::style::{self, Intent};
@@ -17,7 +17,11 @@ impl Sidebar {
                 .padding(iced::Padding::from([5, 6]))
                 .style(style::pill(
                     theme,
-                    if is_active { Intent::Selected } else { Intent::Ghost },
+                    if is_active {
+                        Intent::Selected
+                    } else {
+                        Intent::Ghost
+                    },
                 ))
                 .on_press(Message::TabClicked(view))
         };

@@ -268,7 +268,10 @@ mod tests {
 
     #[test]
     fn validate_accepts_boundary_values() {
-        let mut cfg = AudioConfig { volume: 0.0, ..Default::default() };
+        let mut cfg = AudioConfig {
+            volume: 0.0,
+            ..Default::default()
+        };
         assert!(cfg.validate().is_ok());
         cfg.volume = 1.0;
         assert!(cfg.validate().is_ok());
@@ -276,7 +279,10 @@ mod tests {
 
     #[test]
     fn validate_rejects_negative_volume() {
-        let cfg = AudioConfig { volume: -0.1, ..Default::default() };
+        let cfg = AudioConfig {
+            volume: -0.1,
+            ..Default::default()
+        };
         let err = cfg.validate().unwrap_err();
         assert!(matches!(err, AudioError::Config(_)));
         assert!(err.to_string().contains("volume"));
@@ -284,21 +290,30 @@ mod tests {
 
     #[test]
     fn validate_rejects_above_one_volume() {
-        let cfg = AudioConfig { volume: 1.5, ..Default::default() };
+        let cfg = AudioConfig {
+            volume: 1.5,
+            ..Default::default()
+        };
         let err = cfg.validate().unwrap_err();
         assert!(matches!(err, AudioError::Config(_)));
     }
 
     #[test]
     fn validate_rejects_nan_volume() {
-        let cfg = AudioConfig { volume: f32::NAN, ..Default::default() };
+        let cfg = AudioConfig {
+            volume: f32::NAN,
+            ..Default::default()
+        };
         let err = cfg.validate().unwrap_err();
         assert!(matches!(err, AudioError::Config(_)));
     }
 
     #[test]
     fn validate_rejects_infinite_volume() {
-        let cfg = AudioConfig { volume: f32::INFINITY, ..Default::default() };
+        let cfg = AudioConfig {
+            volume: f32::INFINITY,
+            ..Default::default()
+        };
         let err = cfg.validate().unwrap_err();
         assert!(matches!(err, AudioError::Config(_)));
     }
@@ -327,19 +342,13 @@ mod tests {
     #[test]
     fn unmute_returns_live_with_volume() {
         let s = AudioState::Muted;
-        assert_eq!(
-            s.unmute(600),
-            AudioState::Live { volume_x1000: 600 }
-        );
+        assert_eq!(s.unmute(600), AudioState::Live { volume_x1000: 600 });
     }
 
     #[test]
     fn unmute_clamps_volume_to_max() {
         let s = AudioState::Muted;
-        assert_eq!(
-            s.unmute(1500),
-            AudioState::Live { volume_x1000: 1000 }
-        );
+        assert_eq!(s.unmute(1500), AudioState::Live { volume_x1000: 1000 });
     }
 
     #[test]

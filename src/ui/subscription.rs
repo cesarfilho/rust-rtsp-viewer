@@ -12,9 +12,8 @@ pub fn subscription(_state: &App) -> iced::Subscription<Message> {
     // current focus state is known. Capturing state in this closure would not
     // work: iced identifies a subscription by the closure's type, so a
     // captured flag would go stale the moment it changed.
-    let keyboard = iced::keyboard::on_key_press(|key, modifiers| {
-        Some(Message::KeyPressed(key, modifiers))
-    });
+    let keyboard =
+        iced::keyboard::on_key_press(|key, modifiers| Some(Message::KeyPressed(key, modifiers)));
 
     let frame_tick =
         iced::time::every(std::time::Duration::from_millis(TICK_MS)).map(|_| Message::FrameUpdate);
@@ -23,9 +22,7 @@ pub fn subscription(_state: &App) -> iced::Subscription<Message> {
     // to the very top edge brings back a floating reveal rail. Filtering to
     // `y <= 4.0` here keeps this from firing on every cursor move.
     let pointer_top = iced::event::listen_with(|event, _status, _window| match event {
-        iced::Event::Mouse(iced::mouse::Event::CursorMoved { position })
-            if position.y <= 4.0 =>
-        {
+        iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) if position.y <= 4.0 => {
             Some(Message::RevealChrome)
         }
         _ => None,

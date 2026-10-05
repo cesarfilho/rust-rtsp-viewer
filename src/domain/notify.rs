@@ -14,19 +14,30 @@ pub struct NotifyConfig {
 
 impl Default for NotifyConfig {
     fn default() -> Self {
-        Self { enabled: false, cooldown_secs: DEFAULT_COOLDOWN_SECS }
+        Self {
+            enabled: false,
+            cooldown_secs: DEFAULT_COOLDOWN_SECS,
+        }
     }
 }
 
 /// Title/body for an event worth interrupting the user for; `None` for the rest
 /// (recording start/stop and snapshots are the user's own doing).
-pub fn message_for(kind: EventType, camera: &str, detail: Option<&str>) -> Option<(String, String)> {
+pub fn message_for(
+    kind: EventType,
+    camera: &str,
+    detail: Option<&str>,
+) -> Option<(String, String)> {
     let (title, body) = match kind {
         EventType::Motion => ("Movimento detectado", detail.unwrap_or("")),
         EventType::Offline => ("Câmera offline", "Sem sinal de vídeo"),
         _ => return None,
     };
-    let body = if body.is_empty() { camera.to_string() } else { format!("{camera} · {body}") };
+    let body = if body.is_empty() {
+        camera.to_string()
+    } else {
+        format!("{camera} · {body}")
+    };
     Some((title.to_string(), body))
 }
 

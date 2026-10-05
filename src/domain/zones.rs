@@ -31,7 +31,11 @@ pub struct MotionZone {
 
 impl MotionZone {
     pub fn new(name: impl Into<String>, vertices: Vec<Point>) -> Self {
-        Self { name: name.into(), vertices, enabled: true }
+        Self {
+            name: name.into(),
+            vertices,
+            enabled: true,
+        }
     }
 
     /// Check if a point (in normalized 0..=1 coords) is inside
@@ -120,7 +124,9 @@ impl MotionZoneFile {
     pub fn into_zone(self) -> MotionZone {
         MotionZone {
             name: self.name,
-            vertices: self.vertices.into_iter()
+            vertices: self
+                .vertices
+                .into_iter()
                 .map(|p| Point::new(p.x, p.y))
                 .collect(),
             enabled: self.enabled.unwrap_or(true),
@@ -141,7 +147,9 @@ impl ZoneConfig {
         if !self.has_active() {
             return true;
         }
-        self.zones.iter().any(|z| z.is_active() && z.contains(point))
+        self.zones
+            .iter()
+            .any(|z| z.is_active() && z.contains(point))
     }
 
     /// Whether any zone actually restricts detection. Zones that are disabled
@@ -157,7 +165,8 @@ impl ZoneConfig {
         if self.zones.is_empty() {
             return points.to_vec();
         }
-        points.iter()
+        points
+            .iter()
             .copied()
             .filter(|&(x, y)| self.is_motion_allowed(Point::new(x, y)))
             .collect()
@@ -169,12 +178,15 @@ mod tests {
     use super::*;
 
     fn square_zone() -> MotionZone {
-        MotionZone::new("test", vec![
-            Point::new(0.25, 0.25),
-            Point::new(0.75, 0.25),
-            Point::new(0.75, 0.75),
-            Point::new(0.25, 0.75),
-        ])
+        MotionZone::new(
+            "test",
+            vec![
+                Point::new(0.25, 0.25),
+                Point::new(0.75, 0.25),
+                Point::new(0.75, 0.75),
+                Point::new(0.25, 0.75),
+            ],
+        )
     }
 
     #[test]
@@ -243,18 +255,24 @@ mod tests {
     fn zone_config_multiple_zones() {
         let config = ZoneConfig {
             zones: vec![
-                MotionZone::new("a", vec![
-                    Point::new(0.0, 0.0),
-                    Point::new(0.3, 0.0),
-                    Point::new(0.3, 0.3),
-                    Point::new(0.0, 0.3),
-                ]),
-                MotionZone::new("b", vec![
-                    Point::new(0.7, 0.7),
-                    Point::new(1.0, 0.7),
-                    Point::new(1.0, 1.0),
-                    Point::new(0.7, 1.0),
-                ]),
+                MotionZone::new(
+                    "a",
+                    vec![
+                        Point::new(0.0, 0.0),
+                        Point::new(0.3, 0.0),
+                        Point::new(0.3, 0.3),
+                        Point::new(0.0, 0.3),
+                    ],
+                ),
+                MotionZone::new(
+                    "b",
+                    vec![
+                        Point::new(0.7, 0.7),
+                        Point::new(1.0, 0.7),
+                        Point::new(1.0, 1.0),
+                        Point::new(0.7, 1.0),
+                    ],
+                ),
             ],
         };
         assert!(config.is_motion_allowed(Point::new(0.1, 0.1)));
@@ -286,9 +304,18 @@ mod tests {
 
     #[test]
     fn polygon_area_of_unit_square_and_degenerate_shapes() {
-        let sq = [Point::new(0.0, 0.0), Point::new(1.0, 0.0), Point::new(1.0, 1.0), Point::new(0.0, 1.0)];
+        let sq = [
+            Point::new(0.0, 0.0),
+            Point::new(1.0, 0.0),
+            Point::new(1.0, 1.0),
+            Point::new(0.0, 1.0),
+        ];
         assert!((polygon_area(&sq) - 1.0).abs() < 1e-9);
-        let line = [Point::new(0.1, 0.1), Point::new(0.5, 0.5), Point::new(0.9, 0.9)];
+        let line = [
+            Point::new(0.1, 0.1),
+            Point::new(0.5, 0.5),
+            Point::new(0.9, 0.9),
+        ];
         assert!(polygon_area(&line) < 1e-9);
         assert_eq!(polygon_area(&line[..2]), 0.0);
     }
@@ -298,7 +325,9 @@ mod tests {
         let mut off = square_zone();
         off.enabled = false;
         let two = MotionZone::new("two", vec![Point::new(0.1, 0.1), Point::new(0.2, 0.2)]);
-        let cfg = ZoneConfig { zones: vec![off, two] };
+        let cfg = ZoneConfig {
+            zones: vec![off, two],
+        };
         assert!(!cfg.has_active());
         assert!(cfg.is_motion_allowed(Point::new(0.9, 0.9)));
     }

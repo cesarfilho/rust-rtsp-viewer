@@ -5,14 +5,14 @@ use std::time::{Duration, Instant};
 use gstreamer::prelude::*;
 
 use crate::domain::audio::AudioState;
+use crate::domain::multi_stream::{
+    MultiStreamConfig, StreamQuality, desired_quality, stream_url_for_quality,
+};
 use crate::domain::snapshot::BURST_INTERVAL_MS;
 use crate::domain::timeline::{EventType, TimelineEvent};
 use crate::domain::view;
 use crate::infrastructure::audio::{build_audio_pipeline_for_url, poll_level_bus};
 use crate::infrastructure::reconnect::ReconnectDecision;
-use crate::domain::multi_stream::{
-    desired_quality, stream_url_for_quality, MultiStreamConfig, StreamQuality,
-};
 use crate::infrastructure::view_state::ViewStateFile;
 
 use super::app::PendingBurst;
@@ -57,7 +57,10 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 camera_idx: idx,
                 temp_vertices: Vec::new(),
             });
-            toast(app, "Zonas: clique para marcar os pontos · Enter conclui · Esc sai");
+            toast(
+                app,
+                "Zonas: clique para marcar os pontos · Enter conclui · Esc sai",
+            );
             update(app, Message::EnterSpotlight(idx))
         }
         Message::Noop => Task::none(),
@@ -364,7 +367,10 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::ShowContextMenu(idx) => {
             if idx < app.videos.len() {
                 app.sidebar.selected = Some(idx);
-                app.context_menu = Some(super::state::ContextMenu { camera_idx: idx, anchor: app.pointer_pos });
+                app.context_menu = Some(super::state::ContextMenu {
+                    camera_idx: idx,
+                    anchor: app.pointer_pos,
+                });
             }
             Task::none()
         }
@@ -387,8 +393,8 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
 
 /// Keys that close the (modal) help popup.
 fn is_help_dismiss(key: &iced::keyboard::Key) -> bool {
-    use iced::keyboard::key::Named;
     use iced::keyboard::Key;
+    use iced::keyboard::key::Named;
     matches!(
         key.as_ref(),
         Key::Named(Named::Escape) | Key::Character("?")
@@ -405,8 +411,8 @@ fn handle_key(
     key: iced::keyboard::Key,
     modifiers: iced::keyboard::Modifiers,
 ) -> Task<Message> {
-    use iced::keyboard::key::Named;
     use iced::keyboard::Key;
+    use iced::keyboard::key::Named;
 
     // Quitting is destructive and must never be one stray keystroke away
     // while the user is typing, so it lives behind a modifier.
@@ -478,11 +484,7 @@ fn handle_key(
 
     // Everything below is a bare single-key shortcut. While the search box
     // has the keyboard, those keystrokes belong to it.
-    if app.search_focused
-        || app.zone_edit.is_some()
-        || modifiers.control()
-        || modifiers.alt()
-    {
+    if app.search_focused || app.zone_edit.is_some() || modifiers.control() || modifiers.alt() {
         return Task::none();
     }
 
@@ -527,7 +529,11 @@ fn handle_key(
                 .is_some_and(|ch| ch.is_ascii_digit() && ch != '0') =>
         {
             // Guard above guarantees a 1-9 digit; `map_or` keeps this panic-free.
-            let n = c.chars().next().and_then(|ch| ch.to_digit(10)).map_or(0, |d| d as usize);
+            let n = c
+                .chars()
+                .next()
+                .and_then(|ch| ch.to_digit(10))
+                .map_or(0, |d| d as usize);
             update(app, Message::SelectCamera(n.saturating_sub(1)))
         }
         _ => Task::none(),
@@ -545,7 +551,10 @@ fn shutdown(app: &mut App) {
     for bridge in &app.bridges {
         // Blocking: the process is about to exit, so any recording must be
         // finalised now rather than on a thread that won't survive.
-        bridge.lock().unwrap_or_else(|e| e.into_inner()).stop_blocking();
+        bridge
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .stop_blocking();
     }
 }
 
@@ -571,7 +580,8 @@ fn finish_zone(app: &mut App) {
     let vertices = std::mem::take(&mut edit.temp_vertices);
     if let Some(cfg) = app.zones.get_mut(idx) {
         let name = format!("Zona {}", cfg.zones.len() + 1);
-        cfg.zones.push(crate::domain::zones::MotionZone::new(name, vertices));
+        cfg.zones
+            .push(crate::domain::zones::MotionZone::new(name, vertices));
     }
     persist_zones(app, idx);
     toast(app, "Zona salva");
@@ -586,7 +596,11 @@ fn undo_zone(app: &mut App) {
         return;
     }
     let idx = edit.camera_idx;
-    if app.zones.get_mut(idx).is_some_and(|c| c.zones.pop().is_some()) {
+    if app
+        .zones
+        .get_mut(idx)
+        .is_some_and(|c| c.zones.pop().is_some())
+    {
         persist_zones(app, idx);
     }
 }
@@ -830,7 +844,10 @@ fn camera_config_for(app: &App, i: usize) -> Option<crate::config::CameraConfig>
 /// The stream camera `i` should be on given what is on screen.
 fn wanted_quality(app: &App, i: usize) -> StreamQuality {
     let current = app.stream_quality.get(i).copied().unwrap_or_default();
-    let has_sub = app.camera_configs.get(i).is_some_and(|c| c.sub_url.is_some());
+    let has_sub = app
+        .camera_configs
+        .get(i)
+        .is_some_and(|c| c.sub_url.is_some());
     if !has_sub {
         return StreamQuality::Main;
     }
@@ -1116,8 +1133,13 @@ fn update_frame(app: &mut App) -> Task<Message> {
                 .unwrap_or(false);
 
             let backoff_due = app.backoff_states[i].is_due();
-            let decision =
-                app.reconnect_states[i].tick(is_live, is_uridecodebin, Some(fps), backoff_due, &cam_label);
+            let decision = app.reconnect_states[i].tick(
+                is_live,
+                is_uridecodebin,
+                Some(fps),
+                backoff_due,
+                &cam_label,
+            );
 
             if is_live && fps > 0.0 && matches!(decision, ReconnectDecision::None) {
                 app.backoff_states[i].record_success();
@@ -1198,13 +1220,14 @@ fn update_frame(app: &mut App) -> Task<Message> {
             app.vu_peaks[i] = raw_level;
             app.vu_peak_since[i] = Some(Instant::now());
         } else if let Some(peak_time) = app.vu_peak_since[i]
-            && peak_time.elapsed().as_millis() > VU_PEAK_DECAY_MS {
-                app.vu_peaks[i] *= 0.95;
-                if app.vu_peaks[i] < 0.01 {
-                    app.vu_peaks[i] = 0.0;
-                    app.vu_peak_since[i] = None;
-                }
+            && peak_time.elapsed().as_millis() > VU_PEAK_DECAY_MS
+        {
+            app.vu_peaks[i] *= 0.95;
+            if app.vu_peaks[i] < 0.01 {
+                app.vu_peaks[i] = 0.0;
+                app.vu_peak_since[i] = None;
             }
+        }
     }
 
     // `app.is_recording` drives the toolbar Stop button and the grid REC badge
@@ -1217,7 +1240,13 @@ fn update_frame(app: &mut App) -> Task<Message> {
         .and_then(|i| {
             let enabled = *app.camera_enabled.get(i)?;
             let bridge = app.bridges.get(i)?;
-            Some(enabled && bridge.lock().unwrap_or_else(|e| e.into_inner()).is_recording())
+            Some(
+                enabled
+                    && bridge
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .is_recording(),
+            )
         })
         .unwrap_or(false);
 
@@ -1249,10 +1278,9 @@ fn reconnect_camera(app: &mut App, i: usize, cam_label: &str) {
         bridge.stop();
         match bridge.start_from_config(&cam_config) {
             Ok(()) => {
-                if was_recording
-                    && let Err(e) = bridge.start_recording() {
-                        log::warn!("[{}] Could not resume recording: {}", cam_label, e);
-                    }
+                if was_recording && let Err(e) = bridge.start_recording() {
+                    log::warn!("[{}] Could not resume recording: {}", cam_label, e);
+                }
                 (true, was_recording)
             }
             Err(e) => {
@@ -1319,11 +1347,7 @@ fn update_selected_metrics(app: &mut App) {
         reconnects: m.reconnect_count.load(Ordering::Relaxed),
         last_reconnect_ms: {
             let dur = m.last_reconnect_duration_ms.load(Ordering::Relaxed);
-            if dur > 0 {
-                Some(dur)
-            } else {
-                None
-            }
+            if dur > 0 { Some(dur) } else { None }
         },
         frames: m.frame_count.load(Ordering::Relaxed),
         bytes: m.bytes_counter.load(Ordering::Relaxed),
@@ -1426,9 +1450,10 @@ fn encode_and_write_snapshot(job: SnapshotJob) -> Result<std::path::PathBuf, Str
     std::fs::create_dir_all(&job.dir)
         .map_err(|e| format!("cannot create {}: {e}", job.dir.display()))?;
 
-    let path = job
-        .dir
-        .join(crate::domain::snapshot::generate_filename(job.timestamp, job.sequence));
+    let path = job.dir.join(crate::domain::snapshot::generate_filename(
+        job.timestamp,
+        job.sequence,
+    ));
 
     let mut png_bytes: Vec<u8> = Vec::new();
     image::codecs::png::PngEncoder::new_with_quality(
@@ -1619,12 +1644,10 @@ fn drive_motion_recording(app: &mut App, i: usize) {
     );
     match action {
         crate::domain::recording::MotionRecAction::None => {}
-        crate::domain::recording::MotionRecAction::Start => {
-            match toggle_camera_recording(app, i) {
-                Ok(_) => app.auto_recording[i] = true,
-                Err(e) => log::warn!("Motion recording could not start on camera {i}: {e}"),
-            }
-        }
+        crate::domain::recording::MotionRecAction::Start => match toggle_camera_recording(app, i) {
+            Ok(_) => app.auto_recording[i] = true,
+            Err(e) => log::warn!("Motion recording could not start on camera {i}: {e}"),
+        },
         crate::domain::recording::MotionRecAction::Stop => {
             if let Err(e) = toggle_camera_recording(app, i) {
                 log::warn!("Motion recording could not stop on camera {i}: {e}");
@@ -1686,7 +1709,12 @@ fn update_audio(app: &mut App) -> Task<Message> {
             .unwrap_or(app.audio_config.volume)
             .clamp(0.0, 1.0);
         let vol_x1000 = ((vol_x1000 * 1000.0) as u32).max(1);
-        (AudioState::Live { volume_x1000: vol_x1000 }, vol_x1000)
+        (
+            AudioState::Live {
+                volume_x1000: vol_x1000,
+            },
+            vol_x1000,
+        )
     } else {
         old_state.toggle()
     };
@@ -1769,12 +1797,16 @@ fn update_sidebar(app: &mut App, msg: super::sidebar::Message) -> Task<Message> 
         }
         super::sidebar::Message::ShowRowMenu(idx) => {
             app.sidebar.selected = Some(idx);
-            app.context_menu = Some(super::state::ContextMenu { camera_idx: idx, anchor: app.pointer_pos });
+            app.context_menu = Some(super::state::ContextMenu {
+                camera_idx: idx,
+                anchor: app.pointer_pos,
+            });
         }
         super::sidebar::Message::ToggleInfoAdvanced => {
             app.sidebar.info_advanced = !app.sidebar.info_advanced;
         }
-        super::sidebar::Message::CameraMovedUp(idx) | super::sidebar::Message::CameraMovedDown(idx) => {
+        super::sidebar::Message::CameraMovedUp(idx)
+        | super::sidebar::Message::CameraMovedDown(idx) => {
             if matches!(msg, super::sidebar::Message::CameraMovedUp(_)) {
                 view::move_up(&mut app.view.order, idx);
             } else {
@@ -1829,8 +1861,8 @@ mod tests {
 
     #[test]
     fn help_closes_on_escape_or_question_mark_only() {
-        use iced::keyboard::key::Named;
         use iced::keyboard::Key;
+        use iced::keyboard::key::Named;
         assert!(is_help_dismiss(&Key::Named(Named::Escape)));
         assert!(is_help_dismiss(&Key::Character("?".into())));
         for other in ["f", "s", "r", "h", "1"] {

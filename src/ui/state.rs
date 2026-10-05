@@ -90,7 +90,10 @@ impl BackoffState {
         let attempt = self.consecutive_failures;
         Some(match self.next_attempt {
             Some(t) => {
-                let secs = t.saturating_duration_since(Instant::now()).as_secs_f32().ceil() as u64;
+                let secs = t
+                    .saturating_duration_since(Instant::now())
+                    .as_secs_f32()
+                    .ceil() as u64;
                 if secs == 0 {
                     format!("tentativa {attempt} · reconectando agora")
                 } else {
@@ -111,7 +114,11 @@ impl BackoffState {
 
 pub fn is_expired(toast: &Toast) -> bool {
     // Clickable toasts stay up longer so there is time to aim at them.
-    let ttl = if toast.open_dir.is_some() { TOAST_DURATION_SECS * 2 } else { TOAST_DURATION_SECS };
+    let ttl = if toast.open_dir.is_some() {
+        TOAST_DURATION_SECS * 2
+    } else {
+        TOAST_DURATION_SECS
+    };
     toast.shown_at.elapsed().as_secs() >= ttl
 }
 
@@ -132,7 +139,10 @@ mod tests {
         let d = b.status_detail().unwrap();
         assert!(d.starts_with("tentativa 2 · próxima em "), "{d}");
         b.next_attempt = Some(Instant::now() - std::time::Duration::from_secs(1));
-        assert_eq!(b.status_detail().unwrap(), "tentativa 2 · reconectando agora");
+        assert_eq!(
+            b.status_detail().unwrap(),
+            "tentativa 2 · reconectando agora"
+        );
     }
 
     #[test]
@@ -224,7 +234,9 @@ mod tests {
             let delay = b.next_attempt.unwrap().duration_since(Instant::now());
             // Never longer than the ceiling, never a zero-delay storm.
             assert!(delay <= std::time::Duration::from_secs(BACKOFF_MAX_SECS + 1));
-            assert!(delay >= std::time::Duration::from_secs(1) - std::time::Duration::from_millis(50));
+            assert!(
+                delay >= std::time::Duration::from_secs(1) - std::time::Duration::from_millis(50)
+            );
             // Once the exponential has climbed past the cap it stays pinned.
             if n > BACKOFF_MAX_SHIFT + 1 {
                 assert!(delay >= std::time::Duration::from_secs(BACKOFF_MAX_SECS - 1));
@@ -253,13 +265,19 @@ mod tests {
 
         assert!(is_expired(&t));
 
-        let clickable = Toast { open_dir: Some("/tmp".into()), ..t };
+        let clickable = Toast {
+            open_dir: Some("/tmp".into()),
+            ..t
+        };
         assert!(!is_expired(&clickable));
     }
 
     #[test]
     fn context_menu_holds_camera_idx() {
-        let cm = ContextMenu { camera_idx: 3, anchor: iced::Point::new(10.0, 20.0) };
+        let cm = ContextMenu {
+            camera_idx: 3,
+            anchor: iced::Point::new(10.0, 20.0),
+        };
         assert_eq!(cm.camera_idx, 3);
         assert_eq!(cm.anchor, iced::Point::new(10.0, 20.0));
     }

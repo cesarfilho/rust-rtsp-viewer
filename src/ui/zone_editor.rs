@@ -98,7 +98,9 @@ impl canvas::Program<ZoneEditorMessage> for ZoneEditorProgram {
             }
             frame.stroke(
                 &line.build(),
-                canvas::Stroke::default().with_color(orange(0.9)).with_width(2.0),
+                canvas::Stroke::default()
+                    .with_color(orange(0.9))
+                    .with_width(2.0),
             );
 
             let closable = self.temp_vertices.len() >= 3
@@ -110,7 +112,9 @@ impl canvas::Program<ZoneEditorMessage> for ZoneEditorProgram {
             if closable {
                 frame.stroke(
                     &canvas::Path::circle(pts[0], CLOSE_RADIUS),
-                    canvas::Stroke::default().with_color(Color::WHITE).with_width(1.5),
+                    canvas::Stroke::default()
+                        .with_color(Color::WHITE)
+                        .with_width(1.5),
                 );
             }
         }
@@ -120,8 +124,10 @@ impl canvas::Program<ZoneEditorMessage> for ZoneEditorProgram {
             if !zone.enabled || zone.vertices.is_empty() {
                 continue;
             }
-            let cx: f64 = zone.vertices.iter().map(|v| v.x).sum::<f64>() / zone.vertices.len() as f64;
-            let cy: f64 = zone.vertices.iter().map(|v| v.y).sum::<f64>() / zone.vertices.len() as f64;
+            let cx: f64 =
+                zone.vertices.iter().map(|v| v.x).sum::<f64>() / zone.vertices.len() as f64;
+            let cy: f64 =
+                zone.vertices.iter().map(|v| v.y).sum::<f64>() / zone.vertices.len() as f64;
             let pt = normalized_to_pixel(ZonePoint::new(cx, cy), area);
             frame.fill_text(canvas::Text {
                 content: zone.name.clone(),
@@ -230,7 +236,9 @@ fn pixel_to_normalized(p: Point, area: Rectangle) -> ZonePoint {
 /// Emits [`ZoneEditorMessage`] rather than the application's own `Message`,
 /// so the caller decides how to fold it in (`.map(...)`) and this module
 /// stays independent of the app's message enum.
-pub fn zone_editor_widget_element(program: ZoneEditorProgram) -> Element<'static, ZoneEditorMessage> {
+pub fn zone_editor_widget_element(
+    program: ZoneEditorProgram,
+) -> Element<'static, ZoneEditorMessage> {
     iced::widget::canvas(program)
         .width(Length::Fill)
         .height(Length::Fill)

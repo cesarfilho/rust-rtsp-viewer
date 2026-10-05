@@ -1,17 +1,17 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crate::domain::codec;
-use crate::domain::metrics::{Metrics, MAX_PENDING_DECODES};
-use crate::domain::recording::{generate_filename, Container};
+use crate::domain::metrics::{MAX_PENDING_DECODES, Metrics};
+use crate::domain::recording::{Container, generate_filename};
 use crate::domain::redact::mask_credentials;
 use crate::infrastructure::launch::quote_launch_value;
 use crate::infrastructure::recording_paths::ensure_recording_dir;
 
 use super::bridge::{
-    ema_update, now_unix_secs, sample_image_quality_rgba, GStreamerBridge, RecordingBranch,
-    EMA_ALPHA_X1000, SAMPLE_EVERY_N,
+    EMA_ALPHA_X1000, GStreamerBridge, RecordingBranch, SAMPLE_EVERY_N, ema_update, now_unix_secs,
+    sample_image_quality_rgba,
 };
 
 use gstreamer as gst;
@@ -77,9 +77,10 @@ fn insert_tee(pipeline: &gst::Pipeline) -> Result<(), String> {
 
     // Disconnect capsfilter → appsink before splicing the tee in.
     if let Some(filter_src) = capsfilter.static_pad("src")
-        && let Some(sink_peer) = filter_src.peer() {
-            let _ = filter_src.unlink(&sink_peer);
-        }
+        && let Some(sink_peer) = filter_src.peer()
+    {
+        let _ = filter_src.unlink(&sink_peer);
+    }
 
     capsfilter
         .link(&tee)
@@ -113,13 +114,15 @@ fn install_decode_time_probes(pipeline: &gst::Pipeline, metrics: &Arc<Metrics>) 
         pad.add_probe(gst::PadProbeType::BUFFER, move |_pad, info| {
             if let Some(gst::PadProbeData::Buffer(ref buf)) = info.data
                 && let Some(pts) = buf.pts()
-                    && let Ok(mut map) = m.pending_decode_starts.lock() {
-                        if map.len() >= MAX_PENDING_DECODES
-                            && let Some(&k) = map.keys().next() {
-                                map.remove(&k);
-                            }
-                        map.insert(pts.nseconds(), m.mono_ns());
-                    }
+                && let Ok(mut map) = m.pending_decode_starts.lock()
+            {
+                if map.len() >= MAX_PENDING_DECODES
+                    && let Some(&k) = map.keys().next()
+                {
+                    map.remove(&k);
+                }
+                map.insert(pts.nseconds(), m.mono_ns());
+            }
             gst::PadProbeReturn::Ok
         });
     }
@@ -128,18 +131,18 @@ fn install_decode_time_probes(pipeline: &gst::Pipeline, metrics: &Arc<Metrics>) 
         let m = metrics.clone();
         pad.add_probe(gst::PadProbeType::BUFFER, move |_pad, info| {
             if let Some(gst::PadProbeData::Buffer(ref buf)) = info.data
-                && let Some(pts) = buf.pts() {
-                    let now = m.mono_ns();
-                    if let Ok(mut map) = m.pending_decode_starts.lock()
-                        && let Some(start_ns) = map.remove(&pts.nseconds()) {
-                            let dt_us = now.saturating_sub(start_ns) / 1_000;
-                            let prev = m.decode_time_us_ema.load(Ordering::Relaxed);
-                            m.decode_time_us_ema.store(
-                                ema_update(prev, dt_us, EMA_ALPHA_X1000),
-                                Ordering::Relaxed,
-                            );
-                        }
+                && let Some(pts) = buf.pts()
+            {
+                let now = m.mono_ns();
+                if let Ok(mut map) = m.pending_decode_starts.lock()
+                    && let Some(start_ns) = map.remove(&pts.nseconds())
+                {
+                    let dt_us = now.saturating_sub(start_ns) / 1_000;
+                    let prev = m.decode_time_us_ema.load(Ordering::Relaxed);
+                    m.decode_time_us_ema
+                        .store(ema_update(prev, dt_us, EMA_ALPHA_X1000), Ordering::Relaxed);
                 }
+            }
             gst::PadProbeReturn::Ok
         });
     }
@@ -162,7 +165,9 @@ fn setup_appsink(pipeline: &gst::Pipeline, bridge: &mut GStreamerBridge) -> Resu
             .new_sample(move |appsink| {
                 let sample = appsink.pull_sample().map_err(|_| gst::FlowError::Error)?;
                 let gst_buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
-                let map = gst_buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
+                let map = gst_buffer
+                    .map_readable()
+                    .map_err(|_| gst::FlowError::Error)?;
                 let caps = sample.caps().ok_or(gst::FlowError::Error)?;
                 let structure = caps.structure(0).ok_or(gst::FlowError::Error)?;
                 let w = structure.get::<i32>("width").unwrap_or(0) as u32;
@@ -212,9 +217,7 @@ fn setup_appsink(pipeline: &gst::Pipeline, bridge: &mut GStreamerBridge) -> Resu
                         _ => None,
                     };
                     let sample_ns = match expected_ns {
-                        Some(exp) => {
-                            delta_ns.abs_diff(exp)
-                        }
+                        Some(exp) => delta_ns.abs_diff(exp),
                         None => delta_ns,
                     };
                     let prev = metrics.jitter_ema_ns.load(Ordering::Relaxed);
@@ -247,82 +250,84 @@ fn setup_appsink(pipeline: &gst::Pipeline, bridge: &mut GStreamerBridge) -> Resu
         let pl_pipeline = pipeline.downgrade();
         pad.add_probe(gst::PadProbeType::EVENT_DOWNSTREAM, move |_pad, info| {
             if let Some(gst::PadProbeData::Event(ref ev)) = info.data
-                && let gst::EventView::Caps(caps_ev) = ev.view() {
-                    let caps = caps_ev.caps();
-                    if let Some(s) = caps.structure(0) {
-                        let mut si = metrics
-                            .stream_info
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
-                        if si.width.is_none()
-                            && let Ok(w) = s.get::<i32>("width") {
-                                si.width = Some(w);
-                            }
-                        if si.height.is_none()
-                            && let Ok(h) = s.get::<i32>("height") {
-                                si.height = Some(h);
-                            }
-                        if si.framerate_num.is_none()
-                            && let Ok(fr) = s.get::<gst::Fraction>("framerate")
-                                && fr.denom() != 0 {
-                                    si.framerate_num = Some(fr.numer());
-                                    si.framerate_den = Some(fr.denom());
-                                }
-                        if si.codec.is_none() && si.parsed_codec.is_none() {
-                            if let Some(parsed) = codec::from_caps(&caps.to_owned()) {
-                                si.parsed_codec = Some(parsed);
-                            }
-                            if let Some(pl) = pl_pipeline.upgrade() {
-                                let mut iter = pl.iterate_recurse();
-                                loop {
-                                    match iter.next() {
-                                        Ok(Some(el)) => {
-                                            let factory = el
-                                                .factory()
-                                                .map(|f| f.name().to_string())
-                                                .unwrap_or_default();
-                                            let name = el.name();
-                                            let detected = if name.as_str().contains("h264parse")
-                                                || factory.contains("h264parse")
-                                            {
-                                                Some("H.264")
-                                            } else if name.as_str().contains("h265parse")
-                                                || factory.contains("h265parse")
-                                            {
-                                                Some("H.265")
-                                            } else if factory == "avdec_h264" {
-                                                Some("H.264")
-                                            } else if factory == "avdec_h265" {
-                                                Some("H.265")
-                                            } else if factory.contains("vp8")
-                                                && factory.contains("dec")
-                                            {
-                                                Some("VP8")
-                                            } else if factory.contains("vp9")
-                                                && factory.contains("dec")
-                                            {
-                                                Some("VP9")
-                                            } else if factory.contains("jpeg")
-                                                && factory.contains("dec")
-                                            {
-                                                Some("MJPEG")
-                                            } else {
-                                                None
-                                            };
-                                            if let Some(c) = detected {
-                                                si.codec = Some(c.into());
-                                                break;
-                                            }
+                && let gst::EventView::Caps(caps_ev) = ev.view()
+            {
+                let caps = caps_ev.caps();
+                if let Some(s) = caps.structure(0) {
+                    let mut si = metrics
+                        .stream_info
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    if si.width.is_none()
+                        && let Ok(w) = s.get::<i32>("width")
+                    {
+                        si.width = Some(w);
+                    }
+                    if si.height.is_none()
+                        && let Ok(h) = s.get::<i32>("height")
+                    {
+                        si.height = Some(h);
+                    }
+                    if si.framerate_num.is_none()
+                        && let Ok(fr) = s.get::<gst::Fraction>("framerate")
+                        && fr.denom() != 0
+                    {
+                        si.framerate_num = Some(fr.numer());
+                        si.framerate_den = Some(fr.denom());
+                    }
+                    if si.codec.is_none() && si.parsed_codec.is_none() {
+                        if let Some(parsed) = codec::from_caps(&caps.to_owned()) {
+                            si.parsed_codec = Some(parsed);
+                        }
+                        if let Some(pl) = pl_pipeline.upgrade() {
+                            let mut iter = pl.iterate_recurse();
+                            loop {
+                                match iter.next() {
+                                    Ok(Some(el)) => {
+                                        let factory = el
+                                            .factory()
+                                            .map(|f| f.name().to_string())
+                                            .unwrap_or_default();
+                                        let name = el.name();
+                                        let detected = if name.as_str().contains("h264parse")
+                                            || factory.contains("h264parse")
+                                        {
+                                            Some("H.264")
+                                        } else if name.as_str().contains("h265parse")
+                                            || factory.contains("h265parse")
+                                        {
+                                            Some("H.265")
+                                        } else if factory == "avdec_h264" {
+                                            Some("H.264")
+                                        } else if factory == "avdec_h265" {
+                                            Some("H.265")
+                                        } else if factory.contains("vp8") && factory.contains("dec")
+                                        {
+                                            Some("VP8")
+                                        } else if factory.contains("vp9") && factory.contains("dec")
+                                        {
+                                            Some("VP9")
+                                        } else if factory.contains("jpeg")
+                                            && factory.contains("dec")
+                                        {
+                                            Some("MJPEG")
+                                        } else {
+                                            None
+                                        };
+                                        if let Some(c) = detected {
+                                            si.codec = Some(c.into());
+                                            break;
                                         }
-                                        Ok(None) => break,
-                                        Err(gst::IteratorError::Resync) => iter.resync(),
-                                        Err(gst::IteratorError::Error) => break,
                                     }
+                                    Ok(None) => break,
+                                    Err(gst::IteratorError::Resync) => iter.resync(),
+                                    Err(gst::IteratorError::Error) => break,
                                 }
                             }
                         }
                     }
                 }
+            }
             gst::PadProbeReturn::Ok
         });
     }
@@ -399,13 +404,21 @@ impl GStreamerBridge {
                 "max-size-time",
                 self.recording_config.max_segment_duration_secs as u64 * 1_000_000_000,
             )
-            .property("max-size-bytes", self.recording_config.max_segment_size_bytes)
+            .property(
+                "max-size-bytes",
+                self.recording_config.max_segment_size_bytes,
+            )
             .property("send-keyframe-requests", true)
             .property("muxer", &muxer)
             .build()
             .map_err(|e| format!("Failed to create splitmuxsink: {e}"))?;
 
-        let elements = vec![queue.clone(), convert.clone(), encoder.clone(), sink.clone()];
+        let elements = vec![
+            queue.clone(),
+            convert.clone(),
+            encoder.clone(),
+            sink.clone(),
+        ];
         for el in &elements {
             pipeline
                 .add(el)
@@ -421,9 +434,7 @@ impl GStreamerBridge {
                 .link(&encoder)
                 .map_err(|e| format!("rec_convert → encoder link failed: {e}"))?;
 
-            let enc_src = encoder
-                .static_pad("src")
-                .ok_or("encoder has no src pad")?;
+            let enc_src = encoder.static_pad("src").ok_or("encoder has no src pad")?;
             let mux_pad = sink
                 .request_pad_simple("video")
                 .ok_or("splitmuxsink refused a video pad")?;
@@ -436,9 +447,10 @@ impl GStreamerBridge {
             let flag = eos_seen.clone();
             mux_pad.add_probe(gst::PadProbeType::EVENT_DOWNSTREAM, move |_pad, info| {
                 if let Some(gst::PadProbeData::Event(ref ev)) = info.data
-                    && ev.type_() == gst::EventType::Eos {
-                        flag.store(true, Ordering::Relaxed);
-                    }
+                    && ev.type_() == gst::EventType::Eos
+                {
+                    flag.store(true, Ordering::Relaxed);
+                }
                 gst::PadProbeReturn::Ok
             });
 
@@ -596,12 +608,19 @@ impl GStreamerBridge {
              ! appsink name=display_sink sync=true emit-signals=true max-buffers=2 drop=true",
             quote_launch_value(url),
             latency_ms,
-            if do_retransmission { " do-retransmission=true" } else { "" },
+            if do_retransmission {
+                " do-retransmission=true"
+            } else {
+                ""
+            },
             named_decoder(decoder),
             POSTDEC_QUEUE,
         );
 
-        self.camera_log("INFO", &format!("RTSP pipeline: {}", mask_credentials(&pipeline_str)));
+        self.camera_log(
+            "INFO",
+            &format!("RTSP pipeline: {}", mask_credentials(&pipeline_str)),
+        );
 
         let pipeline = gst::parse_launch(&pipeline_str)
             .map_err(|e| {
@@ -667,7 +686,10 @@ impl GStreamerBridge {
             quote_launch_value(url),
         );
 
-        self.camera_log("INFO", &format!("HLS pipeline: {}", mask_credentials(&pipeline_str)));
+        self.camera_log(
+            "INFO",
+            &format!("HLS pipeline: {}", mask_credentials(&pipeline_str)),
+        );
 
         let pipeline = gst::parse_launch(&pipeline_str)
             .map_err(|e| format!("HLS pipeline parse error: {e}"))?
@@ -780,7 +802,10 @@ impl GStreamerBridge {
             POSTDEC_QUEUE,
         );
 
-        self.camera_log("INFO", &format!("File pipeline: {}", mask_credentials(&pipeline_str)));
+        self.camera_log(
+            "INFO",
+            &format!("File pipeline: {}", mask_credentials(&pipeline_str)),
+        );
 
         let pipeline = gst::parse_launch(&pipeline_str)
             .map_err(|e| format!("File pipeline parse error: {e}"))?
@@ -809,10 +834,7 @@ mod tests {
 
     #[test]
     fn quotes_plain_url() {
-        assert_eq!(
-            quote_launch_value("rtsp://cam/live"),
-            "\"rtsp://cam/live\""
-        );
+        assert_eq!(quote_launch_value("rtsp://cam/live"), "\"rtsp://cam/live\"");
     }
 
     #[test]
@@ -1067,7 +1089,10 @@ mod tests {
             .filter(|p| p.extension().is_some_and(|x| x == "mkv"))
             .collect();
         assert_eq!(segments.len(), 1, "got {segments:?}");
-        assert!(file_is_playable(&segments[0]), "segment truncated by early stop()");
+        assert!(
+            file_is_playable(&segments[0]),
+            "segment truncated by early stop()"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

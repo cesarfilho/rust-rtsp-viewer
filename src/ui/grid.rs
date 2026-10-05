@@ -28,14 +28,19 @@ pub const MIN_CELL_WIDTH: f32 = 200.0;
 /// than collapsing to a single tall column of letterbox slivers.
 pub fn calc_grid(camera_count: usize, window_width: f32, available_height: f32) -> GridInfo {
     if camera_count == 0 {
-        return GridInfo { cols: 0, rows: 0, cell_width: 0.0, cell_height: 0.0 };
+        return GridInfo {
+            cols: 0,
+            rows: 0,
+            cell_width: 0.0,
+            cell_height: 0.0,
+        };
     }
 
     let max_cols = ((window_width / MIN_CELL_WIDTH).floor() as usize).max(1);
 
     // Balanced fallback, used only if the search below finds nothing valid.
-    let mut best_cols = ((camera_count as f32).sqrt().ceil() as usize)
-        .clamp(1, max_cols.min(camera_count));
+    let mut best_cols =
+        ((camera_count as f32).sqrt().ceil() as usize).clamp(1, max_cols.min(camera_count));
     let mut best_rows = camera_count.div_ceil(best_cols);
     let mut best_empty = camera_count; // worst case: every slot is empty
     let mut best_aspect_diff = f32::INFINITY;
@@ -80,15 +85,29 @@ mod tests {
     fn invariant_fits(n: usize, w: f32, h: f32) {
         let g = calc_grid(n, w, h);
         assert!(g.cols * g.rows >= n, "n={n}: {}×{} < {}", g.cols, g.rows, n);
-        assert!((g.cols as f32 * g.cell_width - w).abs() < 1.0, "n={n}: cols*cell_w={:.1} != {}", g.cols as f32 * g.cell_width, w);
-        assert!((g.rows as f32 * g.cell_height - h).abs() < 1.0, "n={n}: rows*cell_h={:.1} != {}", g.rows as f32 * g.cell_height, h);
+        assert!(
+            (g.cols as f32 * g.cell_width - w).abs() < 1.0,
+            "n={n}: cols*cell_w={:.1} != {}",
+            g.cols as f32 * g.cell_width,
+            w
+        );
+        assert!(
+            (g.rows as f32 * g.cell_height - h).abs() < 1.0,
+            "n={n}: rows*cell_h={:.1} != {}",
+            g.rows as f32 * g.cell_height,
+            h
+        );
     }
 
     /// Helper: every cell must be at least MIN_CELL_WIDTH on the short side,
     /// and every camera in the grid gets the same cell size.
     fn invariant_equal_sized(n: usize, w: f32, h: f32) {
         let g = calc_grid(n, w, h);
-        assert!(g.cell_width >= MIN_CELL_WIDTH, "n={n}: cell_w={}", g.cell_width);
+        assert!(
+            g.cell_width >= MIN_CELL_WIDTH,
+            "n={n}: cell_w={}",
+            g.cell_width
+        );
     }
 
     #[test]
@@ -209,7 +228,16 @@ mod tests {
     fn eleven_cameras_joinville_scenario() {
         // 11 cameras at 1280×720 (the default window size minus toolbar/sidebar).
         let grid = calc_grid(11, 1280.0, 660.0);
-        assert!(grid.cols * grid.rows >= 11, "grid {}×{} must fit 11 cameras", grid.cols, grid.rows);
-        assert!(grid.cell_width >= MIN_CELL_WIDTH, "cell_w={}", grid.cell_width);
+        assert!(
+            grid.cols * grid.rows >= 11,
+            "grid {}×{} must fit 11 cameras",
+            grid.cols,
+            grid.rows
+        );
+        assert!(
+            grid.cell_width >= MIN_CELL_WIDTH,
+            "cell_w={}",
+            grid.cell_width
+        );
     }
 }

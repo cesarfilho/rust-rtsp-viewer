@@ -77,7 +77,6 @@ pub enum Container {
     Mp4,
 }
 
-
 impl Container {
     /// File extension (without the dot).
     pub fn extension(self) -> &'static str {
@@ -164,7 +163,9 @@ pub fn motion_recording_action(
 ) -> MotionRecAction {
     if motion_active && !is_recording {
         MotionRecAction::Start
-    } else if is_recording && auto_started && !motion_active
+    } else if is_recording
+        && auto_started
+        && !motion_active
         && secs_since_motion >= u64::from(post_roll_secs)
     {
         MotionRecAction::Stop
@@ -211,9 +212,7 @@ impl RecordingConfig {
     /// at `RecordingSession::start` time.
     pub fn validate(&self) -> Result<(), RecordingError> {
         if self.dir.as_os_str().is_empty() {
-            return Err(RecordingError::Config(
-                "output directory is empty".into(),
-            ));
+            return Err(RecordingError::Config("output directory is empty".into()));
         }
         if self.max_segment_duration_secs < 10 {
             return Err(RecordingError::Config(format!(
@@ -249,8 +248,7 @@ impl RecordingConfig {
 /// recording state and the time at which the current
 /// recording started (so the UI can show elapsed
 /// time).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum RecordingState {
     /// Not recording. The `r` key transitions to
     /// `Recording`.
@@ -267,7 +265,6 @@ pub enum RecordingState {
     },
 }
 
-
 impl RecordingState {
     /// True if the state machine is currently in
     /// `Recording`. The `is_recording()` getter on
@@ -281,20 +278,14 @@ impl RecordingState {
     /// Returns the new state on success, or
     /// `RecordingError::InvalidState` if a recording
     /// is already in progress.
-    pub fn start(
-        &self,
-        path: PathBuf,
-        now_unix_secs: u64,
-    ) -> Result<Self, RecordingError> {
+    pub fn start(&self, path: PathBuf, now_unix_secs: u64) -> Result<Self, RecordingError> {
         match self {
             Self::Idle => Ok(Self::Recording {
                 path,
                 started_at_unix_secs: now_unix_secs,
                 segment_index: 0,
             }),
-            Self::Recording { .. } => {
-                Err(RecordingError::InvalidState("already recording"))
-            }
+            Self::Recording { .. } => Err(RecordingError::InvalidState("already recording")),
         }
     }
 
@@ -378,9 +369,10 @@ impl ToggleOutcome {
 pub fn elapsed_secs(state: &RecordingState, now_unix_secs: u64) -> u64 {
     match state {
         RecordingState::Idle => 0,
-        RecordingState::Recording { started_at_unix_secs, .. } => {
-            now_unix_secs.saturating_sub(*started_at_unix_secs)
-        }
+        RecordingState::Recording {
+            started_at_unix_secs,
+            ..
+        } => now_unix_secs.saturating_sub(*started_at_unix_secs),
     }
 }
 
@@ -423,11 +415,7 @@ pub fn humanize_bytes_binary(bytes: u64) -> String {
 /// as `snapshot::generate_filename` (single source
 /// of truth would be cleaner — TODO if a 3rd caller
 /// appears).
-pub fn generate_filename(
-    timestamp_unix_secs: u64,
-    sequence: u32,
-    container: Container,
-) -> String {
+pub fn generate_filename(timestamp_unix_secs: u64, sequence: u32, container: Container) -> String {
     let (y, mo, d, h, mi, s) = unix_secs_to_ymdhms(timestamp_unix_secs);
     format!(
         "rust-rtsp-viewer-{:04}-{:02}-{:02}-{:02}{:02}{:02}-{:03}.{}",
@@ -540,8 +528,6 @@ pub fn now_unix_secs() -> u64 {
         .unwrap_or(0)
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,23 +536,38 @@ mod tests {
 
     #[test]
     fn motion_starts_recording_when_idle() {
-        assert_eq!(motion_recording_action(false, false, true, 0, 15), MotionRecAction::Start);
+        assert_eq!(
+            motion_recording_action(false, false, true, 0, 15),
+            MotionRecAction::Start
+        );
     }
 
     #[test]
     fn motion_stops_only_after_post_roll() {
-        assert_eq!(motion_recording_action(true, true, false, 14, 15), MotionRecAction::None);
-        assert_eq!(motion_recording_action(true, true, false, 15, 15), MotionRecAction::Stop);
+        assert_eq!(
+            motion_recording_action(true, true, false, 14, 15),
+            MotionRecAction::None
+        );
+        assert_eq!(
+            motion_recording_action(true, true, false, 15, 15),
+            MotionRecAction::Stop
+        );
     }
 
     #[test]
     fn motion_never_stops_a_manual_recording() {
-        assert_eq!(motion_recording_action(true, false, false, 999, 15), MotionRecAction::None);
+        assert_eq!(
+            motion_recording_action(true, false, false, 999, 15),
+            MotionRecAction::None
+        );
     }
 
     #[test]
     fn motion_keeps_recording_while_active() {
-        assert_eq!(motion_recording_action(true, true, true, 999, 15), MotionRecAction::None);
+        assert_eq!(
+            motion_recording_action(true, true, true, 999, 15),
+            MotionRecAction::None
+        );
     }
 
     #[test]
@@ -601,7 +602,10 @@ mod tests {
 
     #[test]
     fn validate_rejects_empty_dir() {
-        let cfg = RecordingConfig { dir: PathBuf::new(), ..Default::default() };
+        let cfg = RecordingConfig {
+            dir: PathBuf::new(),
+            ..Default::default()
+        };
         let err = cfg.validate().unwrap_err();
         assert!(matches!(err, RecordingError::Config(_)));
         assert!(err.to_string().contains("empty"));
@@ -609,7 +613,10 @@ mod tests {
 
     #[test]
     fn validate_rejects_tiny_segment_duration() {
-        let cfg = RecordingConfig { max_segment_duration_secs: 5, ..Default::default() };
+        let cfg = RecordingConfig {
+            max_segment_duration_secs: 5,
+            ..Default::default()
+        };
         let err = cfg.validate().unwrap_err();
         assert!(matches!(err, RecordingError::Config(_)));
         assert!(err.to_string().contains("duration"));
@@ -617,14 +624,20 @@ mod tests {
 
     #[test]
     fn validate_rejects_huge_segment_duration() {
-        let cfg = RecordingConfig { max_segment_duration_secs: 86_401, ..Default::default() };
+        let cfg = RecordingConfig {
+            max_segment_duration_secs: 86_401,
+            ..Default::default()
+        };
         let err = cfg.validate().unwrap_err();
         assert!(matches!(err, RecordingError::Config(_)));
     }
 
     #[test]
     fn validate_rejects_tiny_segment_size() {
-        let cfg = RecordingConfig { max_segment_size_bytes: 1024, ..Default::default() };
+        let cfg = RecordingConfig {
+            max_segment_size_bytes: 1024,
+            ..Default::default()
+        };
         let err = cfg.validate().unwrap_err();
         assert!(matches!(err, RecordingError::Config(_)));
         assert!(err.to_string().contains("size"));
@@ -632,7 +645,10 @@ mod tests {
 
     #[test]
     fn validate_rejects_huge_segment_size() {
-        let cfg = RecordingConfig { max_segment_size_bytes: 32 * 1024 * 1024 * 1024, ..Default::default() };
+        let cfg = RecordingConfig {
+            max_segment_size_bytes: 32 * 1024 * 1024 * 1024,
+            ..Default::default()
+        };
         let err = cfg.validate().unwrap_err();
         assert!(matches!(err, RecordingError::Config(_)));
     }
@@ -685,9 +701,7 @@ mod tests {
             started_at_unix_secs: 0,
             segment_index: 0,
         };
-        let err = s
-            .start(PathBuf::from("/tmp/r2.mkv"), 0)
-            .unwrap_err();
+        let err = s.start(PathBuf::from("/tmp/r2.mkv"), 0).unwrap_err();
         assert_eq!(err, RecordingError::InvalidState("already recording"));
     }
 
@@ -733,7 +747,11 @@ mod tests {
         };
         let outcome = s.toggle(PathBuf::from("/tmp/x"), 0).unwrap();
         match outcome {
-            ToggleOutcome::Stopped { new_state, finalised_path, .. } => {
+            ToggleOutcome::Stopped {
+                new_state,
+                finalised_path,
+                ..
+            } => {
                 assert_eq!(new_state, RecordingState::Idle);
                 assert_eq!(finalised_path, PathBuf::from("/tmp/r.mkv"));
             }
@@ -805,7 +823,10 @@ mod tests {
     #[test]
     fn test_recording_config_defaults() {
         let cfg = RecordingConfig::default();
-        assert_eq!(cfg.max_segment_duration_secs, DEFAULT_MAX_SEGMENT_DURATION_SECS);
+        assert_eq!(
+            cfg.max_segment_duration_secs,
+            DEFAULT_MAX_SEGMENT_DURATION_SECS
+        );
         assert_eq!(cfg.max_segment_size_bytes, DEFAULT_MAX_SEGMENT_SIZE_BYTES);
         assert_eq!(cfg.container, Container::Mkv);
         assert!(!cfg.dir.as_os_str().is_empty());
@@ -876,5 +897,4 @@ mod tests {
         // now = 65s after start → 00:01:05
         assert_eq!(render_status(&s, 65), "● REC  00:01:05  segment 003");
     }
-
 }

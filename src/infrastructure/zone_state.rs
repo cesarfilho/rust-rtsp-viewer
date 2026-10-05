@@ -102,14 +102,22 @@ mod tests {
     use crate::domain::zones::{MotionZone, Point};
 
     fn tmp_path(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("rrv-zones-{}-{}/zones.toml", std::process::id(), name))
+        std::env::temp_dir().join(format!(
+            "rrv-zones-{}-{}/zones.toml",
+            std::process::id(),
+            name
+        ))
     }
 
     fn square() -> ZoneConfig {
         ZoneConfig {
             zones: vec![MotionZone::new(
                 "Entrada",
-                vec![Point::new(0.1, 0.1), Point::new(0.9, 0.1), Point::new(0.5, 0.9)],
+                vec![
+                    Point::new(0.1, 0.1),
+                    Point::new(0.9, 0.1),
+                    Point::new(0.5, 0.9),
+                ],
             )],
         }
     }

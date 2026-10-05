@@ -83,7 +83,8 @@ mod tests {
 
     #[test]
     fn masks_inside_a_full_pipeline_string() {
-        let pipeline = "rtspsrc name=source location=\"rtsp://admin:pw@cam/live\" latency=100 ! decodebin";
+        let pipeline =
+            "rtspsrc name=source location=\"rtsp://admin:pw@cam/live\" latency=100 ! decodebin";
         assert_eq!(
             mask_credentials(pipeline),
             "rtspsrc name=source location=\"rtsp://admin:***@cam/live\" latency=100 ! decodebin"

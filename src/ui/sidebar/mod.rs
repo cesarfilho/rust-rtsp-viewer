@@ -1,9 +1,9 @@
+pub(super) mod cameras;
+pub(super) mod diagnostics;
+pub(super) mod info;
+pub(super) mod timeline;
 pub mod types;
 pub mod view;
-pub(super) mod cameras;
-pub(super) mod info;
-pub(super) mod diagnostics;
-pub(super) mod timeline;
 
 pub use types::*;
 

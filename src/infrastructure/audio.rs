@@ -33,14 +33,14 @@
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use gstreamer as gst;
 use gst::prelude::*;
+use gstreamer as gst;
 
 use log::{info, warn};
 
+use crate::domain::audio::{AudioConfig, AudioState, format_volume, volume_to_x1000};
 use crate::domain::redact::mask_credentials;
 use crate::infrastructure::launch::quote_launch_value;
-use crate::domain::audio::{format_volume, volume_to_x1000, AudioConfig, AudioState};
 
 /// Element name. The `AudioController` looks this element up by name in
 /// whichever pipeline it is given — the dedicated audio-only pipeline built
@@ -124,9 +124,10 @@ pub fn poll_level_bus(pipeline: &gst::Pipeline, level_state: &AudioLevelState) {
             break;
         };
         if let gst::MessageView::Element(e) = msg.view()
-            && let Some(s) = e.structure() {
-                apply_level_structure(s, level_state);
-            }
+            && let Some(s) = e.structure()
+        {
+            apply_level_structure(s, level_state);
+        }
     }
 }
 
@@ -153,7 +154,11 @@ pub fn build_audio_pipeline(url: &str, volume: f32) -> Option<gst::Pipeline> {
     let pipeline = match gst::parse_launch(&pipeline_str) {
         Ok(el) => el.downcast::<gst::Pipeline>().ok()?,
         Err(e) => {
-            warn!("Audio pipeline parse error for {}: {}", mask_credentials(url), mask_credentials(&e.to_string()));
+            warn!(
+                "Audio pipeline parse error for {}: {}",
+                mask_credentials(url),
+                mask_credentials(&e.to_string())
+            );
             return None;
         }
     };
@@ -208,7 +213,11 @@ fn build_http_audio_pipeline(url: &str, volume: f32) -> Option<gst::Pipeline> {
     let pipeline = match gst::parse_launch(&pipeline_str) {
         Ok(el) => el.downcast::<gst::Pipeline>().ok()?,
         Err(e) => {
-            warn!("HTTP audio pipeline parse error for {}: {}", mask_credentials(url), mask_credentials(&e.to_string()));
+            warn!(
+                "HTTP audio pipeline parse error for {}: {}",
+                mask_credentials(url),
+                mask_credentials(&e.to_string())
+            );
             return None;
         }
     };
@@ -225,9 +234,15 @@ fn build_http_audio_pipeline(url: &str, volume: f32) -> Option<gst::Pipeline> {
             if !is_audio {
                 return;
             }
-            let Some(pl) = pipeline_weak.upgrade() else { return };
-            let Some(conv) = pl.by_name("audio_convert") else { return };
-            let Some(sink) = conv.static_pad("sink") else { return };
+            let Some(pl) = pipeline_weak.upgrade() else {
+                return;
+            };
+            let Some(conv) = pl.by_name("audio_convert") else {
+                return;
+            };
+            let Some(sink) = conv.static_pad("sink") else {
+                return;
+            };
             if let Err(e) = pad.link(&sink) {
                 warn!("HTTP audio pad link failed: {:?}", e);
             }
@@ -259,7 +274,9 @@ impl AudioController {
             if config.volume == 0.0 {
                 AudioState::Muted
             } else {
-                AudioState::Live { volume_x1000: volume_to_x1000(config.volume) }
+                AudioState::Live {
+                    volume_x1000: volume_to_x1000(config.volume),
+                }
             }
         } else {
             AudioState::Muted
@@ -344,7 +361,9 @@ impl AudioController {
         let new_state = if v == 0.0 {
             AudioState::Muted
         } else {
-            AudioState::Live { volume_x1000: volume_to_x1000(v) }
+            AudioState::Live {
+                volume_x1000: volume_to_x1000(v),
+            }
         };
         {
             let mut state = self.state.borrow_mut();
@@ -392,7 +411,6 @@ mod tests {
         pipeline
     }
 
-
     #[test]
     fn new_controller_with_enabled_config_starts_audible() {
         // Default config (enabled, volume 0.8)
@@ -401,7 +419,10 @@ mod tests {
         let pipeline = build_volume_pipeline();
         let ctrl = AudioController::new(
             pipeline,
-            AudioConfig { enabled: true, volume: 0.8 },
+            AudioConfig {
+                enabled: true,
+                volume: 0.8,
+            },
         );
         assert!(ctrl.is_audible());
         assert_eq!(
@@ -418,7 +439,10 @@ mod tests {
         let pipeline = build_volume_pipeline();
         let ctrl = AudioController::new(
             pipeline,
-            AudioConfig { enabled: false, volume: 0.8 },
+            AudioConfig {
+                enabled: false,
+                volume: 0.8,
+            },
         );
         assert!(!ctrl.is_audible());
         assert_eq!(ctrl.state(), crate::domain::audio::AudioState::Muted);
@@ -432,7 +456,10 @@ mod tests {
         let pipeline = build_volume_pipeline();
         let ctrl = AudioController::new(
             pipeline,
-            AudioConfig { enabled: true, volume: 0.0 },
+            AudioConfig {
+                enabled: true,
+                volume: 0.0,
+            },
         );
         assert!(!ctrl.is_audible());
         assert_eq!(ctrl.state(), crate::domain::audio::AudioState::Muted);
@@ -445,7 +472,10 @@ mod tests {
         let pipeline = build_volume_pipeline();
         let ctrl = AudioController::new(
             pipeline,
-            AudioConfig { enabled: false, volume: 0.8 },
+            AudioConfig {
+                enabled: false,
+                volume: 0.8,
+            },
         );
         let new_state = ctrl.toggle_mute();
         assert!(new_state.is_audible());
@@ -460,7 +490,10 @@ mod tests {
         let pipeline = build_volume_pipeline();
         let ctrl = AudioController::new(
             pipeline,
-            AudioConfig { enabled: true, volume: 0.6 },
+            AudioConfig {
+                enabled: true,
+                volume: 0.6,
+            },
         );
         let new_state = ctrl.toggle_mute();
         assert!(!new_state.is_audible());
@@ -473,7 +506,10 @@ mod tests {
         let pipeline = build_volume_pipeline();
         let ctrl = AudioController::new(
             pipeline,
-            AudioConfig { enabled: false, volume: 0.8 },
+            AudioConfig {
+                enabled: false,
+                volume: 0.8,
+            },
         );
         assert!(!ctrl.state().is_audible());
         let _ = ctrl.toggle_mute();
@@ -491,7 +527,10 @@ mod tests {
         let pipeline = gst::Pipeline::new(None);
         let ctrl = AudioController::new(
             pipeline,
-            AudioConfig { enabled: true, volume: 0.8 },
+            AudioConfig {
+                enabled: true,
+                volume: 0.8,
+            },
         );
         let new_state = ctrl.toggle_mute();
         // The state still toggles (it's
@@ -518,7 +557,10 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(50));
         let ctrl = AudioController::new(
             pipeline.clone(),
-            AudioConfig { enabled: true, volume: 0.8 },
+            AudioConfig {
+                enabled: true,
+                volume: 0.8,
+            },
         );
         // Mute.
         let _ = ctrl.toggle_mute();

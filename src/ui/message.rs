@@ -1,5 +1,5 @@
-use super::theme::Theme;
 use super::sidebar;
+use super::theme::Theme;
 
 pub use crate::domain::view::GridMode;
 

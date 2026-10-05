@@ -149,15 +149,28 @@ mod tests {
     use super::*;
 
     fn cfg(pause: u32, warmup: u32) -> SmartStreamingConfig {
-        SmartStreamingConfig { enabled: true, pause_after_secs: pause, warmup_frames: warmup }
+        SmartStreamingConfig {
+            enabled: true,
+            pause_after_secs: pause,
+            warmup_frames: warmup,
+        }
     }
 
     #[test]
     fn disabled_config_always_continues() {
         let mut state = StreamingState::default();
-        let config = SmartStreamingConfig { enabled: false, ..Default::default() };
-        assert_eq!(evaluate_streaming(&mut state, true, &config, 0), StreamingDecision::Continue);
-        assert_eq!(evaluate_streaming(&mut state, false, &config, 0), StreamingDecision::Continue);
+        let config = SmartStreamingConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            evaluate_streaming(&mut state, true, &config, 0),
+            StreamingDecision::Continue
+        );
+        assert_eq!(
+            evaluate_streaming(&mut state, false, &config, 0),
+            StreamingDecision::Continue
+        );
     }
 
     #[test]
@@ -172,7 +185,10 @@ mod tests {
         evaluate_streaming(&mut state, true, &config, 0);
         // Should still be decoding (timer reset)
         for _ in 0..9 {
-            assert_eq!(evaluate_streaming(&mut state, false, &config, 0), StreamingDecision::Continue);
+            assert_eq!(
+                evaluate_streaming(&mut state, false, &config, 0),
+                StreamingDecision::Continue
+            );
         }
     }
 
@@ -181,9 +197,15 @@ mod tests {
         let mut state = StreamingState::default();
         let config = cfg(3, 5);
         for _ in 0..2 {
-            assert_eq!(evaluate_streaming(&mut state, false, &config, 0), StreamingDecision::Continue);
+            assert_eq!(
+                evaluate_streaming(&mut state, false, &config, 0),
+                StreamingDecision::Continue
+            );
         }
-        assert_eq!(evaluate_streaming(&mut state, false, &config, 0), StreamingDecision::PauseDecoder);
+        assert_eq!(
+            evaluate_streaming(&mut state, false, &config, 0),
+            StreamingDecision::PauseDecoder
+        );
     }
 
     #[test]
@@ -195,7 +217,10 @@ mod tests {
         evaluate_streaming(&mut state, false, &config, 0);
         assert_eq!(state.phase, Phase::Paused);
         // Motion resumes
-        assert_eq!(evaluate_streaming(&mut state, true, &config, 0), StreamingDecision::ResumeDecoder);
+        assert_eq!(
+            evaluate_streaming(&mut state, true, &config, 0),
+            StreamingDecision::ResumeDecoder
+        );
         assert_eq!(state.phase, Phase::WarmingUp);
     }
 
@@ -208,10 +233,19 @@ mod tests {
         evaluate_streaming(&mut state, false, &config, 0);
         evaluate_streaming(&mut state, true, &config, 0);
         // Warmup: frames 0, 1 still warming
-        assert_eq!(evaluate_streaming(&mut state, false, &config, 0), StreamingDecision::ResumeDecoder);
-        assert_eq!(evaluate_streaming(&mut state, false, &config, 1), StreamingDecision::ResumeDecoder);
+        assert_eq!(
+            evaluate_streaming(&mut state, false, &config, 0),
+            StreamingDecision::ResumeDecoder
+        );
+        assert_eq!(
+            evaluate_streaming(&mut state, false, &config, 1),
+            StreamingDecision::ResumeDecoder
+        );
         // Frame 3 = warmup done → Continue
-        assert_eq!(evaluate_streaming(&mut state, false, &config, 3), StreamingDecision::Continue);
+        assert_eq!(
+            evaluate_streaming(&mut state, false, &config, 3),
+            StreamingDecision::Continue
+        );
     }
 
     #[test]
@@ -220,15 +254,18 @@ mod tests {
         let config = cfg(1, 5);
         evaluate_streaming(&mut state, false, &config, 0);
         assert_eq!(state.phase, Phase::Paused);
-        assert_eq!(evaluate_streaming(&mut state, false, &config, 0), StreamingDecision::PauseDecoder);
+        assert_eq!(
+            evaluate_streaming(&mut state, false, &config, 0),
+            StreamingDecision::PauseDecoder
+        );
     }
 
     #[test]
     fn config_file_clamps_values() {
         let f = SmartStreamingConfigFile {
             enabled: Some(true),
-            pause_after_secs: Some(0),   // below min
-            warmup_frames: Some(100),    // above max
+            pause_after_secs: Some(0), // below min
+            warmup_frames: Some(100),  // above max
         };
         let c = f.into_config();
         assert_eq!(c.pause_after_secs, 5);

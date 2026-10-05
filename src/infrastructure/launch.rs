@@ -25,6 +25,9 @@ mod tests {
 
     #[test]
     fn keeps_ampersand_and_bang_inside_quotes() {
-        assert_eq!(quote_launch_value("http://h/p?a=1&b=2!x"), "\"http://h/p?a=1&b=2!x\"");
+        assert_eq!(
+            quote_launch_value("http://h/p?a=1&b=2!x"),
+            "\"http://h/p?a=1&b=2!x\""
+        );
     }
 }

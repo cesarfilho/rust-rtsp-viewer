@@ -51,7 +51,11 @@ impl Hint {
     /// `diagnose` functions below.
     #[allow(dead_code)]
     pub fn new(metric: &'static str, severity: Severity, cause: &'static str) -> Self {
-        Self { metric, severity, cause }
+        Self {
+            metric,
+            severity,
+            cause,
+        }
     }
 }
 
@@ -130,21 +134,22 @@ pub fn diagnose(m: &Metrics) -> Vec<Hint> {
     // --- Packet loss ---
     let pkt = m.snapshot_packet_stats();
     if pkt.available
-        && let Some(pct) = pkt.loss_pct() {
-            if pct > 1.0 {
-                out.push(Hint {
-                    metric: "Loss",
-                    severity: Severity::Critical,
-                    cause: "Wi-Fi/MTU — testar com cabo ou reduzir bitrate",
-                });
-            } else if pct > 0.1 {
-                out.push(Hint {
-                    metric: "Loss",
-                    severity: Severity::Warning,
-                    cause: "perda de pacotes — verificar interferência",
-                });
-            }
+        && let Some(pct) = pkt.loss_pct()
+    {
+        if pct > 1.0 {
+            out.push(Hint {
+                metric: "Loss",
+                severity: Severity::Critical,
+                cause: "Wi-Fi/MTU — testar com cabo ou reduzir bitrate",
+            });
+        } else if pct > 0.1 {
+            out.push(Hint {
+                metric: "Loss",
+                severity: Severity::Warning,
+                cause: "perda de pacotes — verificar interferência",
+            });
         }
+    }
 
     // --- Decoder errors ---
     let dec_errs = m.decode_errors.load(std::sync::atomic::Ordering::Relaxed);
@@ -182,13 +187,14 @@ pub fn diagnose(m: &Metrics) -> Vec<Hint> {
 
     // --- Image quality: scene is static for a long time ---
     if let Some(s) = m.snapshot_static_secs(now_unix_secs())
-        && s > 300 {
-            out.push(Hint {
-                metric: "Stale",
-                severity: Severity::Warning,
-                cause: "cena parada > 5min — câmera travada ou cena realmente parada?",
-            });
-        }
+        && s > 300
+    {
+        out.push(Hint {
+            metric: "Stale",
+            severity: Severity::Warning,
+            cause: "cena parada > 5min — câmera travada ou cena realmente parada?",
+        });
+    }
 
     // --- Image quality: night scene (item 6) ---
     //
@@ -206,14 +212,14 @@ pub fn diagnose(m: &Metrics) -> Vec<Hint> {
     // urgent than `Night` and we don't want to double-flag).
     if let Some(luma) = m.snapshot_recent_avg_luma(now_unix_secs(), NIGHT_SAMPLE_MAX_AGE_SECS)
         && luma < NIGHT_LUMA_THRESHOLD
-            && m.frame_count.load(std::sync::atomic::Ordering::Relaxed) > 0
-        {
-            out.push(Hint {
-                metric: "Night",
-                severity: Severity::Degraded,
-                cause: night_cause(luma),
-            });
-        }
+        && m.frame_count.load(std::sync::atomic::Ordering::Relaxed) > 0
+    {
+        out.push(Hint {
+            metric: "Night",
+            severity: Severity::Degraded,
+            cause: night_cause(luma),
+        });
+    }
 
     // --- Image quality: tamper detection (item 7) ---
     //
@@ -236,21 +242,22 @@ pub fn diagnose(m: &Metrics) -> Vec<Hint> {
     //   * no recent luma sample exists (we'd be guessing)
     if let Some(luma) = m.snapshot_recent_avg_luma(now_unix_secs(), TAMPER_SAMPLE_MAX_AGE_SECS)
         && let Some(static_secs) = m.snapshot_static_secs(now_unix_secs())
-            && static_secs >= TAMPER_STATIC_SECS {
-                if luma <= TAMPER_LUMA_LO {
-                    out.push(Hint {
-                        metric: "Tamper",
-                        severity: Severity::Warning,
-                        cause: tamper_covered_cause(luma, static_secs),
-                    });
-                } else if luma >= TAMPER_LUMA_HI {
-                    out.push(Hint {
-                        metric: "Tamper",
-                        severity: Severity::Warning,
-                        cause: tamper_blinded_cause(luma, static_secs),
-                    });
-                }
-            }
+        && static_secs >= TAMPER_STATIC_SECS
+    {
+        if luma <= TAMPER_LUMA_LO {
+            out.push(Hint {
+                metric: "Tamper",
+                severity: Severity::Warning,
+                cause: tamper_covered_cause(luma, static_secs),
+            });
+        } else if luma >= TAMPER_LUMA_HI {
+            out.push(Hint {
+                metric: "Tamper",
+                severity: Severity::Warning,
+                cause: tamper_blinded_cause(luma, static_secs),
+            });
+        }
+    }
 
     out.sort_by_key(|h| std::cmp::Reverse(h.severity));
     out
@@ -336,9 +343,7 @@ fn tamper_covered_cause(luma: u8, static_secs: u64) -> &'static str {
         _ => "5min+",
     };
     match (intensity, dur) {
-        ("fully covered", "~30s") => {
-            "câmera coberta (luma ≤ 2/255) há ~30s — verificar obstrução"
-        }
+        ("fully covered", "~30s") => "câmera coberta (luma ≤ 2/255) há ~30s — verificar obstrução",
         ("fully covered", "~1min") => {
             "câmera coberta (luma ≤ 2/255) há ~1min — verificar obstrução"
         }
@@ -348,9 +353,7 @@ fn tamper_covered_cause(luma: u8, static_secs: u64) -> &'static str {
         ("fully covered", "~3min") => {
             "câmera coberta (luma ≤ 2/255) há ~3min — verificar obstrução"
         }
-        ("fully covered", "5min+") => {
-            "câmera coberta (luma ≤ 2/255) há 5min+ — vandalismo?"
-        }
+        ("fully covered", "5min+") => "câmera coberta (luma ≤ 2/255) há 5min+ — vandalismo?",
         ("covered", "~30s") => "cena muito escura (luma ≤ 5/255) há ~30s — verificar cobertura",
         ("covered", "~1min") => "cena muito escura (luma ≤ 5/255) há ~1min — verificar cobertura",
         ("covered", "~2min") => "cena muito escura (luma ≤ 5/255) há ~2min — verificar cobertura",
@@ -385,7 +388,11 @@ fn tamper_blinded_cause(_luma: u8, static_secs: u64) -> &'static str {
 /// Kept public for tests and potential external callers; in production the
 /// overlay derives severity inline from the hints vec.
 pub fn overall_severity(m: &Metrics) -> Severity {
-    diagnose(m).iter().map(|h| h.severity).max().unwrap_or(Severity::Healthy)
+    diagnose(m)
+        .iter()
+        .map(|h| h.severity)
+        .max()
+        .unwrap_or(Severity::Healthy)
 }
 
 /// 60% of the negotiated framerate. Below this we consider the decoder
@@ -453,7 +460,11 @@ mod tests {
             ..Default::default()
         };
         let hints = diagnose(&m);
-        assert!(hints.iter().any(|h| h.metric == "Loss" && h.cause.contains("Wi-Fi")));
+        assert!(
+            hints
+                .iter()
+                .any(|h| h.metric == "Loss" && h.cause.contains("Wi-Fi"))
+        );
         assert_eq!(overall_severity(&m), Severity::Critical);
     }
 
@@ -506,7 +517,10 @@ mod tests {
         m.jitter_ema_ns
             .store(60_000_000, std::sync::atomic::Ordering::Relaxed);
         let hints = diagnose(&m);
-        let jit = hints.iter().find(|h| h.metric == "Jit").expect("jitter hint");
+        let jit = hints
+            .iter()
+            .find(|h| h.metric == "Jit")
+            .expect("jitter hint");
         assert_eq!(jit.severity, Severity::Warning);
     }
 
@@ -514,7 +528,8 @@ mod tests {
     fn decode_errors_counted() {
         let m = fresh();
         m.is_live.store(true, std::sync::atomic::Ordering::Relaxed);
-        m.decode_errors.store(1, std::sync::atomic::Ordering::Relaxed);
+        m.decode_errors
+            .store(1, std::sync::atomic::Ordering::Relaxed);
         assert!(diagnose(&m).iter().any(|h| h.metric == "DecE"));
     }
 
@@ -522,7 +537,8 @@ mod tests {
     fn many_reconnects_are_critical() {
         let m = fresh();
         m.is_live.store(true, std::sync::atomic::Ordering::Relaxed);
-        m.reconnect_count.store(5, std::sync::atomic::Ordering::Relaxed);
+        m.reconnect_count
+            .store(5, std::sync::atomic::Ordering::Relaxed);
         assert_eq!(overall_severity(&m), Severity::Critical);
     }
 
@@ -530,7 +546,8 @@ mod tests {
     fn single_reconnect_is_degraded() {
         let m = fresh();
         m.is_live.store(true, std::sync::atomic::Ordering::Relaxed);
-        m.reconnect_count.store(1, std::sync::atomic::Ordering::Relaxed);
+        m.reconnect_count
+            .store(1, std::sync::atomic::Ordering::Relaxed);
         assert_eq!(overall_severity(&m), Severity::Degraded);
     }
 
@@ -541,7 +558,8 @@ mod tests {
         // With cache=0: crit threshold=100ms. Store 110ms to trigger a Jit hint.
         m.jitter_ema_ns
             .store(110_000_000, std::sync::atomic::Ordering::Relaxed);
-        m.reconnect_count.store(1, std::sync::atomic::Ordering::Relaxed);
+        m.reconnect_count
+            .store(1, std::sync::atomic::Ordering::Relaxed);
         *m.packet_stats.lock().unwrap() = PacketStats {
             available: true,
             pushed: 1_000,
@@ -595,15 +613,23 @@ mod tests {
     fn dark_live_stream_surfaces_night_hint() {
         let m = fresh();
         m.is_live.store(true, std::sync::atomic::Ordering::Relaxed);
-        m.last_avg_luma.store(10, std::sync::atomic::Ordering::Relaxed);
+        m.last_avg_luma
+            .store(10, std::sync::atomic::Ordering::Relaxed);
         // FPS > 0 so the camera is responsive (just dark).
-        m.frame_count.store(30, std::sync::atomic::Ordering::Relaxed);
+        m.frame_count
+            .store(30, std::sync::atomic::Ordering::Relaxed);
         // Pretend a tick has happened ~1s ago.
-        m.last_sample_unix_secs
-            .store(now_unix_secs().saturating_sub(1), std::sync::atomic::Ordering::Relaxed);
+        m.last_sample_unix_secs.store(
+            now_unix_secs().saturating_sub(1),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let hints = diagnose(&m);
         let night: Vec<&Hint> = hints.iter().filter(|h| h.metric == "Night").collect();
-        assert_eq!(night.len(), 1, "expected exactly one Night hint, got {hints:?}");
+        assert_eq!(
+            night.len(),
+            1,
+            "expected exactly one Night hint, got {hints:?}"
+        );
         assert_eq!(night[0].severity, Severity::Degraded);
         assert!(
             night[0].cause.contains("night"),
@@ -616,10 +642,14 @@ mod tests {
     fn bright_live_stream_does_not_suggest_night() {
         let m = fresh();
         m.is_live.store(true, std::sync::atomic::Ordering::Relaxed);
-        m.last_avg_luma.store(128, std::sync::atomic::Ordering::Relaxed);
-        m.frame_count.store(30, std::sync::atomic::Ordering::Relaxed);
-        m.last_sample_unix_secs
-            .store(now_unix_secs().saturating_sub(1), std::sync::atomic::Ordering::Relaxed);
+        m.last_avg_luma
+            .store(128, std::sync::atomic::Ordering::Relaxed);
+        m.frame_count
+            .store(30, std::sync::atomic::Ordering::Relaxed);
+        m.last_sample_unix_secs.store(
+            now_unix_secs().saturating_sub(1),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let hints = diagnose(&m);
         assert!(
             hints.iter().all(|h| h.metric != "Night"),
@@ -631,10 +661,14 @@ mod tests {
     fn dark_offline_stream_is_not_night() {
         let m = fresh();
         m.is_live.store(false, std::sync::atomic::Ordering::Relaxed);
-        m.last_avg_luma.store(5, std::sync::atomic::Ordering::Relaxed);
-        m.frame_count.store(30, std::sync::atomic::Ordering::Relaxed);
-        m.last_sample_unix_secs
-            .store(now_unix_secs().saturating_sub(1), std::sync::atomic::Ordering::Relaxed);
+        m.last_avg_luma
+            .store(5, std::sync::atomic::Ordering::Relaxed);
+        m.frame_count
+            .store(30, std::sync::atomic::Ordering::Relaxed);
+        m.last_sample_unix_secs.store(
+            now_unix_secs().saturating_sub(1),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let hints = diagnose(&m);
         assert!(
             hints.iter().all(|h| h.metric != "Night"),
@@ -649,7 +683,8 @@ mod tests {
         // 0 reading.
         let m = fresh();
         m.is_live.store(true, std::sync::atomic::Ordering::Relaxed);
-        m.last_avg_luma.store(0, std::sync::atomic::Ordering::Relaxed);
+        m.last_avg_luma
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         // No frame sample recorded.
         let hints = diagnose(&m);
         assert!(
@@ -665,13 +700,17 @@ mod tests {
         // hint in that case so the overlay doesn't double-flag.
         let m = fresh();
         m.is_live.store(true, std::sync::atomic::Ordering::Relaxed);
-        m.last_avg_luma.store(8, std::sync::atomic::Ordering::Relaxed);
+        m.last_avg_luma
+            .store(8, std::sync::atomic::Ordering::Relaxed);
         // Bus loop sampled and saw zero frames in the last
         // interval → `snapshot_current_fps()` returns `Some(0.0)`
         // → existing FPS check emits the Stalled hint.
-        m.current_fps_x1000.store(0, std::sync::atomic::Ordering::Relaxed);
-        m.last_sample_unix_secs
-            .store(now_unix_secs().saturating_sub(1), std::sync::atomic::Ordering::Relaxed);
+        m.current_fps_x1000
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        m.last_sample_unix_secs.store(
+            now_unix_secs().saturating_sub(1),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let hints = diagnose(&m);
         let night: Vec<&Hint> = hints.iter().filter(|h| h.metric == "Night").collect();
         assert!(
@@ -680,7 +719,9 @@ mod tests {
         );
         // It should still be flagged as stalled.
         assert!(
-            hints.iter().any(|h| h.metric == "FPS" && h.severity == Severity::Stalled),
+            hints
+                .iter()
+                .any(|h| h.metric == "FPS" && h.severity == Severity::Stalled),
             "expected a Stalled hint, got: {hints:?}"
         );
     }
@@ -689,10 +730,14 @@ mod tests {
     fn dark_stream_includes_luma_band_in_cause() {
         let m = fresh();
         m.is_live.store(true, std::sync::atomic::Ordering::Relaxed);
-        m.last_avg_luma.store(7, std::sync::atomic::Ordering::Relaxed);
-        m.frame_count.store(30, std::sync::atomic::Ordering::Relaxed);
-        m.last_sample_unix_secs
-            .store(now_unix_secs().saturating_sub(1), std::sync::atomic::Ordering::Relaxed);
+        m.last_avg_luma
+            .store(7, std::sync::atomic::Ordering::Relaxed);
+        m.frame_count
+            .store(30, std::sync::atomic::Ordering::Relaxed);
+        m.last_sample_unix_secs.store(
+            now_unix_secs().saturating_sub(1),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let hints = diagnose(&m);
         let night = hints.iter().find(|h| h.metric == "Night").unwrap();
         // Operator benefit: the cause string tells them roughly
@@ -743,15 +788,25 @@ mod tests {
         // 45s of static + luma=2 → tamper.
         let m = fresh();
         m.is_live.store(true, std::sync::atomic::Ordering::Relaxed);
-        m.last_avg_luma.store(2, std::sync::atomic::Ordering::Relaxed);
-        m.frame_count.store(30, std::sync::atomic::Ordering::Relaxed);
-        m.last_sample_unix_secs
-            .store(now_unix_secs().saturating_sub(1), std::sync::atomic::Ordering::Relaxed);
-        m.last_scene_change_unix_secs
-            .store(now_unix_secs().saturating_sub(45), std::sync::atomic::Ordering::Relaxed);
+        m.last_avg_luma
+            .store(2, std::sync::atomic::Ordering::Relaxed);
+        m.frame_count
+            .store(30, std::sync::atomic::Ordering::Relaxed);
+        m.last_sample_unix_secs.store(
+            now_unix_secs().saturating_sub(1),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        m.last_scene_change_unix_secs.store(
+            now_unix_secs().saturating_sub(45),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let hints = diagnose(&m);
         let tamper: Vec<&Hint> = hints.iter().filter(|h| h.metric == "Tamper").collect();
-        assert_eq!(tamper.len(), 1, "expected exactly one Tamper hint, got {hints:?}");
+        assert_eq!(
+            tamper.len(),
+            1,
+            "expected exactly one Tamper hint, got {hints:?}"
+        );
         assert_eq!(tamper[0].severity, Severity::Warning);
     }
 
@@ -761,15 +816,25 @@ mod tests {
         // extreme).
         let m = fresh();
         m.is_live.store(true, std::sync::atomic::Ordering::Relaxed);
-        m.last_avg_luma.store(254, std::sync::atomic::Ordering::Relaxed);
-        m.frame_count.store(30, std::sync::atomic::Ordering::Relaxed);
-        m.last_sample_unix_secs
-            .store(now_unix_secs().saturating_sub(1), std::sync::atomic::Ordering::Relaxed);
-        m.last_scene_change_unix_secs
-            .store(now_unix_secs().saturating_sub(60), std::sync::atomic::Ordering::Relaxed);
+        m.last_avg_luma
+            .store(254, std::sync::atomic::Ordering::Relaxed);
+        m.frame_count
+            .store(30, std::sync::atomic::Ordering::Relaxed);
+        m.last_sample_unix_secs.store(
+            now_unix_secs().saturating_sub(1),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        m.last_scene_change_unix_secs.store(
+            now_unix_secs().saturating_sub(60),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let hints = diagnose(&m);
         let tamper: Vec<&Hint> = hints.iter().filter(|h| h.metric == "Tamper").collect();
-        assert_eq!(tamper.len(), 1, "expected exactly one Tamper hint, got {hints:?}");
+        assert_eq!(
+            tamper.len(),
+            1,
+            "expected exactly one Tamper hint, got {hints:?}"
+        );
     }
 
     #[test]
@@ -778,12 +843,18 @@ mod tests {
         // could legitimately be a still empty room).
         let m = fresh();
         m.is_live.store(true, std::sync::atomic::Ordering::Relaxed);
-        m.last_avg_luma.store(128, std::sync::atomic::Ordering::Relaxed);
-        m.frame_count.store(30, std::sync::atomic::Ordering::Relaxed);
-        m.last_sample_unix_secs
-            .store(now_unix_secs().saturating_sub(1), std::sync::atomic::Ordering::Relaxed);
-        m.last_scene_change_unix_secs
-            .store(now_unix_secs().saturating_sub(60), std::sync::atomic::Ordering::Relaxed);
+        m.last_avg_luma
+            .store(128, std::sync::atomic::Ordering::Relaxed);
+        m.frame_count
+            .store(30, std::sync::atomic::Ordering::Relaxed);
+        m.last_sample_unix_secs.store(
+            now_unix_secs().saturating_sub(1),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        m.last_scene_change_unix_secs.store(
+            now_unix_secs().saturating_sub(60),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let hints = diagnose(&m);
         assert!(
             hints.iter().all(|h| h.metric != "Tamper"),
@@ -797,12 +868,18 @@ mod tests {
         // hit the 30s threshold; could be a night scene).
         let m = fresh();
         m.is_live.store(true, std::sync::atomic::Ordering::Relaxed);
-        m.last_avg_luma.store(2, std::sync::atomic::Ordering::Relaxed);
-        m.frame_count.store(30, std::sync::atomic::Ordering::Relaxed);
-        m.last_sample_unix_secs
-            .store(now_unix_secs().saturating_sub(1), std::sync::atomic::Ordering::Relaxed);
-        m.last_scene_change_unix_secs
-            .store(now_unix_secs().saturating_sub(10), std::sync::atomic::Ordering::Relaxed);
+        m.last_avg_luma
+            .store(2, std::sync::atomic::Ordering::Relaxed);
+        m.frame_count
+            .store(30, std::sync::atomic::Ordering::Relaxed);
+        m.last_sample_unix_secs.store(
+            now_unix_secs().saturating_sub(1),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        m.last_scene_change_unix_secs.store(
+            now_unix_secs().saturating_sub(10),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let hints = diagnose(&m);
         assert!(
             hints.iter().all(|h| h.metric != "Tamper"),
@@ -817,12 +894,18 @@ mod tests {
         // 60s of static, we still don't claim tamper.
         let m = fresh();
         m.is_live.store(false, std::sync::atomic::Ordering::Relaxed);
-        m.last_avg_luma.store(2, std::sync::atomic::Ordering::Relaxed);
-        m.frame_count.store(30, std::sync::atomic::Ordering::Relaxed);
-        m.last_sample_unix_secs
-            .store(now_unix_secs().saturating_sub(1), std::sync::atomic::Ordering::Relaxed);
-        m.last_scene_change_unix_secs
-            .store(now_unix_secs().saturating_sub(60), std::sync::atomic::Ordering::Relaxed);
+        m.last_avg_luma
+            .store(2, std::sync::atomic::Ordering::Relaxed);
+        m.frame_count
+            .store(30, std::sync::atomic::Ordering::Relaxed);
+        m.last_sample_unix_secs.store(
+            now_unix_secs().saturating_sub(1),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        m.last_scene_change_unix_secs.store(
+            now_unix_secs().saturating_sub(60),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let hints = diagnose(&m);
         assert!(
             hints.iter().all(|h| h.metric != "Tamper"),
@@ -838,12 +921,18 @@ mod tests {
         // requirement is the discriminator.
         let m = fresh();
         m.is_live.store(true, std::sync::atomic::Ordering::Relaxed);
-        m.last_avg_luma.store(2, std::sync::atomic::Ordering::Relaxed);
-        m.frame_count.store(30, std::sync::atomic::Ordering::Relaxed);
-        m.last_sample_unix_secs
-            .store(now_unix_secs().saturating_sub(1), std::sync::atomic::Ordering::Relaxed);
-        m.last_scene_change_unix_secs
-            .store(now_unix_secs().saturating_sub(1), std::sync::atomic::Ordering::Relaxed);
+        m.last_avg_luma
+            .store(2, std::sync::atomic::Ordering::Relaxed);
+        m.frame_count
+            .store(30, std::sync::atomic::Ordering::Relaxed);
+        m.last_sample_unix_secs.store(
+            now_unix_secs().saturating_sub(1),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        m.last_scene_change_unix_secs.store(
+            now_unix_secs().saturating_sub(1),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let hints = diagnose(&m);
         assert!(
             hints.iter().all(|h| h.metric != "Tamper"),
@@ -858,12 +947,18 @@ mod tests {
         // "blinded (luma=254)" without leaving the overlay.
         let m = fresh();
         m.is_live.store(true, std::sync::atomic::Ordering::Relaxed);
-        m.last_avg_luma.store(2, std::sync::atomic::Ordering::Relaxed);
-        m.frame_count.store(30, std::sync::atomic::Ordering::Relaxed);
-        m.last_sample_unix_secs
-            .store(now_unix_secs().saturating_sub(1), std::sync::atomic::Ordering::Relaxed);
-        m.last_scene_change_unix_secs
-            .store(now_unix_secs().saturating_sub(45), std::sync::atomic::Ordering::Relaxed);
+        m.last_avg_luma
+            .store(2, std::sync::atomic::Ordering::Relaxed);
+        m.frame_count
+            .store(30, std::sync::atomic::Ordering::Relaxed);
+        m.last_sample_unix_secs.store(
+            now_unix_secs().saturating_sub(1),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        m.last_scene_change_unix_secs.store(
+            now_unix_secs().saturating_sub(45),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let hints = diagnose(&m);
         let tamper = hints.iter().find(|h| h.metric == "Tamper").unwrap();
         // Portuguese cause string for covered-camera tamper.
@@ -886,12 +981,18 @@ mod tests {
     fn blinded_tamper_cause_mentions_light() {
         let m = fresh();
         m.is_live.store(true, std::sync::atomic::Ordering::Relaxed);
-        m.last_avg_luma.store(254, std::sync::atomic::Ordering::Relaxed);
-        m.frame_count.store(30, std::sync::atomic::Ordering::Relaxed);
-        m.last_sample_unix_secs
-            .store(now_unix_secs().saturating_sub(1), std::sync::atomic::Ordering::Relaxed);
-        m.last_scene_change_unix_secs
-            .store(now_unix_secs().saturating_sub(45), std::sync::atomic::Ordering::Relaxed);
+        m.last_avg_luma
+            .store(254, std::sync::atomic::Ordering::Relaxed);
+        m.frame_count
+            .store(30, std::sync::atomic::Ordering::Relaxed);
+        m.last_sample_unix_secs.store(
+            now_unix_secs().saturating_sub(1),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        m.last_scene_change_unix_secs.store(
+            now_unix_secs().saturating_sub(45),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let hints = diagnose(&m);
         let tamper = hints.iter().find(|h| h.metric == "Tamper").unwrap();
         assert!(
@@ -963,8 +1064,8 @@ pub fn check_decoders() {
 /// with `!`). Single-element chains should use `gst::ElementFactory::find`
 /// instead. Never calls `process::exit` — the caller decides what to do.
 pub fn validate_decoder_chain(chain: &str) -> Result<(), String> {
-    use gstreamer as gst;
     use gst::prelude::*;
+    use gstreamer as gst;
 
     let desc = format!("fakesrc num-buffers=0 ! {} ! fakesink", chain);
     let element = gst::parse_launch(&desc).map_err(|e| {
@@ -1024,7 +1125,10 @@ mod decoder_chain_tests {
     fn multi_element_software_chain_passes() {
         gstreamer::init().ok();
         let needed = ["rtph264depay", "h264parse", "avdec_h264"];
-        if needed.iter().any(|n| gstreamer::ElementFactory::find(n).is_none()) {
+        if needed
+            .iter()
+            .any(|n| gstreamer::ElementFactory::find(n).is_none())
+        {
             return; // skip if any element is missing
         }
         let result = validate_decoder_chain("rtph264depay ! h264parse ! avdec_h264");

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 
 use crate::domain::codec::Codec;
@@ -274,10 +274,7 @@ impl Metrics {
     }
 
     pub fn snapshot_packet_stats(&self) -> PacketStats {
-        self.packet_stats
-            .lock()
-            .map(|g| *g)
-            .unwrap_or_default()
+        self.packet_stats.lock().map(|g| *g).unwrap_or_default()
     }
 
     pub fn snapshot_stream_info(&self) -> StreamInfo {
@@ -302,8 +299,16 @@ impl Metrics {
     pub fn snapshot_luma(&self) -> (Option<u8>, Option<u8>) {
         let avg = self.last_avg_luma.load(Ordering::Relaxed);
         let dev = self.last_luma_stddev.load(Ordering::Relaxed);
-        let avg = if avg == u64::MAX { None } else { Some(avg as u8) };
-        let dev = if dev == u64::MAX { None } else { Some(dev as u8) };
+        let avg = if avg == u64::MAX {
+            None
+        } else {
+            Some(avg as u8)
+        };
+        let dev = if dev == u64::MAX {
+            None
+        } else {
+            Some(dev as u8)
+        };
         (avg, dev)
     }
 
@@ -343,11 +348,14 @@ impl Metrics {
 }
 
 #[cfg(test)]
- mod tests {
+mod tests {
     #[test]
     fn decoder_klass_distinguishes_software_from_hardware() {
         assert_eq!(video_decoder_kind("Codec/Decoder/Video"), Some(false));
-        assert_eq!(video_decoder_kind("Codec/Decoder/Video/Hardware"), Some(true));
+        assert_eq!(
+            video_decoder_kind("Codec/Decoder/Video/Hardware"),
+            Some(true)
+        );
         assert_eq!(video_decoder_kind("Codec/Decoder/Audio"), None);
         assert_eq!(video_decoder_kind("Codec/Parser/Converter/Video"), None);
         assert_eq!(video_decoder_kind("Codec/Encoder/Video/Hardware"), None);
@@ -361,7 +369,8 @@ impl Metrics {
     fn m_with(avg: u64, last_sample: u64) -> std::sync::Arc<Metrics> {
         let m = Metrics::new();
         m.last_avg_luma.store(avg, Ordering::Relaxed);
-        m.last_sample_unix_secs.store(last_sample, Ordering::Relaxed);
+        m.last_sample_unix_secs
+            .store(last_sample, Ordering::Relaxed);
         m
     }
 

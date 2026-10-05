@@ -31,8 +31,7 @@ impl Default for SpeedMultiplier {
 }
 
 /// Output format for time-lapse export.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 pub enum TimelapseFormat {
     #[default]
     Mp4,
@@ -57,7 +56,6 @@ impl TimelapseFormat {
         }
     }
 }
-
 
 /// Configuration for time-lapse export.
 #[derive(Debug, Clone)]
@@ -91,12 +89,17 @@ impl Default for TimelapseConfig {
 
 fn default_timelapse_dir() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("XDG_VIDEOS_DIR")
-        && !p.is_empty() {
-            return std::path::PathBuf::from(p).join("rust-rtsp-viewer").join("timelapse");
-        }
+        && !p.is_empty()
+    {
+        return std::path::PathBuf::from(p)
+            .join("rust-rtsp-viewer")
+            .join("timelapse");
+    }
     if let Ok(home) = std::env::var("HOME") {
         return std::path::PathBuf::from(home)
-            .join("Videos").join("rust-rtsp-viewer").join("timelapse");
+            .join("Videos")
+            .join("rust-rtsp-viewer")
+            .join("timelapse");
     }
     std::path::PathBuf::from("./Videos/rust-rtsp-viewer/timelapse")
 }
@@ -115,7 +118,9 @@ pub struct TimelapseConfigFile {
 impl TimelapseConfigFile {
     pub fn into_config(self) -> TimelapseConfig {
         let mut config = TimelapseConfig::default();
-        if let Some(s) = self.speed { config.speed = SpeedMultiplier::new(s); }
+        if let Some(s) = self.speed {
+            config.speed = SpeedMultiplier::new(s);
+        }
         if let Some(f) = self.format {
             config.format = match f.to_lowercase().as_str() {
                 "webm" => TimelapseFormat::WebM,
@@ -123,10 +128,18 @@ impl TimelapseConfigFile {
                 _ => TimelapseFormat::Mp4,
             };
         }
-        if let Some(d) = self.output_dir { config.output_dir = d; }
-        if let Some(w) = self.width { config.width = Some(w.max(1)); }
-        if let Some(h) = self.height { config.height = Some(h.max(1)); }
-        if let Some(f) = self.fps { config.fps = f.clamp(1, 120); }
+        if let Some(d) = self.output_dir {
+            config.output_dir = d;
+        }
+        if let Some(w) = self.width {
+            config.width = Some(w.max(1));
+        }
+        if let Some(h) = self.height {
+            config.height = Some(h.max(1));
+        }
+        if let Some(f) = self.fps {
+            config.fps = f.clamp(1, 120);
+        }
         config
     }
 }
@@ -138,10 +151,7 @@ pub fn estimate_output_duration(input_secs: u64, speed: SpeedMultiplier) -> u64 
 }
 
 /// Generate a filename for the time-lapse output.
-pub fn generate_timelapse_filename(
-    camera_label: &str,
-    format: TimelapseFormat,
-) -> String {
+pub fn generate_timelapse_filename(camera_label: &str, format: TimelapseFormat) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -150,7 +160,14 @@ pub fn generate_timelapse_filename(
     let (y, mo, d, h, mi, s) = epoch_to_ymdhms(now);
     format!(
         "timelapse-{}-{:04}{:02}{:02}-{:02}{:02}{:02}.{}",
-        camera_label, y, mo, d, h, mi, s, format.extension()
+        camera_label,
+        y,
+        mo,
+        d,
+        h,
+        mi,
+        s,
+        format.extension()
     )
 }
 
@@ -167,20 +184,44 @@ fn epoch_to_ymdhms(epoch: u64) -> (u32, u32, u32, u32, u32, u32) {
     let mut remaining_days = days;
     loop {
         let days_in_year = if is_leap(y) { 366 } else { 365 };
-        if remaining_days < days_in_year as u64 { break; }
+        if remaining_days < days_in_year as u64 {
+            break;
+        }
         remaining_days -= days_in_year as u64;
         y += 1;
     }
 
-    let days_in_month = [31, if is_leap(y) { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let days_in_month = [
+        31,
+        if is_leap(y) { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut m = 1u32;
     for &dim in &days_in_month {
-        if remaining_days < dim as u64 { break; }
+        if remaining_days < dim as u64 {
+            break;
+        }
         remaining_days -= dim as u64;
         m += 1;
     }
 
-    (y, m, remaining_days as u32 + 1, hours as u32, mins as u32, secs as u32)
+    (
+        y,
+        m,
+        remaining_days as u32 + 1,
+        hours as u32,
+        mins as u32,
+        secs as u32,
+    )
 }
 
 fn is_leap(y: u32) -> bool {
@@ -246,7 +287,11 @@ mod tests {
 
     #[test]
     fn config_file_clamps() {
-        let f = TimelapseConfigFile { speed: Some(0), fps: Some(200), ..Default::default() };
+        let f = TimelapseConfigFile {
+            speed: Some(0),
+            fps: Some(200),
+            ..Default::default()
+        };
         let c = f.into_config();
         assert_eq!(c.speed.value(), 2);
         assert_eq!(c.fps, 120);

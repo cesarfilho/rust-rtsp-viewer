@@ -102,14 +102,28 @@ pub struct PtzPresetFile {
 impl PtzConfigFile {
     pub fn into_config(self) -> PtzConfig {
         let mut config = PtzConfig::default();
-        if let Some(u) = self.onvif_url { config.onvif_url = u; }
-        if let Some(u) = self.username { config.username = Some(u); }
-        if let Some(p) = self.password { config.password = Some(p); }
-        if let Some(s) = self.pan_tilt_speed { config.pan_tilt_speed = s.clamp(0.0, 1.0); }
-        if let Some(s) = self.zoom_speed { config.zoom_speed = s.clamp(0.0, 1.0); }
+        if let Some(u) = self.onvif_url {
+            config.onvif_url = u;
+        }
+        if let Some(u) = self.username {
+            config.username = Some(u);
+        }
+        if let Some(p) = self.password {
+            config.password = Some(p);
+        }
+        if let Some(s) = self.pan_tilt_speed {
+            config.pan_tilt_speed = s.clamp(0.0, 1.0);
+        }
+        if let Some(s) = self.zoom_speed {
+            config.zoom_speed = s.clamp(0.0, 1.0);
+        }
         if let Some(presets) = self.presets {
-            config.presets = presets.into_iter()
-                .map(|p| PtzPreset { id: p.id, name: p.name })
+            config.presets = presets
+                .into_iter()
+                .map(|p| PtzPreset {
+                    id: p.id,
+                    name: p.name,
+                })
                 .collect();
         }
         config
@@ -125,11 +139,17 @@ pub struct PtzResult {
 
 impl PtzResult {
     pub fn ok() -> Self {
-        Self { success: true, error: None }
+        Self {
+            success: true,
+            error: None,
+        }
     }
 
     pub fn err(msg: impl Into<String>) -> Self {
-        Self { success: false, error: Some(msg.into()) }
+        Self {
+            success: false,
+            error: Some(msg.into()),
+        }
     }
 }
 
@@ -168,7 +188,10 @@ mod tests {
             password: Some("pass".into()),
             pan_tilt_speed: Some(0.8),
             zoom_speed: Some(0.3),
-            presets: Some(vec![PtzPresetFile { id: 1, name: "Home".into() }]),
+            presets: Some(vec![PtzPresetFile {
+                id: 1,
+                name: "Home".into(),
+            }]),
         };
         let c = f.into_config();
         assert_eq!(c.onvif_url, "http://cam/onvif");

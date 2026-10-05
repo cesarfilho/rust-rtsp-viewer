@@ -12,11 +12,21 @@ use crate::ui::theme::{Theme, ThemeColors};
 use super::types::{CameraStatus, Message, Sidebar};
 
 fn fmt_hms(secs: u64) -> String {
-    format!("{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60)
+    format!(
+        "{:02}:{:02}:{:02}",
+        secs / 3600,
+        (secs % 3600) / 60,
+        secs % 60
+    )
 }
 
 /// A `label ............ value` row, value right-aligned and optionally tinted.
-fn metric<'a>(colors: ThemeColors, label: &'a str, value: String, tint: Option<iced::Color>) -> Element<'a, Message> {
+fn metric<'a>(
+    colors: ThemeColors,
+    label: &'a str,
+    value: String,
+    tint: Option<iced::Color>,
+) -> Element<'a, Message> {
     let vcolor = tint.unwrap_or_else(|| Theme::color_from_hex(colors.text));
     row![
         text(label)
@@ -31,9 +41,11 @@ fn metric<'a>(colors: ThemeColors, label: &'a str, value: String, tint: Option<i
 
 fn card<'a>(theme: Theme, title: &'a str, rows: Vec<Element<'a, Message>>) -> Element<'a, Message> {
     let colors = theme.colors();
-    let mut col = column![text(title)
-        .size(Theme::TEXT_CAPTION - 1)
-        .color(Theme::color_from_hex(colors.text_tertiary))]
+    let mut col = column![
+        text(title)
+            .size(Theme::TEXT_CAPTION - 1)
+            .color(Theme::color_from_hex(colors.text_tertiary))
+    ]
     .spacing(Theme::SPACE_2);
     for r in rows {
         col = col.push(r);
@@ -58,7 +70,11 @@ fn tone(colors: ThemeColors, v: f64, good: f64, warn: f64) -> iced::Color {
     }
 }
 
-pub(super) fn info_view(sidebar: &Sidebar, colors: ThemeColors, theme: Theme) -> Element<'_, Message> {
+pub(super) fn info_view(
+    sidebar: &Sidebar,
+    colors: ThemeColors,
+    theme: Theme,
+) -> Element<'_, Message> {
     let secondary = Theme::color_from_hex(colors.text_secondary);
 
     let Some(idx) = sidebar.selected else {
@@ -91,28 +107,40 @@ pub(super) fn info_view(sidebar: &Sidebar, colors: ThemeColors, theme: Theme) ->
     .padding(iced::Padding::from([1, 6]))
     .style(move |_: &iced::Theme| container::Style {
         background: Some(iced::Background::Color(status_c)),
-        border: iced::Border { radius: 3.0.into(), ..iced::Border::default() },
+        border: iced::Border {
+            radius: 3.0.into(),
+            ..iced::Border::default()
+        },
         ..container::Style::default()
     });
     let header = column![
         row![
-            text(&cam.name).size(Theme::TEXT_TITLE).color(Theme::color_from_hex(colors.text)),
+            text(&cam.name)
+                .size(Theme::TEXT_TITLE)
+                .color(Theme::color_from_hex(colors.text)),
             iced::widget::horizontal_space(),
             badge,
         ]
         .align_y(iced::Alignment::Center),
-        text(format!("no ar há {}", fmt_hms(m.uptime_secs))).size(Theme::TEXT_CAPTION).color(secondary),
+        text(format!("no ar há {}", fmt_hms(m.uptime_secs)))
+            .size(Theme::TEXT_CAPTION)
+            .color(secondary),
     ]
     .spacing(Theme::SPACE_1);
 
     // ── Diagnostics ──────────────────────────────────────────────────────
-    let mut body = column![header].spacing(Theme::SPACE_3).padding(Theme::SPACE_3).width(Length::Fill);
+    let mut body = column![header]
+        .spacing(Theme::SPACE_3)
+        .padding(Theme::SPACE_3)
+        .width(Length::Fill);
     if !sidebar.diagnostics.is_empty() {
         let mut dc = column![].spacing(Theme::SPACE_1);
         for h in &sidebar.diagnostics {
             let c = match h.severity {
                 Severity::Healthy => Theme::color_from_hex(colors.accent_blue),
-                Severity::Degraded | Severity::Warning => Theme::color_from_hex(colors.accent_amber),
+                Severity::Degraded | Severity::Warning => {
+                    Theme::color_from_hex(colors.accent_amber)
+                }
                 Severity::Critical | Severity::Stalled => Theme::color_from_hex(colors.accent_red),
             };
             dc = dc.push(
@@ -124,7 +152,11 @@ pub(super) fn info_view(sidebar: &Sidebar, colors: ThemeColors, theme: Theme) ->
                 .padding(iced::Padding::from([2, 8]))
                 .style(move |_: &iced::Theme| container::Style {
                     background: Some(iced::Background::Color(iced::Color { a: 0.10, ..c })),
-                    border: iced::Border { color: c, width: 1.0, radius: Theme::RADIUS_SM.into() },
+                    border: iced::Border {
+                        color: c,
+                        width: 1.0,
+                        radius: Theme::RADIUS_SM.into(),
+                    },
                     ..container::Style::default()
                 }),
             );
@@ -140,15 +172,37 @@ pub(super) fn info_view(sidebar: &Sidebar, colors: ThemeColors, theme: Theme) ->
     let fps_row = row![
         text("FPS").size(Theme::TEXT_BODY).color(secondary),
         iced::widget::horizontal_space(),
-        super::sparkline(&m.fps_history, 48.0, 14.0, Theme::color_from_hex(colors.status_live)),
-        text(format!("{:.0}", m.fps)).size(Theme::TEXT_BODY).color(Theme::color_from_hex(colors.text)),
+        super::sparkline(
+            &m.fps_history,
+            48.0,
+            14.0,
+            Theme::color_from_hex(colors.status_live)
+        ),
+        text(format!("{:.0}", m.fps))
+            .size(Theme::TEXT_BODY)
+            .color(Theme::color_from_hex(colors.text)),
     ]
     .spacing(Theme::SPACE_2)
     .align_y(iced::Alignment::Center);
     let mut stream_rows = vec![
-        metric(colors, "Codec", m.codec.clone().unwrap_or_else(|| "—".into()), None),
-        metric(colors, "Decoder", m.decoder.clone().unwrap_or_else(|| "—".into()), None),
-        metric(colors, "Via", decoder_via(m.decoder.as_deref(), m.decoder_hw), None),
+        metric(
+            colors,
+            "Codec",
+            m.codec.clone().unwrap_or_else(|| "—".into()),
+            None,
+        ),
+        metric(
+            colors,
+            "Decoder",
+            m.decoder.clone().unwrap_or_else(|| "—".into()),
+            None,
+        ),
+        metric(
+            colors,
+            "Via",
+            decoder_via(m.decoder.as_deref(), m.decoder_hw),
+            None,
+        ),
         metric(colors, "Resolução", res, None),
     ];
     if let Some(q) = m.stream_quality {
@@ -173,19 +227,27 @@ pub(super) fn info_view(sidebar: &Sidebar, colors: ThemeColors, theme: Theme) ->
             metric(
                 colors,
                 "Latência",
-                m.latency_ms.map(|v| format!("{v} ms")).unwrap_or_else(|| "—".into()),
+                m.latency_ms
+                    .map(|v| format!("{v} ms"))
+                    .unwrap_or_else(|| "—".into()),
                 Some(tone(colors, lat as f64, 200.0, 400.0)),
             ),
             metric(
                 colors,
                 "Jitter",
-                m.jitter_ms.map(|v| format!("{v} ms")).unwrap_or_else(|| "—".into()),
+                m.jitter_ms
+                    .map(|v| format!("{v} ms"))
+                    .unwrap_or_else(|| "—".into()),
                 Some(tone(colors, jit as f64, 30.0, 80.0)),
             ),
             metric(
                 colors,
                 "Perda",
-                if m.packet_stats.available { format!("{loss:.2}%") } else { "—".into() },
+                if m.packet_stats.available {
+                    format!("{loss:.2}%")
+                } else {
+                    "—".into()
+                },
                 Some(tone(colors, loss, 0.5, 2.0)),
             ),
             metric(colors, "Reconexões", m.reconnects.to_string(), None),
@@ -207,11 +269,18 @@ pub(super) fn info_view(sidebar: &Sidebar, colors: ThemeColors, theme: Theme) ->
     }
 
     // ── Avançado (expander) ──────────────────────────────────────────────
-    let chevron = if sidebar.info_advanced { "\u{25BE}" } else { "\u{25B8}" };
+    let chevron = if sidebar.info_advanced {
+        "\u{25BE}"
+    } else {
+        "\u{25B8}"
+    };
     body = body.push(
         button(
             row![
-                text(chevron).font(crate::ui::icons::FONT).size(Theme::TEXT_CAPTION).color(secondary),
+                text(chevron)
+                    .font(crate::ui::icons::FONT)
+                    .size(Theme::TEXT_CAPTION)
+                    .color(secondary),
                 text("Avançado").size(Theme::TEXT_CAPTION).color(secondary),
             ]
             .spacing(6),
@@ -229,14 +298,45 @@ pub(super) fn info_view(sidebar: &Sidebar, colors: ThemeColors, theme: Theme) ->
             theme,
             "CONTADORES",
             vec![
-                metric(colors, "Decode", m.decode_time_ms.map(|v| format!("{v} ms")).unwrap_or_else(|| "—".into()), None),
+                metric(
+                    colors,
+                    "Decode",
+                    m.decode_time_ms
+                        .map(|v| format!("{v} ms"))
+                        .unwrap_or_else(|| "—".into()),
+                    None,
+                ),
                 metric(colors, "Frames perdidos", m.dropped.to_string(), None),
                 metric(colors, "Erros de decode", m.decode_errors.to_string(), None),
                 metric(colors, "Frames", m.frames.to_string(), None),
-                metric(colors, "Luma", m.avg_luma.map(|v| v.to_string()).unwrap_or_else(|| "—".into()), None),
-                metric(colors, "Parado há", m.static_secs.map(|v| format!("{v}s")).unwrap_or_else(|| "—".into()), None),
-                metric(colors, "Último erro", m.last_error.clone().unwrap_or_else(|| "—".into()), None),
-                metric(colors, "VU", format!("{}%", (m.audio_level * 100.0) as u32), None),
+                metric(
+                    colors,
+                    "Luma",
+                    m.avg_luma
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "—".into()),
+                    None,
+                ),
+                metric(
+                    colors,
+                    "Parado há",
+                    m.static_secs
+                        .map(|v| format!("{v}s"))
+                        .unwrap_or_else(|| "—".into()),
+                    None,
+                ),
+                metric(
+                    colors,
+                    "Último erro",
+                    m.last_error.clone().unwrap_or_else(|| "—".into()),
+                    None,
+                ),
+                metric(
+                    colors,
+                    "VU",
+                    format!("{}%", (m.audio_level * 100.0) as u32),
+                    None,
+                ),
             ],
         ));
     }

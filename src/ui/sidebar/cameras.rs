@@ -1,5 +1,5 @@
-use iced::{Element, Length};
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
+use iced::{Element, Length};
 
 use crate::ui::theme::{self, ThemeColors};
 
@@ -83,7 +83,11 @@ pub(super) fn cameras_view(sidebar: &Sidebar, colors: ThemeColors) -> Element<'_
 
     let icon_btn = move |glyph: &'static str, msg: Option<Message>| {
         let on = msg.is_some();
-        let fg = if on { text_secondary } else { placeholder_color };
+        let fg = if on {
+            text_secondary
+        } else {
+            placeholder_color
+        };
         let mut b = button(text(glyph).font(crate::ui::icons::FONT).size(10).color(fg))
             .padding(iced::Padding::from([1, 4]))
             .style(move |_, s| button::Style {
@@ -92,7 +96,9 @@ pub(super) fn cameras_view(sidebar: &Sidebar, colors: ThemeColors) -> Element<'_
                     _ => None,
                 },
                 text_color: fg,
-                border: iced::Border::default().color(iced::Color::TRANSPARENT).width(0),
+                border: iced::Border::default()
+                    .color(iced::Color::TRANSPARENT)
+                    .width(0),
                 ..button::Style::default()
             });
         if let Some(m) = msg {
@@ -111,18 +117,24 @@ pub(super) fn cameras_view(sidebar: &Sidebar, colors: ThemeColors) -> Element<'_
         // pip + name; a second line appears only when something is wrong.
         let mut lines = column![
             row![
-                container(text(""))
-                    .width(6)
-                    .height(6)
-                    .style({
-                        let c = if is_selected { accent } else { status_color(&cam.status) };
-                        move |_: &iced::Theme| container::Style {
-                            background: Some(iced::Background::Color(c)),
-                            border: iced::Border { radius: 3.0.into(), ..iced::Border::default() },
-                            ..container::Style::default()
-                        }
-                    }),
-                text(&cam.name).color(name_color).size(theme::Theme::TEXT_BODY),
+                container(text("")).width(6).height(6).style({
+                    let c = if is_selected {
+                        accent
+                    } else {
+                        status_color(&cam.status)
+                    };
+                    move |_: &iced::Theme| container::Style {
+                        background: Some(iced::Background::Color(c)),
+                        border: iced::Border {
+                            radius: 3.0.into(),
+                            ..iced::Border::default()
+                        },
+                        ..container::Style::default()
+                    }
+                }),
+                text(&cam.name)
+                    .color(name_color)
+                    .size(theme::Theme::TEXT_BODY),
             ]
             .spacing(6)
             .align_y(iced::Alignment::Center),
@@ -150,7 +162,10 @@ pub(super) fn cameras_view(sidebar: &Sidebar, colors: ThemeColors) -> Element<'_
                     _ => None,
                 },
                 text_color,
-                border: iced::Border { radius: theme::Theme::RADIUS_SM.into(), ..iced::Border::default() },
+                border: iced::Border {
+                    radius: theme::Theme::RADIUS_SM.into(),
+                    ..iced::Border::default()
+                },
                 ..button::Style::default()
             })
             .on_press(Message::CameraClicked(idx));
@@ -160,8 +175,14 @@ pub(super) fn cameras_view(sidebar: &Sidebar, colors: ThemeColors) -> Element<'_
         if is_selected || is_hovered {
             if reorderable {
                 r = r.push(column![
-                    icon_btn("\u{25B2}", (row_pos > 0).then_some(Message::CameraMovedUp(idx))),
-                    icon_btn("\u{25BC}", (row_pos < last_pos).then_some(Message::CameraMovedDown(idx))),
+                    icon_btn(
+                        "\u{25B2}",
+                        (row_pos > 0).then_some(Message::CameraMovedUp(idx))
+                    ),
+                    icon_btn(
+                        "\u{25BC}",
+                        (row_pos < last_pos).then_some(Message::CameraMovedDown(idx))
+                    ),
                 ]);
             }
             r = r.push(icon_btn("\u{22EF}", Some(Message::ShowRowMenu(idx))));
@@ -216,7 +237,11 @@ fn group_chip_row<'a>(sidebar: &'a Sidebar, colors: ThemeColors) -> Option<Eleme
                 })),
                 text_color: fg,
                 border: iced::Border {
-                    color: if selected { accent } else { iced::Color::TRANSPARENT },
+                    color: if selected {
+                        accent
+                    } else {
+                        iced::Color::TRANSPARENT
+                    },
                     width: if selected { 1.0 } else { 0.0 },
                     radius: theme::Theme::RADIUS_SM.into(),
                 },

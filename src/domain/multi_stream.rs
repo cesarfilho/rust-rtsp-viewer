@@ -1,8 +1,7 @@
 use serde::Deserialize;
 
 /// Which stream is currently active for a camera.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 pub enum StreamQuality {
     /// Full resolution stream (main).
     #[default]
@@ -10,7 +9,6 @@ pub enum StreamQuality {
     /// Reduced resolution stream (sub/secondary).
     Sub,
 }
-
 
 impl StreamQuality {
     pub fn label(&self) -> &'static str {
@@ -56,7 +54,9 @@ pub struct MultiStreamConfigFile {
 impl MultiStreamConfigFile {
     pub fn into_config(self) -> MultiStreamConfig {
         let mut config = MultiStreamConfig::default();
-        if let Some(u) = self.sub_stream_url { config.sub_stream_url = Some(u); }
+        if let Some(u) = self.sub_stream_url {
+            config.sub_stream_url = Some(u);
+        }
         if let Some(q) = self.default_quality {
             config.default_quality = match q.to_lowercase().as_str() {
                 "sub" => StreamQuality::Sub,
@@ -76,7 +76,10 @@ pub fn stream_url_for_quality(
 ) -> String {
     match quality {
         StreamQuality::Main => main_url.to_string(),
-        StreamQuality::Sub => config.sub_stream_url.clone().unwrap_or_else(|| main_url.to_string()),
+        StreamQuality::Sub => config
+            .sub_stream_url
+            .clone()
+            .unwrap_or_else(|| main_url.to_string()),
     }
 }
 
@@ -132,14 +135,26 @@ mod tests {
 
     #[test]
     fn tiles_use_sub_and_large_views_use_main() {
-        assert_eq!(desired_quality(true, false, StreamQuality::Main, false), StreamQuality::Sub);
-        assert_eq!(desired_quality(true, false, StreamQuality::Sub, true), StreamQuality::Main);
+        assert_eq!(
+            desired_quality(true, false, StreamQuality::Main, false),
+            StreamQuality::Sub
+        );
+        assert_eq!(
+            desired_quality(true, false, StreamQuality::Sub, true),
+            StreamQuality::Main
+        );
     }
 
     #[test]
     fn a_recording_camera_never_switches() {
-        assert_eq!(desired_quality(true, true, StreamQuality::Main, false), StreamQuality::Main);
-        assert_eq!(desired_quality(true, true, StreamQuality::Sub, true), StreamQuality::Sub);
+        assert_eq!(
+            desired_quality(true, true, StreamQuality::Main, false),
+            StreamQuality::Main
+        );
+        assert_eq!(
+            desired_quality(true, true, StreamQuality::Sub, true),
+            StreamQuality::Sub
+        );
     }
 
     #[test]
@@ -179,25 +194,43 @@ mod tests {
 
     #[test]
     fn stream_url_for_quality_main() {
-        let config = MultiStreamConfig { sub_stream_url: Some("rtsp://sub".into()), ..Default::default() };
-        assert_eq!(stream_url_for_quality("rtsp://main", StreamQuality::Main, &config), "rtsp://main");
+        let config = MultiStreamConfig {
+            sub_stream_url: Some("rtsp://sub".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            stream_url_for_quality("rtsp://main", StreamQuality::Main, &config),
+            "rtsp://main"
+        );
     }
 
     #[test]
     fn stream_url_for_quality_sub() {
-        let config = MultiStreamConfig { sub_stream_url: Some("rtsp://sub".into()), ..Default::default() };
-        assert_eq!(stream_url_for_quality("rtsp://main", StreamQuality::Sub, &config), "rtsp://sub");
+        let config = MultiStreamConfig {
+            sub_stream_url: Some("rtsp://sub".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            stream_url_for_quality("rtsp://main", StreamQuality::Sub, &config),
+            "rtsp://sub"
+        );
     }
 
     #[test]
     fn stream_url_for_quality_sub_fallback() {
         let config = MultiStreamConfig::default();
-        assert_eq!(stream_url_for_quality("rtsp://main", StreamQuality::Sub, &config), "rtsp://main");
+        assert_eq!(
+            stream_url_for_quality("rtsp://main", StreamQuality::Sub, &config),
+            "rtsp://main"
+        );
     }
 
     #[test]
     fn has_sub_stream_true() {
-        let config = MultiStreamConfig { sub_stream_url: Some("rtsp://sub".into()), ..Default::default() };
+        let config = MultiStreamConfig {
+            sub_stream_url: Some("rtsp://sub".into()),
+            ..Default::default()
+        };
         assert!(has_sub_stream(&config));
     }
 

@@ -208,7 +208,10 @@ pub fn new_app(
 
     // Per-camera log directory (default: ~/logs/rust-rtsp-viewer).
     let log_dir = crate::infrastructure::recording_paths::ensure_log_dir(
-        logs_config.dir.as_deref().unwrap_or(std::path::Path::new("~/logs/rust-rtsp-viewer")),
+        logs_config
+            .dir
+            .as_deref()
+            .unwrap_or(std::path::Path::new("~/logs/rust-rtsp-viewer")),
     )
     .unwrap_or_else(|_| std::path::PathBuf::from("logs"));
     let retention_days = logs_config.retention_days.unwrap_or(7);
@@ -245,12 +248,18 @@ pub fn new_app(
         // "Centro: A" and "Centro A" still get separate log files.
         let mut label = base_label.clone();
         let mut dup = 2;
-        while !used_labels.insert(crate::infrastructure::recording_paths::safe_filename(&label)) {
+        while !used_labels.insert(crate::infrastructure::recording_paths::safe_filename(
+            &label,
+        )) {
             label = format!("{base_label} ({dup})");
             dup += 1;
         }
         let log_path = crate::infrastructure::recording_paths::log_path(&log_dir, &label);
-        if let Ok(logger) = crate::infrastructure::recording_paths::CameraLogger::new(log_path, &label, retention_days) {
+        if let Ok(logger) = crate::infrastructure::recording_paths::CameraLogger::new(
+            log_path,
+            &label,
+            retention_days,
+        ) {
             bridge.set_logger(Arc::new(logger));
         }
         // Pipelines are NOT started here — a dozen HLS streams all connecting
@@ -317,7 +326,11 @@ pub fn new_app(
     };
 
     let persisted = crate::infrastructure::view_state::load();
-    if let Some(m) = persisted.mode.as_deref().and_then(crate::domain::view::GridMode::parse) {
+    if let Some(m) = persisted
+        .mode
+        .as_deref()
+        .and_then(crate::domain::view::GridMode::parse)
+    {
         view.mode = m;
     }
     if let Some(r) = persisted.rotate_enabled {
@@ -355,11 +368,8 @@ pub fn new_app(
 
     // Start pipelines in display order so page 1 comes up first; the
     // `update_frame` drain skips any camera that should stay paused.
-    let start_queue: VecDeque<usize> = crate::domain::view::apply_order(
-        &view.order,
-        &(0..count).collect::<Vec<_>>(),
-    )
-    .into();
+    let start_queue: VecDeque<usize> =
+        crate::domain::view::apply_order(&view.order, &(0..count).collect::<Vec<_>>()).into();
 
     (
         App {
@@ -389,7 +399,10 @@ pub fn new_app(
             audio_level_states,
             reconnect_states,
             backoff_states,
-            stream_quality: vec![crate::domain::multi_stream::StreamQuality::Main; kept_cameras.len()],
+            stream_quality: vec![
+                crate::domain::multi_stream::StreamQuality::Main;
+                kept_cameras.len()
+            ],
             camera_configs: kept_cameras,
             is_fullscreen: false,
             show_help: false,
@@ -427,7 +440,6 @@ pub fn new_app(
         // iced 0.13's `window::Settings` has no "start maximized" flag, so ask
         // the compositor to maximize the window as soon as it exists. `size`
         // above stays as the restore size for when the user un-maximizes.
-        iced::window::get_latest()
-            .and_then(|id| iced::window::maximize(id, true)),
+        iced::window::get_latest().and_then(|id| iced::window::maximize(id, true)),
     )
 }

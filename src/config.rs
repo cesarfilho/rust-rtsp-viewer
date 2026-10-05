@@ -51,7 +51,9 @@ pub struct NotificationsConfigFile {
 impl NotificationsConfigFile {
     pub fn into_config(self) -> crate::domain::notify::NotifyConfig {
         let mut c = crate::domain::notify::NotifyConfig::default();
-        if let Some(e) = self.enabled { c.enabled = e; }
+        if let Some(e) = self.enabled {
+            c.enabled = e;
+        }
         if let Some(s) = self.cooldown_secs {
             c.cooldown_secs = s.max(crate::domain::notify::MIN_COOLDOWN_SECS);
         }
@@ -240,10 +242,18 @@ pub struct AudioConfigFile {
 impl RecordingConfigFile {
     pub fn into_config(self) -> RecordingConfig {
         let mut config = RecordingConfig::default();
-        if let Some(dir) = self.dir { config.dir = dir; }
-        if let Some(d) = self.max_segment_duration_secs { config.max_segment_duration_secs = d; }
-        if let Some(s) = self.max_segment_size_bytes { config.max_segment_size_bytes = s; }
-        if let Some(m) = self.on_motion { config.on_motion = m; }
+        if let Some(dir) = self.dir {
+            config.dir = dir;
+        }
+        if let Some(d) = self.max_segment_duration_secs {
+            config.max_segment_duration_secs = d;
+        }
+        if let Some(s) = self.max_segment_size_bytes {
+            config.max_segment_size_bytes = s;
+        }
+        if let Some(m) = self.on_motion {
+            config.on_motion = m;
+        }
         if let Some(p) = self.motion_post_roll_secs {
             config.motion_post_roll_secs = p.clamp(3, 3600);
         }
@@ -290,13 +300,19 @@ pub struct LogsConfigFile {
 impl SnapshotConfigFile {
     pub fn into_config(self) -> SnapshotConfig {
         let mut config = SnapshotConfig::default();
-        if let Some(dir) = self.dir { config.dir = dir; }
+        if let Some(dir) = self.dir {
+            config.dir = dir;
+        }
         // Clamp to the ranges `snapshot::validate_config` enforces (quality
         // 1..=100, burst 1..=50). An unclamped `burst_count` overflows the
         // `seq + remaining - 1` arithmetic in `advance_burst` and would run a
         // 1080p PNG encode every tick for billions of frames.
-        if let Some(q) = self.quality { config.quality = q.clamp(1, 100); }
-        if let Some(b) = self.burst_count { config.burst_count = b.clamp(1, 50); }
+        if let Some(q) = self.quality {
+            config.quality = q.clamp(1, 100);
+        }
+        if let Some(b) = self.burst_count {
+            config.burst_count = b.clamp(1, 50);
+        }
         config
     }
 }
@@ -317,10 +333,12 @@ pub fn resolve_camera_alias(token: &str, cameras: &[CameraConfig]) -> Option<usi
     }
 
     // 1. Explicit name (exact, case-insensitive).
-    if let Some(idx) = cameras
-        .iter()
-        .position(|c| c.name.as_deref().map(|n| n.trim().to_lowercase() == t).unwrap_or(false))
-    {
+    if let Some(idx) = cameras.iter().position(|c| {
+        c.name
+            .as_deref()
+            .map(|n| n.trim().to_lowercase() == t)
+            .unwrap_or(false)
+    }) {
         return Some(idx);
     }
 
@@ -345,9 +363,11 @@ pub fn resolve_camera_alias(token: &str, cameras: &[CameraConfig]) -> Option<usi
     // 3. Ordinal: `camN` or bare `N`, 1-based.
     let digits = t.strip_prefix("cam").unwrap_or(&t);
     if let Ok(n) = digits.parse::<usize>()
-        && n >= 1 && n <= cameras.len() {
-            return Some(n - 1);
-        }
+        && n >= 1
+        && n <= cameras.len()
+    {
+        return Some(n - 1);
+    }
 
     None
 }
@@ -412,7 +432,10 @@ mod tests {
     fn matches_label_ignoring_case_and_spaces() {
         assert_eq!(resolve_camera_alias("garagem", &fixture()), Some(0));
         assert_eq!(resolve_camera_alias("riojardimsofia", &fixture()), Some(1));
-        assert_eq!(resolve_camera_alias("Rio Jardim Sofia", &fixture()), Some(1));
+        assert_eq!(
+            resolve_camera_alias("Rio Jardim Sofia", &fixture()),
+            Some(1)
+        );
     }
 
     #[test]
@@ -507,7 +530,10 @@ mod tests {
         let motion = cfg.motion.expect("[motion] must be read").into_config();
         assert_eq!(motion.threshold, 40);
         assert!((motion.contour_area - 0.02).abs() < 1e-9);
-        assert_eq!(motion.sample_stride, 1, "stride 0 would never advance the scan");
+        assert_eq!(
+            motion.sample_stride, 1,
+            "stride 0 would never advance the scan"
+        );
 
         let notify = cfg.notifications.expect("[notifications]").into_config();
         assert!(notify.enabled);

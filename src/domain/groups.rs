@@ -12,7 +12,10 @@ pub struct CameraGroup {
 
 impl CameraGroup {
     pub fn new(name: impl Into<String>, camera_indices: Vec<usize>) -> Self {
-        Self { name: name.into(), camera_indices }
+        Self {
+            name: name.into(),
+            camera_indices,
+        }
     }
 
     /// Returns true if the given camera index belongs to this group.
@@ -58,10 +61,7 @@ pub fn validate_groups(groups: &[CameraGroup], total_cameras: usize) -> Result<(
                 ));
             }
             if seen[idx] {
-                return Err(format!(
-                    "Camera index {} appears in multiple groups",
-                    idx
-                ));
+                return Err(format!("Camera index {} appears in multiple groups", idx));
             }
             seen[idx] = true;
         }
@@ -123,7 +123,10 @@ mod tests {
 
     #[test]
     fn group_file_conversion() {
-        let f = CameraGroupFile { name: "Yard".into(), cameras: vec![0, 2] };
+        let f = CameraGroupFile {
+            name: "Yard".into(),
+            cameras: vec![0, 2],
+        };
         let g = f.into_group();
         assert_eq!(g.name, "Yard");
         assert_eq!(g.camera_indices, vec![0, 2]);

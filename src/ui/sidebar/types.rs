@@ -206,10 +206,7 @@ impl Sidebar {
     /// Display order, tolerant of an unset (`new`) sidebar: falls back to the
     /// natural `0..cameras.len()` when `order` is empty or stale.
     pub fn display_order(&self) -> Vec<usize> {
-        crate::domain::view::apply_order(
-            &self.order,
-            &(0..self.cameras.len()).collect::<Vec<_>>(),
-        )
+        crate::domain::view::apply_order(&self.order, &(0..self.cameras.len()).collect::<Vec<_>>())
     }
 }
 

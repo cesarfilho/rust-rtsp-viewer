@@ -5,8 +5,8 @@
 //! These used to be a full-width bar above the grid (`quick_actions.rs`); the
 //! redesign moves them onto the tile itself so the video area never reflows.
 
-use iced::{Element, Length};
 use iced::widget::{button, container, row, text};
+use iced::{Element, Length};
 
 use super::super::app::App;
 use super::super::message::Message;
@@ -44,7 +44,12 @@ fn pip<'a>(color: iced::Color, size: f32) -> Element<'a, Message> {
 }
 
 /// A single icon button in the on-cell action row.
-fn action_btn<'a>(glyph: &'a str, msg: Message, active: bool, danger: bool) -> Element<'a, Message> {
+fn action_btn<'a>(
+    glyph: &'a str,
+    msg: Message,
+    active: bool,
+    danger: bool,
+) -> Element<'a, Message> {
     let fg = if danger {
         iced::Color::from_rgb(1.0, 0.45, 0.45)
     } else if active {
@@ -98,9 +103,19 @@ pub fn cell_actions(app: &App, idx: usize, selected: bool) -> Element<'_, Messag
                 is_recording,
                 is_recording,
             ))
-            .push(action_btn("\u{266A}", Message::ToggleAudio, is_audio, false));
+            .push(action_btn(
+                "\u{266A}",
+                Message::ToggleAudio,
+                is_audio,
+                false,
+            ));
     }
-    r = r.push(action_btn("\u{25A3}", Message::EnterSpotlight(idx), false, false));
+    r = r.push(action_btn(
+        "\u{25A3}",
+        Message::EnterSpotlight(idx),
+        false,
+        false,
+    ));
 
     container(r)
         .padding(2)
@@ -137,17 +152,33 @@ pub fn feature_actions(app: &App, idx: usize) -> Element<'_, Message> {
         n => format!("Zonas de movimento ({n})"),
     };
     let items: [(&str, String, Message, bool, bool); 4] = [
-        ("\u{25C9}", "Snapshot  (s)".into(), Message::Snapshot, false, false),
+        (
+            "\u{25C9}",
+            "Snapshot  (s)".into(),
+            Message::Snapshot,
+            false,
+            false,
+        ),
         (
             "\u{25CF}",
-            if is_recording { "Parar gravação  (r)" } else { "Gravar  (r)" }.into(),
+            if is_recording {
+                "Parar gravação  (r)"
+            } else {
+                "Gravar  (r)"
+            }
+            .into(),
             Message::ToggleRecording,
             is_recording,
             is_recording,
         ),
         (
             "\u{266A}",
-            if is_audio { "Silenciar  (m)" } else { "Ouvir áudio  (m)" }.into(),
+            if is_audio {
+                "Silenciar  (m)"
+            } else {
+                "Ouvir áudio  (m)"
+            }
+            .into(),
             Message::ToggleAudio,
             is_audio,
             false,
@@ -255,19 +286,24 @@ pub fn placeholder_cell(
     let ring = Theme::color_from_hex(colors.border);
     container(
         iced::widget::column![
-            container(text(glyph).font(crate::ui::icons::FONT).size(20).color(tint))
-                .width(40)
-                .height(40)
-                .center_x(Length::Fill)
-                .center_y(Length::Fill)
-                .style(move |_: &iced::Theme| container::Style {
-                    border: iced::Border {
-                        color: ring,
-                        width: 1.0,
-                        radius: 20.0.into(),
-                    },
-                    ..container::Style::default()
-                }),
+            container(
+                text(glyph)
+                    .font(crate::ui::icons::FONT)
+                    .size(20)
+                    .color(tint)
+            )
+            .width(40)
+            .height(40)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .style(move |_: &iced::Theme| container::Style {
+                border: iced::Border {
+                    color: ring,
+                    width: 1.0,
+                    radius: 20.0.into(),
+                },
+                ..container::Style::default()
+            }),
             text(name)
                 .size(Theme::TEXT_BODY)
                 .color(Theme::color_from_hex(colors.text_secondary)),

@@ -184,7 +184,11 @@ impl Theme {
     /// WCAG relative luminance of an sRGB colour (alpha ignored).
     fn luminance(c: Color) -> f32 {
         let lin = |v: f32| {
-            if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
         };
         0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
     }

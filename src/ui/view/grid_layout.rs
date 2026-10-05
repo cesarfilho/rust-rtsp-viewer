@@ -23,17 +23,22 @@ fn clickable<'a>(cell: impl Into<Element<'a, Message>>, idx: usize) -> Element<'
 }
 
 fn small_badge<'a>(label: String, bg: iced::Color, fg: iced::Color) -> Element<'a, Message> {
-    iced::widget::container(iced::widget::text(label).font(crate::ui::icons::FONT).size(10).color(fg))
-        .padding(iced::Padding::from([1, 4]))
-        .style(move |_: &iced::Theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(bg)),
-            border: iced::Border {
-                radius: 3.0.into(),
-                ..iced::Border::default()
-            },
-            ..iced::widget::container::Style::default()
-        })
-        .into()
+    iced::widget::container(
+        iced::widget::text(label)
+            .font(crate::ui::icons::FONT)
+            .size(10)
+            .color(fg),
+    )
+    .padding(iced::Padding::from([1, 4]))
+    .style(move |_: &iced::Theme| iced::widget::container::Style {
+        background: Some(iced::Background::Color(bg)),
+        border: iced::Border {
+            radius: 3.0.into(),
+            ..iced::Border::default()
+        },
+        ..iced::widget::container::Style::default()
+    })
+    .into()
 }
 
 pub fn grid_layout(app: &App, sidebar_width: f32, available_height: f32) -> Element<'_, Message> {
@@ -117,7 +122,10 @@ pub fn grid_layout(app: &App, sidebar_width: f32, available_height: f32) -> Elem
                 (Theme::color_from_hex(colors.accent_green), 2.0)
             } else if is_recording {
                 (Theme::color_from_hex(colors.accent_red), 2.0)
-            } else if matches!(status, CameraStatus::Reconnecting | CameraStatus::Connecting) {
+            } else if matches!(
+                status,
+                CameraStatus::Reconnecting | CameraStatus::Connecting
+            ) {
                 (Theme::color_from_hex(colors.accent_amber), 2.0)
             } else if is_selected {
                 (Theme::color_from_hex(colors.accent_blue), 2.0)
@@ -131,11 +139,11 @@ pub fn grid_layout(app: &App, sidebar_width: f32, available_height: f32) -> Elem
                 app.videos[idx].view().map(|_| Message::FrameUpdate)
             } else {
                 cell_overlay::placeholder_cell(
-            colors,
-            name.clone(),
-            &status,
-            app.backoff_states.get(idx).and_then(|b| b.status_detail()),
-        )
+                    colors,
+                    name.clone(),
+                    &status,
+                    app.backoff_states.get(idx).and_then(|b| b.status_detail()),
+                )
             };
             let base = iced::widget::container(inner)
                 .width(Length::Fill)
@@ -156,7 +164,11 @@ pub fn grid_layout(app: &App, sidebar_width: f32, available_height: f32) -> Elem
             let mut tl = iced::widget::row![].spacing(3);
             if is_audio {
                 let green = Theme::color_from_hex(colors.accent_green);
-                tl = tl.push(small_badge("\u{266A}".into(), green, Theme::readable_on(green)));
+                tl = tl.push(small_badge(
+                    "\u{266A}".into(),
+                    green,
+                    Theme::readable_on(green),
+                ));
             }
             if is_recording {
                 let e = app.bridges[idx]
@@ -185,7 +197,11 @@ pub fn grid_layout(app: &App, sidebar_width: f32, available_height: f32) -> Elem
             // Bottom-left: compact name chip. fps only when the tile is the
             // focus of attention.
             if has_picture {
-                let show_fps = if is_selected || is_hovered { Some(fps) } else { None };
+                let show_fps = if is_selected || is_hovered {
+                    Some(fps)
+                } else {
+                    None
+                };
                 let pip = cell_overlay::status_pip_color(colors, &status);
                 stack = stack.push(super::pinned(
                     cell_overlay::name_chip(name.clone(), pip, show_fps, is_selected),

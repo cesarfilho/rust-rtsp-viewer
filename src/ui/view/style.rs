@@ -136,7 +136,10 @@ pub enum Intent {
 
 /// A rounded, hover-aware chrome button. One styler for every bar button so
 /// they share radius, padding rhythm and feedback.
-pub fn pill(theme: Theme, intent: Intent) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
+pub fn pill(
+    theme: Theme,
+    intent: Intent,
+) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
     let c = theme.colors();
     let surface = hex(c.surface_hover);
     let accent = hex(c.accent_blue);
@@ -148,13 +151,7 @@ pub fn pill(theme: Theme, intent: Intent) -> impl Fn(&iced::Theme, button::Statu
     move |_, status| {
         let (base_bg, base_fg): (Color, Color) = match intent {
             Intent::Ghost => (Color::TRANSPARENT, text_dim),
-            Intent::Selected => (
-                Color {
-                    a: 0.16,
-                    ..accent
-                },
-                accent,
-            ),
+            Intent::Selected => (Color { a: 0.16, ..accent }, accent),
             Intent::Primary => (accent, on_accent),
             Intent::Danger => (danger, Theme::readable_on(danger)),
         };
@@ -254,7 +251,10 @@ pub fn card(theme: Theme) -> impl Fn(&iced::Theme) -> container::Style {
 
 /// One segment of a segmented control (density picker, layout toggle, group
 /// scope). `active` gets the accent tint; the row shares one rounded frame.
-pub fn segment(theme: Theme, active: bool) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
+pub fn segment(
+    theme: Theme,
+    active: bool,
+) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
     let c = theme.colors();
     let accent = hex(c.accent_blue);
     let dim = hex(c.text_secondary);

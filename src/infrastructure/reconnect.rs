@@ -1,6 +1,6 @@
+use log::{debug, info, warn};
 use std::cell::Cell;
 use std::time::Instant;
-use log::{debug, info, warn};
 
 /// State for the FPS watchdog + backoff reconnect logic.
 /// Shared between single-camera (App) and grid (CameraSlot) paths.
@@ -40,10 +40,7 @@ impl ReconnectState {
     ) -> ReconnectDecision {
         // Backoff timer takes priority
         if backoff_due {
-            info!(
-                "[{}] Backoff timer expired — triggering reconnect",
-                label,
-            );
+            info!("[{}] Backoff timer expired — triggering reconnect", label,);
             self.fps_zero_since.set(None);
             return ReconnectDecision::Reconnect("backoff timer");
         }
@@ -116,7 +113,10 @@ mod tests {
     fn test_backoff_due_returns_reconnect() {
         let rs = ReconnectState::new(15);
         let decision = rs.tick(true, false, Some(25.0), true, "cam");
-        assert!(matches!(decision, ReconnectDecision::Reconnect("backoff timer")));
+        assert!(matches!(
+            decision,
+            ReconnectDecision::Reconnect("backoff timer")
+        ));
     }
 
     #[test]
@@ -131,9 +131,13 @@ mod tests {
     fn test_fps_zero_for_15s_triggers_reconnect() {
         let rs = ReconnectState::new(15);
         // Simulate that fps_zero_since was set 16 seconds ago
-        rs.fps_zero_since.set(Some(Instant::now() - Duration::from_secs(16)));
+        rs.fps_zero_since
+            .set(Some(Instant::now() - Duration::from_secs(16)));
         let decision = rs.tick(true, false, Some(0.0), false, "cam");
-        assert!(matches!(decision, ReconnectDecision::Reconnect("watchdog stall")));
+        assert!(matches!(
+            decision,
+            ReconnectDecision::Reconnect("watchdog stall")
+        ));
         assert!(rs.fps_zero_since.get().is_none());
     }
 
@@ -150,7 +154,8 @@ mod tests {
     #[test]
     fn test_uridecodebin_skips_watchdog() {
         let rs = ReconnectState::new(15);
-        rs.fps_zero_since.set(Some(Instant::now() - Duration::from_secs(20)));
+        rs.fps_zero_since
+            .set(Some(Instant::now() - Duration::from_secs(20)));
         let decision = rs.tick(true, true, Some(0.0), false, "cam");
         assert!(matches!(decision, ReconnectDecision::None));
         assert!(rs.fps_zero_since.get().is_none());
@@ -171,7 +176,8 @@ mod tests {
     #[test]
     fn test_not_live_for_15s_still_does_not_reconnect() {
         let rs = ReconnectState::new(15);
-        rs.fps_zero_since.set(Some(Instant::now() - Duration::from_secs(60)));
+        rs.fps_zero_since
+            .set(Some(Instant::now() - Duration::from_secs(60)));
         let decision = rs.tick(false, false, Some(0.0), false, "cam");
         assert!(matches!(decision, ReconnectDecision::None));
         assert!(rs.fps_zero_since.get().is_none());
@@ -181,7 +187,8 @@ mod tests {
     #[test]
     fn test_uridecodebin_not_live_does_not_reconnect() {
         let rs = ReconnectState::new(15);
-        rs.fps_zero_since.set(Some(Instant::now() - Duration::from_secs(60)));
+        rs.fps_zero_since
+            .set(Some(Instant::now() - Duration::from_secs(60)));
         let decision = rs.tick(false, true, Some(0.0), false, "cam");
         assert!(matches!(decision, ReconnectDecision::None));
     }
@@ -189,7 +196,8 @@ mod tests {
     #[test]
     fn test_live_stream_with_frames_is_healthy() {
         let rs = ReconnectState::new(15);
-        rs.fps_zero_since.set(Some(Instant::now() - Duration::from_secs(60)));
+        rs.fps_zero_since
+            .set(Some(Instant::now() - Duration::from_secs(60)));
         let decision = rs.tick(true, false, Some(25.0), false, "cam");
         assert!(matches!(decision, ReconnectDecision::None));
         assert!(rs.fps_zero_since.get().is_none());

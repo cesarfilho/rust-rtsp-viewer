@@ -21,7 +21,10 @@ pub enum Codec {
     /// H.264 / AVC. Most IP cameras since 2003.
     H264 { profile: H264Profile, level: u8 },
     /// H.265 / HEVC. Modern IP cameras (4K, low bitrate).
-    H265 { profile: H265Profile, tier: H265Tier },
+    H265 {
+        profile: H265Profile,
+        tier: H265Tier,
+    },
     /// Motion JPEG. Legacy / low-end IP cameras.
     Mjpeg,
     /// VP8 (rare in surveillance, but supported by `decodebin`).
@@ -166,7 +169,11 @@ pub fn from_caps(caps: &gst::Caps) -> Option<Codec> {
             .ok()
             .map(H264Profile::from_gst)
             .unwrap_or(H264Profile::Unknown(0));
-        let level = s.get::<&str>("level").ok().and_then(parse_h264_level).unwrap_or(0);
+        let level = s
+            .get::<&str>("level")
+            .ok()
+            .and_then(parse_h264_level)
+            .unwrap_or(0);
         return Some(Codec::H264 { profile, level });
     }
     if name == "video/x-h265" {
@@ -178,7 +185,13 @@ pub fn from_caps(caps: &gst::Caps) -> Option<Codec> {
         let tier = s
             .get::<&str>("tier")
             .ok()
-            .map(|t| if t == "high" { H265Tier::High } else { H265Tier::Main })
+            .map(|t| {
+                if t == "high" {
+                    H265Tier::High
+                } else {
+                    H265Tier::Main
+                }
+            })
             .unwrap_or(H265Tier::Main);
         return Some(Codec::H265 { profile, tier });
     }
@@ -194,9 +207,7 @@ pub fn from_caps(caps: &gst::Caps) -> Option<Codec> {
     if name == "video/x-av1" {
         return Some(Codec::Av1);
     }
-    if name.as_str().starts_with("video/")
-        && !name.as_str().starts_with("video/x-raw")
-    {
+    if name.as_str().starts_with("video/") && !name.as_str().starts_with("video/x-raw") {
         return Some(Codec::Other(name.as_str().to_string()));
     }
     None
@@ -239,7 +250,13 @@ mod tests {
     fn h264_high_41_parses_to_canonical_label() {
         let c = caps("video/x-h264", &[("profile", "high"), ("level", "4.1")]);
         let codec = from_caps(&c).expect("h264 caps should parse");
-        assert_eq!(codec, Codec::H264 { profile: H264Profile::High, level: 4 });
+        assert_eq!(
+            codec,
+            Codec::H264 {
+                profile: H264Profile::High,
+                level: 4
+            }
+        );
         assert_eq!(codec.to_string(), "H264 High@L4.0");
     }
 
@@ -252,11 +269,17 @@ mod tests {
 
     #[test]
     fn h264_constrained_baseline_renders() {
-        let c = caps("video/x-h264", &[("profile", "constrained-baseline"), ("level", "3.1")]);
+        let c = caps(
+            "video/x-h264",
+            &[("profile", "constrained-baseline"), ("level", "3.1")],
+        );
         let codec = from_caps(&c).unwrap();
         assert_eq!(
             codec,
-            Codec::H264 { profile: H264Profile::ConstrainedBaseline, level: 3 }
+            Codec::H264 {
+                profile: H264Profile::ConstrainedBaseline,
+                level: 3
+            }
         );
     }
 
@@ -266,7 +289,10 @@ mod tests {
         let codec = from_caps(&c).unwrap();
         assert_eq!(
             codec,
-            Codec::H264 { profile: H264Profile::Unknown(0), level: 4 }
+            Codec::H264 {
+                profile: H264Profile::Unknown(0),
+                level: 4
+            }
         );
     }
 
@@ -279,7 +305,10 @@ mod tests {
         let codec = from_caps(&c).unwrap();
         assert_eq!(
             codec,
-            Codec::H265 { profile: H265Profile::Main, tier: H265Tier::Main }
+            Codec::H265 {
+                profile: H265Profile::Main,
+                tier: H265Tier::Main
+            }
         );
     }
 
@@ -303,7 +332,10 @@ mod tests {
         assert_eq!(from_caps(&c), None);
         // Other unknown video mimes still fall back to Codec::Other.
         let c = caps("video/x-unknown", &[]);
-        assert_eq!(from_caps(&c), Some(Codec::Other("video/x-unknown".to_string())));
+        assert_eq!(
+            from_caps(&c),
+            Some(Codec::Other("video/x-unknown".to_string()))
+        );
     }
 
     #[test]

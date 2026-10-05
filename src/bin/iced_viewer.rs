@@ -3,7 +3,11 @@ use std::process::ExitCode;
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "rust-rtsp-viewer", version, about = "RTSP/HLS viewer with Iced GUI")]
+#[command(
+    name = "rust-rtsp-viewer",
+    version,
+    about = "RTSP/HLS viewer with Iced GUI"
+)]
 struct Cli {
     /// Path to config file
     #[arg(default_value = "config.toml")]
@@ -41,13 +45,19 @@ fn run(config_path: &str) -> Result<(), String> {
     // message here instead of panicking mid-construction once the GUI is up.
     gstreamer::init().map_err(|e| format!("GStreamer init failed: {e}"))?;
 
-    let recording_config = config.recording.map(|r| r.into_config()).unwrap_or_default();
+    let recording_config = config
+        .recording
+        .map(|r| r.into_config())
+        .unwrap_or_default();
     let snapshot_config = config.snapshot.map(|s| s.into_config()).unwrap_or_default();
     let audio_config = config.audio.map(|a| a.into_config()).unwrap_or_default();
     let theme_name = config.theme.unwrap_or_default();
     let logs_config = config.logs.unwrap_or_default();
     let view_config = config.view.unwrap_or_default();
-    let notify_config = config.notifications.map(|n| n.into_config()).unwrap_or_default();
+    let notify_config = config
+        .notifications
+        .map(|n| n.into_config())
+        .unwrap_or_default();
     let motion_config = config.motion.map(|m| m.into_config()).unwrap_or_default();
     let groups: Vec<_> = config
         .groups

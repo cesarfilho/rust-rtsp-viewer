@@ -30,7 +30,10 @@ pub const PREFETCH_NEXT_PAGE: bool = false;
 pub enum GridMode {
     #[default]
     Auto,
-    Fixed { cols: u8, rows: u8 },
+    Fixed {
+        cols: u8,
+        rows: u8,
+    },
 }
 
 /// The fixed presets offered in the toolbar and cycled by the `g` shortcut,
@@ -64,7 +67,10 @@ impl GridMode {
                 GridMode::Fixed { cols: c, rows: r }
             }
             GridMode::Fixed { cols, rows } => {
-                match FIXED_PRESETS.iter().position(|&(c, r)| c == cols && r == rows) {
+                match FIXED_PRESETS
+                    .iter()
+                    .position(|&(c, r)| c == cols && r == rows)
+                {
                     Some(i) if i + 1 < FIXED_PRESETS.len() => {
                         let (c, r) = FIXED_PRESETS[i + 1];
                         GridMode::Fixed { cols: c, rows: r }
@@ -196,12 +202,7 @@ pub fn page_slice(page: usize, page_size: usize, len: usize) -> std::ops::Range<
 /// by the user's saved `order`. Indices missing from `order` are appended in
 /// their natural order, so a stale/short `order` still yields a total order.
 pub fn apply_order(order: &[usize], visible: &[usize]) -> Vec<usize> {
-    let rank = |idx: usize| -> usize {
-        order
-            .iter()
-            .position(|&o| o == idx)
-            .unwrap_or(usize::MAX)
-    };
+    let rank = |idx: usize| -> usize { order.iter().position(|&o| o == idx).unwrap_or(usize::MAX) };
     let mut out = visible.to_vec();
     // Stable sort keeps natural order among the "not in `order`" tail and among
     // any duplicate ranks.
@@ -334,7 +335,10 @@ mod tests {
         ] {
             assert_eq!(GridMode::parse(&m.as_str()), Some(m));
         }
-        assert_eq!(GridMode::parse("  3 X 3 "), Some(GridMode::Fixed { cols: 3, rows: 3 }));
+        assert_eq!(
+            GridMode::parse("  3 X 3 "),
+            Some(GridMode::Fixed { cols: 3, rows: 3 })
+        );
         assert_eq!(GridMode::parse("nonsense"), None);
         assert_eq!(GridMode::parse("0x3"), None);
         assert_eq!(GridMode::parse("9x9"), None);

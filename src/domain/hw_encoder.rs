@@ -75,8 +75,12 @@ impl HwEncoderConfigFile {
                 _ => HwEncoderBackend::Software,
             });
         }
-        if let Some(k) = self.bitrate_kbps { config.bitrate_kbps = k.clamp(100, 50000); }
-        if let Some(k) = self.keyframe_interval_secs { config.keyframe_interval_secs = k.clamp(1, 30); }
+        if let Some(k) = self.bitrate_kbps {
+            config.bitrate_kbps = k.clamp(100, 50000);
+        }
+        if let Some(k) = self.keyframe_interval_secs {
+            config.keyframe_interval_secs = k.clamp(1, 30);
+        }
         config
     }
 }
@@ -100,21 +104,29 @@ pub fn build_encoder_string(config: &HwEncoderConfig) -> String {
 
     match backend {
         HwEncoderBackend::VaApi => {
-            format!("{} rate-control=cbr bitrate={}", element, config.bitrate_kbps)
+            format!(
+                "{} rate-control=cbr bitrate={}",
+                element, config.bitrate_kbps
+            )
         }
         HwEncoderBackend::Nvenc => {
-            format!("{} bitrate={} key-int-max={}",
-                element, config.bitrate_kbps,
-                config.keyframe_interval_secs)
+            format!(
+                "{} bitrate={} key-int-max={}",
+                element, config.bitrate_kbps, config.keyframe_interval_secs
+            )
         }
         HwEncoderBackend::V4L2 => {
-            format!("{} extra-controls=\"encode,video_bitrate={}\"",
-                element, config.bitrate_kbps * 1000)
+            format!(
+                "{} extra-controls=\"encode,video_bitrate={}\"",
+                element,
+                config.bitrate_kbps * 1000
+            )
         }
         HwEncoderBackend::Software => {
-            format!("{} bitrate={} key-int-max={}",
-                element, config.bitrate_kbps,
-                config.keyframe_interval_secs)
+            format!(
+                "{} bitrate={} key-int-max={}",
+                element, config.bitrate_kbps, config.keyframe_interval_secs
+            )
         }
     }
 }
@@ -172,7 +184,10 @@ mod tests {
 
     #[test]
     fn detect_backend_uses_preferred() {
-        assert_eq!(detect_backend(Some(HwEncoderBackend::Nvenc)), HwEncoderBackend::Nvenc);
+        assert_eq!(
+            detect_backend(Some(HwEncoderBackend::Nvenc)),
+            HwEncoderBackend::Nvenc
+        );
     }
 
     #[test]
@@ -182,7 +197,10 @@ mod tests {
 
     #[test]
     fn build_encoder_string_software() {
-        let config = HwEncoderConfig { preferred_backend: Some(HwEncoderBackend::Software), ..Default::default() };
+        let config = HwEncoderConfig {
+            preferred_backend: Some(HwEncoderBackend::Software),
+            ..Default::default()
+        };
         let s = build_encoder_string(&config);
         assert!(s.starts_with("x264enc"));
         assert!(s.contains("bitrate=4000"));
@@ -190,7 +208,10 @@ mod tests {
 
     #[test]
     fn build_encoder_string_vaapi() {
-        let config = HwEncoderConfig { preferred_backend: Some(HwEncoderBackend::VaApi), ..Default::default() };
+        let config = HwEncoderConfig {
+            preferred_backend: Some(HwEncoderBackend::VaApi),
+            ..Default::default()
+        };
         let s = build_encoder_string(&config);
         assert!(s.starts_with("vaapih264enc"));
         assert!(s.contains("bitrate=4000"));
