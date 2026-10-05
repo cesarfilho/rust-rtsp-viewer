@@ -31,6 +31,7 @@ const CONNECT_GRACE_SECS: u64 = 12;
 
 pub fn update(app: &mut App, message: Message) -> Task<Message> {
     let task = update_inner(app, message);
+    drain_engine_events(app);
     sync_status_rows(app);
     task
 }
@@ -628,109 +629,31 @@ fn persist_zones(app: &mut App, idx: usize) {
     crate::infrastructure::zone_state::save(&app.zones_file);
 }
 
-/// Sample the camera's latest frame and compare it with the previous sample.
-/// Called at ~2 Hz per live camera; logs a timeline event on the rising edge.
+/// Called at ~2 Hz per live camera; the engine raises the event on the rising edge.
 fn detect_camera_motion(app: &mut App, i: usize) {
-    if !app.engine.motion_config.enabled
-        || !matches!(
-            app.engine.status[i],
-            sidebar::CameraStatus::Live | sidebar::CameraStatus::Recording
-        )
-    {
-        app.engine.prev_motion_frames[i] = None;
-        app.engine.motion_active[i] = false;
-        return;
-    }
-    // The reduced detection branch (~320 px), not the full-resolution display
-    // frame: same answer for a fraction of the pixels.
-    let frame = app.engine.bridges[i]
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .capture_detect_frame();
-    let Some((curr, width, height)) = frame else {
-        return;
-    };
-    // Same allocation as last time = the branch has not produced a new frame
-    // yet; diffing a frame with itself would read as "stillness".
-    if app.engine.prev_motion_frames[i]
-        .as_ref()
-        .is_some_and(|prev| prev.as_ptr() == curr.as_ptr() && prev.len() == curr.len())
-    {
-        return;
-    }
-    let zones = app.engine.zones.get(i).filter(|z| z.has_active());
-    let result = app.engine.prev_motion_frames[i].as_ref().and_then(|prev| {
-        crate::domain::motion::detect_motion(
-            prev,
-            &curr,
-            width as usize,
-            height as usize,
-            &app.engine.motion_config,
-            zones,
-        )
-    });
-    app.engine.prev_motion_frames[i] = Some(curr);
-    let Some(result) = result else {
-        return;
-    };
-    log::debug!(
-        "Motion sample, camera {i}: {:.1}% changed{}",
-        result.motion_level * 100.0,
-        if result.global_change {
-            " (global change, discarded)"
-        } else {
-            ""
-        }
-    );
-    if result.motion_active && !app.engine.motion_active[i] {
-        log::info!(
-            "Motion on camera {i}: {:.1}% of the frame",
-            result.motion_level * 100.0
-        );
-        push_event(
-            app,
-            i,
-            EventType::Motion,
-            Some(format!("{:.1}% do quadro", result.motion_level * 100.0)),
-        );
-    }
-    app.engine.motion_active[i] = result.motion_active;
+    app.engine.detect_motion(i);
 }
 
-/// Fire a desktop notification for motion / offline events, at most once per
-/// cooldown per camera and kind.
-fn notify_desktop(app: &mut App, camera_idx: usize, kind: EventType, detail: Option<&str>) {
-    if !app.engine.notify.enabled {
-        return;
-    }
-    let name = app
-        .sidebar
-        .cameras
-        .get(camera_idx)
-        .map_or_else(|| format!("Câmera {}", camera_idx + 1), |c| c.name.clone());
-    let Some((title, body)) = crate::domain::notify::message_for(kind, &name, detail) else {
-        return;
-    };
-    let key = (camera_idx, kind.label());
-    let since = app
-        .engine
-        .notify_last
-        .get(&key)
-        .map(|t| t.elapsed().as_secs());
-    if !crate::domain::notify::cooldown_elapsed(since, app.engine.notify.cooldown_secs) {
-        return;
-    }
-    app.engine.notify_last.insert(key, Instant::now());
-    crate::infrastructure::notify::send(&title, &body);
-}
-
+/// Record an event: the engine applies its notification policy and the host
+/// puts it on the timeline (see [`drain_engine_events`]).
 fn push_event(app: &mut App, camera_idx: usize, kind: EventType, description: Option<String>) {
-    notify_desktop(app, camera_idx, kind, description.as_deref());
-    let mut event = TimelineEvent::new(now_unix_secs(), camera_idx, kind);
-    if let Some(d) = description {
-        event = event.with_description(d);
+    app.engine.emit(camera_idx, kind, description);
+    drain_engine_events(app);
+}
+
+/// The host side of the engine's events: put them on the timeline and deliver
+/// the desktop notification the engine's policy asked for.
+fn drain_engine_events(app: &mut App) {
+    for ev in app.engine.take_events() {
+        if let Some((title, body)) = &ev.notification {
+            crate::infrastructure::notify::send(title, body);
+        }
+        let mut event = TimelineEvent::new(now_unix_secs(), ev.camera, ev.kind);
+        if let Some(d) = ev.detail {
+            event = event.with_description(d);
+        }
+        app.sidebar.timeline.push(event);
     }
-    app.sidebar.timeline.push(event);
 }
 
 fn toast(app: &mut App, message: impl Into<String>) {
@@ -1522,77 +1445,15 @@ fn update_recording(app: &mut App) -> Task<Message> {
 /// Flip a camera's recording state and mirror it into the sidebar and the
 /// timeline. Shared by the `r` key and the motion trigger.
 fn toggle_camera_recording(app: &mut App, idx: usize) -> Result<bool, String> {
-    // A recording is taken from the decoded frames, so starting one on the
-    // sub-stream would save a low-resolution file. Move to the main stream
-    // first; `wanted_quality` then leaves it alone until the recording stops.
-    let starting = !app.engine.bridges[idx]
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .is_recording();
-    if starting && app.engine.stream_quality.get(idx) == Some(&StreamQuality::Sub) {
-        app.engine.restart_stream(idx, StreamQuality::Main);
-    }
-    let is_recording = {
-        let mut bridge = app.engine.bridges[idx]
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        bridge.toggle_recording()?
-    };
+    let is_recording = app.engine.toggle_recording(idx)?;
     app.is_recording = is_recording;
-    if idx < app.sidebar.cameras.len() {
-        app.engine.status[idx] = if is_recording {
-            sidebar::CameraStatus::Recording
-        } else {
-            sidebar::CameraStatus::Live
-        };
-    }
-    let kind = if is_recording {
-        EventType::RecordingStart
-    } else {
-        EventType::RecordingStop
-    };
-    push_event(app, idx, kind, None);
     Ok(is_recording)
 }
 
 /// `[recording] on_motion`: start recording on motion, stop after the
 /// post-roll of quiet. Runs right after each motion sample.
 fn drive_motion_recording(app: &mut App, i: usize) {
-    if !app.engine.motion_recording {
-        return;
-    }
-    let is_recording = app.engine.bridges[i]
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .is_recording();
-    if !is_recording {
-        // Stopped by the user (or a reconnect): the trigger no longer owns it.
-        app.engine.auto_recording[i] = false;
-    }
-    if app.engine.motion_active[i] {
-        app.engine.last_motion_at[i] = Some(Instant::now());
-    }
-    let quiet = app.engine.last_motion_at[i].map_or(u64::MAX, |t| t.elapsed().as_secs());
-    let action = crate::domain::recording::motion_recording_action(
-        is_recording,
-        app.engine.auto_recording[i],
-        app.engine.motion_active[i],
-        quiet,
-        app.engine.motion_post_roll_secs,
-    );
-    match action {
-        crate::domain::recording::MotionRecAction::None => {}
-        crate::domain::recording::MotionRecAction::Start => match toggle_camera_recording(app, i) {
-            Ok(_) => app.engine.auto_recording[i] = true,
-            Err(e) => log::warn!("Motion recording could not start on camera {i}: {e}"),
-        },
-        crate::domain::recording::MotionRecAction::Stop => {
-            if let Err(e) = toggle_camera_recording(app, i) {
-                log::warn!("Motion recording could not stop on camera {i}: {e}");
-            }
-            app.engine.auto_recording[i] = false;
-        }
-    }
+    app.engine.drive_motion_recording(i);
 }
 
 /// Push a volume value to a running audio pipeline, if there is one.

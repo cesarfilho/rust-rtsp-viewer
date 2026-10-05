@@ -18,6 +18,7 @@ use crate::domain::motion::MotionConfig;
 use crate::domain::multi_stream::StreamQuality;
 use crate::domain::multi_stream::{MultiStreamConfig, desired_quality, stream_url_for_quality};
 use crate::domain::notify::NotifyConfig;
+use crate::domain::timeline::EventType;
 use crate::domain::zones::ZoneConfig;
 use crate::infrastructure::reconnect::ReconnectState;
 
@@ -45,6 +46,10 @@ pub struct Engine {
     pub reconnect_states: Vec<ReconnectState>,
     /// Per-camera reconnect backoff.
     pub backoff_states: Vec<BackoffState>,
+    /// Display name per camera (for notification text).
+    pub names: Vec<String>,
+    /// Events raised since the host last called [`Engine::take_events`].
+    pub events: Vec<EngineEvent>,
     /// What each camera is doing right now (connecting, live, recording, ...). The UI's sidebar
     /// rows mirror this after every update.
     pub status: Vec<CameraStatus>,
@@ -266,6 +271,196 @@ impl Engine {
         }
         to_pause
     }
+
+    /// Raise an event. Applies the notification policy: per (camera, kind)
+    /// cooldown, so a flapping camera does not spam.
+    pub fn emit(&mut self, camera: usize, kind: EventType, detail: Option<String>) {
+        let notification = self.notification_for(camera, kind, detail.as_deref());
+        self.events.push(EngineEvent {
+            camera,
+            kind,
+            detail,
+            notification,
+        });
+    }
+
+    fn notification_for(
+        &mut self,
+        camera: usize,
+        kind: EventType,
+        detail: Option<&str>,
+    ) -> Option<(String, String)> {
+        if !self.notify.enabled {
+            return None;
+        }
+        let name = self
+            .names
+            .get(camera)
+            .cloned()
+            .unwrap_or_else(|| format!("Câmera {}", camera + 1));
+        let message = crate::domain::notify::message_for(kind, &name, detail)?;
+        let key = (camera, kind.label());
+        let since = self.notify_last.get(&key).map(|t| t.elapsed().as_secs());
+        if !crate::domain::notify::cooldown_elapsed(since, self.notify.cooldown_secs) {
+            return None;
+        }
+        self.notify_last.insert(key, Instant::now());
+        Some(message)
+    }
+
+    /// Hand the pending events to the host and clear them.
+    pub fn take_events(&mut self) -> Vec<EngineEvent> {
+        std::mem::take(&mut self.events)
+    }
+
+    /// Start or stop recording on camera `i`; returns whether it is recording
+    /// now. A recording is taken from the decoded frames, so starting one on the
+    /// sub-stream would save a low-resolution file: move to the main stream
+    /// first (`wanted_quality` then leaves it alone until the recording stops).
+    pub fn toggle_recording(&mut self, i: usize) -> Result<bool, String> {
+        let starting = !self.bridges[i]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_recording();
+        if starting && self.stream_quality.get(i) == Some(&StreamQuality::Sub) {
+            self.restart_stream(i, StreamQuality::Main);
+        }
+        let recording = self.bridges[i]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .toggle_recording()?;
+        self.status[i] = if recording {
+            CameraStatus::Recording
+        } else {
+            CameraStatus::Live
+        };
+        let kind = if recording {
+            EventType::RecordingStart
+        } else {
+            EventType::RecordingStop
+        };
+        self.emit(i, kind, None);
+        Ok(recording)
+    }
+
+    /// Sample camera `i`'s detection frame and compare it with the previous
+    /// one. Raises a `Motion` event on the rising edge.
+    pub fn detect_motion(&mut self, i: usize) {
+        if !self.motion_config.enabled
+            || !matches!(self.status[i], CameraStatus::Live | CameraStatus::Recording)
+        {
+            self.prev_motion_frames[i] = None;
+            self.motion_active[i] = false;
+            return;
+        }
+        // The reduced detection branch (~320 px), not the full-resolution display
+        // frame: same answer for a fraction of the pixels.
+        let frame = self.bridges[i]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .capture_detect_frame();
+        let Some((curr, width, height)) = frame else {
+            return;
+        };
+        // Same allocation as last time = the branch has not produced a new frame
+        // yet; diffing a frame with itself would read as "stillness".
+        if self.prev_motion_frames[i]
+            .as_ref()
+            .is_some_and(|prev| prev.as_ptr() == curr.as_ptr() && prev.len() == curr.len())
+        {
+            return;
+        }
+        let zones = self.zones.get(i).filter(|z| z.has_active());
+        let result = self.prev_motion_frames[i].as_ref().and_then(|prev| {
+            crate::domain::motion::detect_motion(
+                prev,
+                &curr,
+                width as usize,
+                height as usize,
+                &self.motion_config,
+                zones,
+            )
+        });
+        self.prev_motion_frames[i] = Some(curr);
+        let Some(result) = result else {
+            return;
+        };
+        log::debug!(
+            "Motion sample, camera {i}: {:.1}% changed{}",
+            result.motion_level * 100.0,
+            if result.global_change {
+                " (global change, discarded)"
+            } else {
+                ""
+            }
+        );
+        if result.motion_active && !self.motion_active[i] {
+            log::info!(
+                "Motion on camera {i}: {:.1}% of the frame",
+                result.motion_level * 100.0
+            );
+            self.emit(
+                i,
+                EventType::Motion,
+                Some(format!("{:.1}% do quadro", result.motion_level * 100.0)),
+            );
+        }
+        self.motion_active[i] = result.motion_active;
+    }
+
+    /// Start a recording when motion appears and stop it after the post-roll,
+    /// but only ever stop a recording this trigger started.
+    pub fn drive_motion_recording(&mut self, i: usize) {
+        if !self.motion_recording {
+            return;
+        }
+        let is_recording = self.bridges[i]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_recording();
+        if !is_recording {
+            // Stopped by the user (or a reconnect): the trigger no longer owns it.
+            self.auto_recording[i] = false;
+        }
+        if self.motion_active[i] {
+            self.last_motion_at[i] = Some(Instant::now());
+        }
+        let quiet = self.last_motion_at[i].map_or(u64::MAX, |t| t.elapsed().as_secs());
+        let action = crate::domain::recording::motion_recording_action(
+            is_recording,
+            self.auto_recording[i],
+            self.motion_active[i],
+            quiet,
+            self.motion_post_roll_secs,
+        );
+        match action {
+            crate::domain::recording::MotionRecAction::None => {}
+            crate::domain::recording::MotionRecAction::Start => match self.toggle_recording(i) {
+                Ok(_) => self.auto_recording[i] = true,
+                Err(e) => log::warn!("Motion recording could not start on camera {i}: {e}"),
+            },
+            crate::domain::recording::MotionRecAction::Stop => {
+                if let Err(e) = self.toggle_recording(i) {
+                    log::warn!("Motion recording could not stop on camera {i}: {e}");
+                }
+                self.auto_recording[i] = false;
+            }
+        }
+    }
+}
+
+/// Something that happened in the engine that the host should record and,
+/// maybe, announce. The engine never talks to the desktop itself (there is no
+/// desktop in a container): it decides *whether* and *what* to announce, and
+/// the host (the window today, the daemon's webhook later) delivers it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EngineEvent {
+    pub camera: usize,
+    pub kind: EventType,
+    pub detail: Option<String>,
+    /// `(title, body)` when the notification policy says to announce it
+    /// (enabled, the kind is worth a message, the cooldown has elapsed).
+    pub notification: Option<(String, String)>,
 }
 
 /// What a [`Engine::reconnect`] did.
@@ -300,6 +495,8 @@ mod tests {
             reconnect_states: (0..n).map(|_| ReconnectState::new(15)).collect(),
             backoff_states: (0..n).map(|_| BackoffState::new()).collect(),
             stream_quality: vec![StreamQuality::Main; n],
+            names: (0..n).map(|i| format!("cam{i}")).collect(),
+            events: Vec::new(),
             status: vec![CameraStatus::Connecting; n],
             camera_configs: vec![cfg; n],
             camera_enabled: vec![true; n],
@@ -441,5 +638,123 @@ mod tests {
         let mut e = engine(3);
         e.camera_enabled[1] = false;
         assert_eq!(e.enabled_cameras(), vec![0, 2]);
+    }
+
+    fn feed(e: &Engine, i: usize, rgba: Vec<u8>) {
+        *e.bridges[i].lock().unwrap().detect_frame.lock().unwrap() =
+            Some(crate::engine::bridge::DetectFrame {
+                rgba: bytes::Bytes::from(rgba),
+                width: 20,
+                height: 20,
+            });
+    }
+
+    /// A 20×20 gray frame with the first `rows` rows turned white.
+    fn frame(rows: usize) -> Vec<u8> {
+        let mut f = vec![100u8; 20 * 20 * 4];
+        for px in f.chunks_mut(4).take(rows * 20) {
+            px[..3].copy_from_slice(&[255, 255, 255]);
+        }
+        f
+    }
+
+    fn live_motion_engine() -> Engine {
+        let mut e = engine(1);
+        e.status[0] = CameraStatus::Live;
+        e.motion_config = MotionConfig {
+            enabled: true,
+            sample_stride: 1,
+            ..MotionConfig::default()
+        };
+        e
+    }
+
+    #[test]
+    fn motion_raises_one_event_on_the_rising_edge() {
+        let mut e = live_motion_engine();
+        feed(&e, 0, frame(0));
+        e.detect_motion(0); // first sample: nothing to compare with
+        feed(&e, 0, frame(4)); // 20% of the frame changes
+        e.detect_motion(0);
+        feed(&e, 0, frame(5));
+        e.detect_motion(0); // still moving: no second event
+        let events = e.take_events();
+        assert_eq!(events.len(), 1, "got {events:?}");
+        assert_eq!(events[0].kind, EventType::Motion);
+        assert!(e.motion_active[0]);
+    }
+
+    #[test]
+    fn a_whole_frame_change_is_not_motion() {
+        let mut e = live_motion_engine();
+        feed(&e, 0, frame(0));
+        e.detect_motion(0);
+        feed(&e, 0, frame(20)); // everything flips at once (IR cut, exposure)
+        e.detect_motion(0);
+        assert!(e.take_events().is_empty());
+        assert!(!e.motion_active[0]);
+    }
+
+    #[test]
+    fn a_camera_that_is_not_live_has_no_motion_state() {
+        let mut e = live_motion_engine();
+        e.status[0] = CameraStatus::Offline;
+        e.motion_active[0] = true;
+        e.prev_motion_frames[0] = Some(bytes::Bytes::from(frame(0)));
+        feed(&e, 0, frame(4));
+        e.detect_motion(0);
+        assert!(!e.motion_active[0]);
+        assert!(e.prev_motion_frames[0].is_none());
+        assert!(e.take_events().is_empty());
+    }
+
+    #[test]
+    fn the_same_detection_frame_is_not_compared_with_itself() {
+        let mut e = live_motion_engine();
+        feed(&e, 0, frame(0));
+        e.detect_motion(0);
+        // no new frame arrived: the slot still holds the same allocation
+        e.detect_motion(0);
+        e.detect_motion(0);
+        assert!(e.take_events().is_empty());
+        assert!(!e.motion_active[0]);
+    }
+
+    #[test]
+    fn events_carry_a_notification_only_when_the_policy_allows() {
+        let mut e = engine(1);
+        e.emit(0, EventType::Motion, None);
+        assert!(
+            e.take_events()[0].notification.is_none(),
+            "notifications are off"
+        );
+
+        e.notify.enabled = true;
+        e.notify.cooldown_secs = 60;
+        e.emit(0, EventType::Motion, Some("5% do quadro".into()));
+        e.emit(0, EventType::Motion, None);
+        let events = e.take_events();
+        assert!(events[0].notification.is_some(), "first one is announced");
+        assert!(
+            events[1].notification.is_none(),
+            "the second is inside the cooldown"
+        );
+    }
+
+    #[test]
+    fn take_events_clears_the_queue() {
+        let mut e = engine(1);
+        e.emit(0, EventType::Online, None);
+        assert_eq!(e.take_events().len(), 1);
+        assert!(e.take_events().is_empty());
+    }
+
+    #[test]
+    fn toggling_recording_without_a_pipeline_fails_cleanly() {
+        let mut e = engine(1);
+        e.status[0] = CameraStatus::Live;
+        assert!(e.toggle_recording(0).is_err());
+        assert_eq!(e.status[0], CameraStatus::Live, "status is untouched");
+        assert!(e.take_events().is_empty(), "no event for a failed toggle");
     }
 }

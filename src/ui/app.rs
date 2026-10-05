@@ -356,6 +356,8 @@ pub fn new_app(
         reconnect_states,
         backoff_states,
         stream_quality: vec![crate::domain::multi_stream::StreamQuality::Main; kept_cameras.len()],
+        names: sidebar.cameras.iter().map(|c| c.name.clone()).collect(),
+        events: Vec::new(),
         status: vec![crate::domain::camera_status::CameraStatus::Connecting; count],
         camera_configs: kept_cameras,
         camera_enabled: vec![true; count],
