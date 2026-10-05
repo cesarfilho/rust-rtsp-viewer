@@ -52,6 +52,9 @@
 #                                       # mkv sobrevive a queda de energia; mp4 não
 # on_motion = false                     # grava sozinho enquanto há movimento
 # motion_post_roll_secs = 15            # segue gravando N s após o último movimento (3–3600)
+# motion_pre_roll_secs = 5              # inclui N s ANTES do movimento (0–30; 0 desliga). Só câmeras RTSP
+#                                       # H.264/H.265; guarda ~N s de vídeo codificado na memória por câmera
+#                                       # (≈ bitrate × N s) e começa no keyframe anterior, então pode ser um GOP a mais
 #                                       # as zonas de movimento se desenham pelo menu da câmera
 
 # ── Notificações de desktop (movimento e câmera offline) ─────────────────

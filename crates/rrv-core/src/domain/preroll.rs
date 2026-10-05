@@ -69,6 +69,11 @@ impl<T> GopRing<T> {
         }
     }
 
+    /// O item mais novo.
+    pub fn newest(&self) -> Option<&T> {
+        self.entries.back().map(|e| &e.item)
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }

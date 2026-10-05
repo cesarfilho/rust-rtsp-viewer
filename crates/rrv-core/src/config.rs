@@ -224,6 +224,8 @@ pub struct RecordingConfigFile {
     pub on_motion: Option<bool>,
     /// Seconds to keep recording after the last motion (3..=3600). Default: 15.
     pub motion_post_roll_secs: Option<u32>,
+    /// Seconds of video to keep before the motion (0..=30; 0 = off). Default: 5.
+    pub motion_pre_roll_secs: Option<u32>,
 }
 
 /// Flat mirror of `domain::audio::AudioConfig`
@@ -262,6 +264,9 @@ impl RecordingConfigFile {
         }
         if let Some(p) = self.motion_post_roll_secs {
             config.motion_post_roll_secs = p.clamp(3, 3600);
+        }
+        if let Some(p) = self.motion_pre_roll_secs {
+            config.motion_pre_roll_secs = p.min(30);
         }
         if let Some(c) = self.container {
             config.container = match c.to_lowercase().as_str() {

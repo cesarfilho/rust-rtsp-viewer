@@ -123,6 +123,10 @@ pub struct RecordingConfig {
     pub on_motion: bool,
     /// Keep recording this long after the last motion. Range: 3s ..= 1h.
     pub motion_post_roll_secs: u32,
+    /// Seconds of video kept **before** the motion that starts a recording, taken
+    /// from a ring of the camera's own encoded stream (RTSP H.264/H.265 only).
+    /// 0 turns it off. Range: 0 ..= 30. Rounded up to whole GOPs.
+    pub motion_pre_roll_secs: u32,
 }
 
 impl Default for RecordingConfig {
@@ -134,11 +138,13 @@ impl Default for RecordingConfig {
             container: Container::default(),
             on_motion: false,
             motion_post_roll_secs: DEFAULT_MOTION_POST_ROLL_SECS,
+            motion_pre_roll_secs: DEFAULT_MOTION_PRE_ROLL_SECS,
         }
     }
 }
 
 pub const DEFAULT_MOTION_POST_ROLL_SECS: u32 = 15;
+pub const DEFAULT_MOTION_PRE_ROLL_SECS: u32 = 5;
 
 /// What the motion-triggered recorder should do this sample.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

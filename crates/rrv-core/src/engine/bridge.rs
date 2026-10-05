@@ -48,7 +48,18 @@ pub(crate) struct DetectFrame {
 /// Building the encoder chain on demand (rather than leaving it wired up
 /// permanently with the sink pointed at `/dev/null`) is what keeps an idle
 /// camera from burning a core on H.264 encoding it will never use.
+/// The pre-roll ring and, while a recording is on, the `appsrc` that feeds it.
+pub(crate) struct RingState {
+    pub(crate) ring: crate::domain::preroll::GopRing<gst::Sample>,
+    /// Set while a recording is running: every sample is forwarded to it.
+    pub(crate) sink: Option<gstreamer_app::AppSrc>,
+    /// The recording just started: the ring's history has not been delivered yet.
+    pub(crate) fresh: bool,
+}
+
 pub(crate) struct RecordingBranch {
+    /// The pre-roll ring that feeds this branch (instead of a `tee` pad), if any.
+    pub(crate) ring: Option<Arc<Mutex<RingState>>>,
     /// Which `tee` the branch hangs from (`tee` for decoded frames, `enc_tee`
     /// for the camera's own stream).
     pub(crate) tee_name: &'static str,
@@ -57,7 +68,7 @@ pub(crate) struct RecordingBranch {
     /// Path of the segment `splitmuxsink` has open right now.
     pub(crate) current_segment: Arc<Mutex<Option<String>>>,
     /// The `tee` request pad feeding this branch; must be released on teardown.
-    pub(crate) tee_pad: gst::Pad,
+    pub(crate) tee_pad: Option<gst::Pad>,
     /// Head of the branch — the pad we inject EOS into to finalise the file.
     pub(crate) queue: gst::Element,
     /// Every element we added to the pipeline, in downstream order.
@@ -95,6 +106,13 @@ pub struct GStreamerBridge {
     pub headless: bool,
     /// Why the next recording starts: `"motion"` or `"manual"` (retention rules differ).
     pub recording_mode: &'static str,
+    /// Seconds of pre-roll to keep (0 = no ring). Set before the pipeline starts.
+    pub preroll_secs: u32,
+    /// The pre-roll ring of the running pipeline (RTSP copy path only).
+    pub(crate) ring: Option<Arc<Mutex<RingState>>>,
+    /// How much video came from the ring when the last recording started (ms): the
+    /// first segment's start time is moved back by this much.
+    pub(crate) preroll_ms: Arc<std::sync::atomic::AtomicI64>,
     /// History database and this camera's name (set by `Engine::set_store`).
     pub store: Option<(crate::infrastructure::store::StoreHandle, String)>,
     /// Most recent detection frame, `None` until the first one arrives.
@@ -166,6 +184,9 @@ impl GStreamerBridge {
             detect_enabled: false,
             headless: false,
             recording_mode: "manual",
+            preroll_secs: 0,
+            ring: None,
+            preroll_ms: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             store: None,
             detect_frame: Arc::new(Mutex::new(None)),
             recording: None,
@@ -568,6 +589,7 @@ impl GStreamerBridge {
         self.is_live.store(false, Ordering::Relaxed);
         self.metrics.is_live.store(false, Ordering::Relaxed);
         self.rtp_jitterbuffers.clear();
+        self.ring = None;
         self.jb_scan_done = false;
         self.jb_scan_attempts = 0;
         self.decoder_scan_done = false;

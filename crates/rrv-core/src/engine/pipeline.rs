@@ -197,6 +197,81 @@ fn insert_detect_branch(pipeline: &gst::Pipeline, bridge: &GStreamerBridge) -> R
     Ok(())
 }
 
+/// Attach the pre-roll ring to the encoded tap:
+/// `enc_tee → queue(leaky) → appsink(ring_sink)`. Every encoded buffer lands in a
+/// [`GopRing`](crate::domain::preroll::GopRing); a recording that starts drains it first, so
+/// the file begins before the motion that triggered it (plan 3.6). The sink is
+/// `async=false` like every branch sink that is not the display.
+fn insert_ring_branch(
+    pipeline: &gst::Pipeline,
+    bridge: &mut GStreamerBridge,
+) -> Result<(), String> {
+    let Some(tee) = pipeline.by_name(ENCODED_TEE) else {
+        return Ok(()); // HLS, file or a custom decoder: no encoded tap, no ring
+    };
+    let desc = "queue name=ring_queue leaky=downstream max-size-buffers=0 max-size-bytes=0 \
+                max-size-time=4000000000 \
+                ! appsink name=ring_sink sync=false async=false emit-signals=true";
+    let bin = gst::parse::bin_from_description(desc, true)
+        .map_err(|e| format!("ring branch parse error: {e}"))?;
+    let appsink = bin
+        .by_name("ring_sink")
+        .ok_or("appsink 'ring_sink' not found")?
+        .dynamic_cast::<gst_app::AppSink>()
+        .map_err(|_| "ring_sink is not an appsink".to_string())?;
+
+    let state = Arc::new(Mutex::new(super::bridge::RingState {
+        ring: crate::domain::preroll::GopRing::new(bridge.preroll_secs as i64 * 1000),
+        sink: None,
+        fresh: false,
+    }));
+    let cb_state = state.clone();
+    let preroll_ms = bridge.preroll_ms.clone();
+    appsink.set_callbacks(
+        gst_app::AppSinkCallbacks::builder()
+            .new_sample(move |sink| {
+                let sample = sink.pull_sample().map_err(|_| gst::FlowError::Error)?;
+                let Some(buf) = sample.buffer() else {
+                    return Ok(gst::FlowSuccess::Ok);
+                };
+                let pts = buf.pts().map_or(0, |t| t.mseconds() as i64);
+                let key = !buf.flags().contains(gst::BufferFlags::DELTA_UNIT);
+                let mut st = cb_state.lock().unwrap_or_else(|e| e.into_inner());
+                st.ring.push(pts, key, sample.clone());
+                if let Some(src) = st.sink.clone() {
+                    if st.fresh {
+                        // The recording just started: the history (which ends with
+                        // this very sample) goes in first, then live samples follow.
+                        st.fresh = false;
+                        preroll_ms.store(st.ring.span_ms(), Ordering::Relaxed);
+                        for s in st.ring.history() {
+                            let _ = src.push_sample(&s);
+                        }
+                    } else {
+                        let _ = src.push_sample(&sample);
+                    }
+                }
+                Ok(gst::FlowSuccess::Ok)
+            })
+            .build(),
+    );
+
+    pipeline
+        .add(&bin)
+        .map_err(|e| format!("Failed to add ring branch: {e}"))?;
+    bin.sync_state_with_parent()
+        .map_err(|e| format!("Failed to sync ring branch: {e}"))?;
+    let tee_pad = tee
+        .request_pad_simple("src_%u")
+        .ok_or("tee refused a src pad for the ring")?;
+    let sink_pad = bin.static_pad("sink").ok_or("ring branch has no sink")?;
+    tee_pad
+        .link(&sink_pad)
+        .map_err(|e| format!("tee → ring branch link failed: {e}"))?;
+    bridge.ring = Some(state);
+    Ok(())
+}
+
 /// Measure per-frame decode time by matching buffer PTS between the
 /// decoder's input and the post-decode queue's input.
 ///
@@ -538,6 +613,16 @@ impl GStreamerBridge {
                 t.static_pad("sink").and_then(|p| p.current_caps())
             );
         }
+        // With a pre-roll ring that already holds video, the recording is fed by the
+        // ring (history first, then live) instead of a `tee` pad.
+        let ring_state: Option<Arc<Mutex<super::bridge::RingState>>> = if parser_factory.is_some() {
+            self.ring
+                .clone()
+                .filter(|r| !r.lock().unwrap_or_else(|e| e.into_inner()).ring.is_empty())
+        } else {
+            None
+        };
+        self.preroll_ms.store(0, Ordering::Relaxed);
         let (tee_name, tee) = match parser_factory {
             Some(_) => (ENCODED_TEE, pipeline.by_name(ENCODED_TEE)),
             None => ("tee", pipeline.by_name("tee")),
@@ -554,10 +639,30 @@ impl GStreamerBridge {
         let pattern = segment_location_pattern(now_unix_secs(), container);
         let location = self.recording_config.dir.join(&pattern);
 
-        let queue = gst::ElementFactory::make("queue")
-            .name(format!("recording_queue_{seq}"))
-            .build()
-            .map_err(|e| format!("Failed to create recording_queue: {e}"))?;
+        let queue: gst::Element = match &ring_state {
+            Some(r) => {
+                let caps = r
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .ring
+                    .newest()
+                    .and_then(|s| s.caps().map(|c| c.to_owned()));
+                let src = gst::ElementFactory::make("appsrc")
+                    .name(format!("recording_src_{seq}"))
+                    .property("format", gst::Format::Time)
+                    .property("max-bytes", 0u64)
+                    .build()
+                    .map_err(|e| format!("Failed to create recording appsrc: {e}"))?;
+                if let Some(c) = caps {
+                    src.set_property("caps", c);
+                }
+                src
+            }
+            None => gst::ElementFactory::make("queue")
+                .name(format!("recording_queue_{seq}"))
+                .build()
+                .map_err(|e| format!("Failed to create recording_queue: {e}"))?,
+        };
         // Re-encode path (decoded frames): videoconvert → x264enc. Copy path: a
         // parser only, so no CPU goes into encoding.
         let chain: Vec<gst::Element> = match parser_factory {
@@ -621,10 +726,16 @@ impl GStreamerBridge {
             let current = current_segment.clone();
             let mode = self.recording_mode.to_string();
             let pattern = location.to_string_lossy().to_string();
+            let preroll_ms = self.preroll_ms.clone();
             sink.connect("format-location", false, move |args| {
                 let id = args[1].get::<u32>().unwrap_or(0);
                 let path = pattern.replacen("%03d", &format!("{id:03}"), 1);
-                let now = crate::engine::now_ms();
+                let mut now = crate::engine::now_ms();
+                if id == 0 {
+                    // The first file starts with the pre-roll: it begins that much
+                    // before the moment the recording was asked for.
+                    now -= preroll_ms.load(Ordering::Relaxed);
+                }
                 let mut cur = current.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(prev) = cur.replace(path.clone()) {
                     store.send(StoreCmd::SegmentClosed {
@@ -705,15 +816,27 @@ impl GStreamerBridge {
                     .map_err(|e| format!("Failed to start recording element: {e}"))?;
             }
 
-            let tee_pad = tee
-                .request_pad_simple("src_%u")
-                .ok_or("tee refused a src pad")?;
-            // Park it first so the error path can release it even if linking fails.
-            *tee_pad_slot.borrow_mut() = Some(tee_pad.clone());
-            let queue_sink = queue.static_pad("sink").ok_or("queue has no sink pad")?;
-            tee_pad
-                .link(&queue_sink)
-                .map_err(|e| format!("tee → recording_queue link failed: {e}"))?;
+            if let Some(r) = &ring_state {
+                // Hand the branch to the ring: from the next sample on it delivers the
+                // history and then the live stream.
+                let src = queue
+                    .clone()
+                    .downcast::<gst_app::AppSrc>()
+                    .map_err(|_| "recording source is not an appsrc".to_string())?;
+                let mut st = r.lock().unwrap_or_else(|e| e.into_inner());
+                st.sink = Some(src);
+                st.fresh = true;
+            } else {
+                let tee_pad = tee
+                    .request_pad_simple("src_%u")
+                    .ok_or("tee refused a src pad")?;
+                // Park it first so the error path can release it even if linking fails.
+                *tee_pad_slot.borrow_mut() = Some(tee_pad.clone());
+                let queue_sink = queue.static_pad("sink").ok_or("queue has no sink pad")?;
+                tee_pad
+                    .link(&queue_sink)
+                    .map_err(|e| format!("tee → recording_queue link failed: {e}"))?;
+            }
 
             Ok(eos_seen)
         };
@@ -731,13 +854,16 @@ impl GStreamerBridge {
                 return Err(e);
             }
         };
-        let tee_pad = tee_pad_slot
-            .into_inner()
-            .ok_or("tee pad missing after attach")?;
+        let tee_pad = tee_pad_slot.into_inner();
+        if tee_pad.is_none() && ring_state.is_none() {
+            return Err("tee pad missing after attach".into());
+        }
 
         log::info!(
             "Recording started{}: {} (segments: {}s / {} bytes)",
-            if parser_factory.is_some() {
+            if ring_state.is_some() {
+                " (camera stream, no re-encode, with pre-roll)"
+            } else if parser_factory.is_some() {
                 " (camera stream, no re-encode)"
             } else {
                 ""
@@ -748,6 +874,7 @@ impl GStreamerBridge {
         );
 
         self.recording = Some(RecordingBranch {
+            ring: ring_state.clone(),
             tee_name,
             store: self.store.clone(),
             current_segment,
@@ -773,19 +900,28 @@ impl GStreamerBridge {
             return Ok(None);
         }
 
+        // Fed by the pre-roll ring: take the appsrc out of the ring under its lock (no
+        // sample is pushed after that) and end its stream.
+        if let Some(ring) = &branch.ring {
+            let src = ring.lock().unwrap_or_else(|e| e.into_inner()).sink.take();
+            if let Some(src) = src {
+                let _ = src.end_of_stream();
+            }
+            return Ok(Some(branch));
+        }
+
         let queue_sink = branch
             .queue
             .static_pad("sink")
             .ok_or("recording queue has no sink pad")?;
+        let tee_pad = branch.tee_pad.clone().ok_or("recording has no tee pad")?;
 
         let qs = queue_sink.clone();
-        branch
-            .tee_pad
-            .add_probe(gst::PadProbeType::IDLE, move |pad, _info| {
-                let _ = pad.unlink(&qs);
-                let _ = qs.send_event(gst::event::Eos::new());
-                gst::PadProbeReturn::Remove
-            });
+        tee_pad.add_probe(gst::PadProbeType::IDLE, move |pad, _info| {
+            let _ = pad.unlink(&qs);
+            let _ = qs.send_event(gst::event::Eos::new());
+            gst::PadProbeReturn::Remove
+        });
 
         Ok(Some(branch))
     }
@@ -804,8 +940,10 @@ impl GStreamerBridge {
         for el in &branch.elements {
             let _ = pipeline.remove(el);
         }
-        if let Some(tee) = pipeline.by_name(branch.tee_name) {
-            tee.release_request_pad(&branch.tee_pad);
+        if let Some(pad) = &branch.tee_pad
+            && let Some(tee) = pipeline.by_name(branch.tee_name)
+        {
+            tee.release_request_pad(pad);
         }
         if let Some((store, _)) = &branch.store
             && let Some(path) = branch
@@ -903,6 +1041,10 @@ impl GStreamerBridge {
         insert_tee(&pipeline)?;
         if self.detect_enabled {
             insert_detect_branch(&pipeline, self)?;
+        }
+        self.ring = None;
+        if self.preroll_secs > 0 {
+            insert_ring_branch(&pipeline, self)?;
         }
         install_decode_time_probes(&pipeline, &self.metrics);
 
@@ -1370,6 +1512,88 @@ mod tests {
         assert!(
             file_is_playable(&segments[0]),
             "the copied segment did not decode to EOS"
+        );
+        bridge.stop();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Duration (ms) of a media file, from a paused decodebin.
+    fn file_duration_ms(path: &std::path::Path) -> u64 {
+        let desc = format!(
+            "filesrc location={} ! decodebin ! fakesink sync=false",
+            quote_launch_value(&path.to_string_lossy())
+        );
+        let p = gst::parse::launch(&desc)
+            .unwrap()
+            .downcast::<gst::Pipeline>()
+            .unwrap();
+        p.set_state(gst::State::Paused).unwrap();
+        let _ = p.state(gst::ClockTime::from_seconds(5));
+        let d = p
+            .query_duration::<gst::ClockTime>()
+            .map_or(0, |d| d.mseconds());
+        let _ = p.set_state(gst::State::Null);
+        d
+    }
+
+    /// Plan 3.6: a recording that starts on the pre-roll ring begins *before* the moment
+    /// it was asked for. A 1.5 s recording with a 2 s ring must be well over 3 s long
+    /// (without the ring it would be about 1.5 s), still playable, with no re-encode.
+    #[test]
+    fn a_recording_started_on_the_ring_includes_the_pre_roll() {
+        let _ = gst::init();
+        let dir = std::env::temp_dir().join(format!("rrv-rec-ring-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // GOP of 1 s so the ring keeps whole GOPs close to the asked 2 s.
+        let desc = "videotestsrc is-live=true \
+             ! video/x-raw,format=I420,width=320,height=240,framerate=30/1 \
+             ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=30 \
+             ! h264parse \
+             ! tee name=enc_tee \
+             ! queue \
+             ! avdec_h264 \
+             ! videoconvert name=converter \
+             ! capsfilter name=filter caps=\"video/x-raw,format=RGBA\" \
+             ! appsink name=display_sink sync=false emit-signals=true max-buffers=2 drop=true";
+        let pipeline = gst::parse::launch(desc)
+            .unwrap()
+            .downcast::<gst::Pipeline>()
+            .unwrap();
+        let mut bridge = GStreamerBridge::new(320, 240).unwrap();
+        bridge.recording_config.dir = dir.clone();
+        bridge.preroll_secs = 2;
+        setup_appsink(&pipeline, &mut bridge).unwrap();
+        insert_tee(&pipeline).unwrap();
+        insert_ring_branch(&pipeline, &mut bridge).unwrap();
+        bridge.pipeline = Some(pipeline.clone());
+        bridge.start_playing().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(3500)); // the ring fills
+
+        bridge.start_recording().expect("recording should start");
+        assert!(
+            pipeline.by_name("recording_src_1").is_some(),
+            "fed by the ring, not by a tee pad"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        bridge.stop_recording_blocking().unwrap();
+
+        let segments: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "mkv"))
+            .collect();
+        assert_eq!(segments.len(), 1, "{segments:?}");
+        assert!(file_is_playable(&segments[0]), "did not play to EOS");
+        let dur = file_duration_ms(&segments[0]);
+        assert!(
+            (3_000..=5_500).contains(&dur),
+            "expected ~1.5 s + 2..3 s of pre-roll, got {dur} ms"
+        );
+        assert!(
+            bridge.preroll_ms.load(Ordering::Relaxed) >= 1_900,
+            "the first segment's start must be moved back by the pre-roll"
         );
         bridge.stop();
         let _ = std::fs::remove_dir_all(&dir);

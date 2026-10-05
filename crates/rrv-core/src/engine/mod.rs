@@ -61,6 +61,8 @@ pub struct ConfiguredBehaviour {
     pub motion_enabled: bool,
     pub motion_recording: bool,
     pub notify_enabled: bool,
+    /// Pre-roll seconds the config asked for (kept so leaving display-only restores it).
+    pub preroll_secs: u32,
 }
 
 /// How long a freshly (re)started pipeline shows `Connecting` instead of
@@ -187,6 +189,11 @@ impl Engine {
             };
             bridge.recording_config = recording.clone();
             bridge.detect_enabled = motion.enabled;
+            bridge.preroll_secs = if recording.on_motion {
+                recording.motion_pre_roll_secs
+            } else {
+                0
+            };
             let base_label = cam
                 .label
                 .clone()
@@ -248,6 +255,11 @@ impl Engine {
                 motion_enabled: motion.enabled,
                 motion_recording,
                 notify_enabled: notify.enabled,
+                preroll_secs: if recording.on_motion {
+                    recording.motion_pre_roll_secs
+                } else {
+                    0
+                },
             },
             names,
             events: Vec::new(),
@@ -928,7 +940,10 @@ impl Engine {
         self.motion_recording = c.motion_recording && !display_only;
         self.notify.enabled = c.notify_enabled && !display_only;
         for b in &self.bridges {
-            b.lock().unwrap_or_else(|e| e.into_inner()).detect_enabled = self.motion_config.enabled;
+            let mut b = b.lock().unwrap_or_else(|e| e.into_inner());
+            b.detect_enabled = self.motion_config.enabled;
+            // A window that only shows has no use for a ring of encoded video.
+            b.preroll_secs = if display_only { 0 } else { c.preroll_secs };
         }
         for i in 0..self.bridges.len() {
             self.prev_motion_frames[i] = None;
@@ -1004,6 +1019,7 @@ mod tests {
                 motion_enabled: false,
                 motion_recording: false,
                 notify_enabled: false,
+                preroll_secs: 0,
             },
             names: (0..n).map(|i| format!("cam{i}")).collect(),
             events: Vec::new(),
