@@ -14,6 +14,7 @@ use crate::infrastructure::view_state::ViewStateFile;
 
 use super::app::PendingBurst;
 use super::bridge::now_unix_secs;
+use super::daemon::{Effect, PendingRequest};
 use super::message::LayoutMode;
 use super::sidebar;
 use super::state::{Toast, VU_PEAK_DECAY_MS};
@@ -37,6 +38,26 @@ fn sync_status_rows(app: &mut App) {
         if row.status != *status {
             row.status = status.clone();
         }
+    }
+    // Com um daemon, quem grava é ele: o REC vem do que ele diz, nunca do que
+    // esta janela decodifica. A ligação é pelo nome da câmera.
+    if app.daemon.is_connected() {
+        for row in app.sidebar.cameras.iter_mut() {
+            let Some(info) = app.daemon.info_for(&row.name) else {
+                continue;
+            };
+            row.is_recording = info.recording;
+            if info.recording && row.status == sidebar::CameraStatus::Live {
+                row.status = sidebar::CameraStatus::Recording;
+            } else if !info.recording && row.status == sidebar::CameraStatus::Recording {
+                row.status = sidebar::CameraStatus::Live;
+            }
+        }
+        app.is_recording = app
+            .sidebar
+            .selected
+            .and_then(|i| app.sidebar.cameras.get(i))
+            .is_some_and(|c| c.is_recording);
     }
 }
 
@@ -65,6 +86,7 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
             app.zone_edit = Some(super::app::ZoneEdit {
                 camera_idx: idx,
                 temp_vertices: Vec::new(),
+                saving: false,
             });
             toast(
                 app,
@@ -97,6 +119,10 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ZoneClear => {
             if let Some(idx) = app.zone_edit.as_ref().map(|e| e.camera_idx) {
+                if app.daemon.is_daemon_mode() {
+                    send_zones(app, idx, Vec::new());
+                    return Task::none();
+                }
                 if let Some(cfg) = app.engine.zones.get_mut(idx) {
                     cfg.zones.clear();
                 }
@@ -577,6 +603,9 @@ fn finish_zone(app: &mut App) {
     let Some(edit) = app.zone_edit.as_mut() else {
         return;
     };
+    if edit.saving {
+        return; // aguardando o daemon
+    }
     if edit.temp_vertices.len() < 3 {
         toast(app, "Uma zona precisa de pelo menos 3 pontos");
         return;
@@ -586,6 +615,23 @@ fn finish_zone(app: &mut App) {
         return;
     }
     let idx = edit.camera_idx;
+
+    if app.daemon.is_daemon_mode() {
+        // O daemon é dono das zonas: a janela só as aplica quando ele confirma,
+        // e o editor segue aberto com o desenho se ele recusar.
+        let vertices = edit.temp_vertices.clone();
+        let mut zones = app
+            .engine
+            .zones
+            .get(idx)
+            .map(|c| c.zones.clone())
+            .unwrap_or_default();
+        let name = format!("Zona {}", zones.len() + 1);
+        zones.push(crate::domain::zones::MotionZone::new(name, vertices));
+        send_zones(app, idx, zones);
+        return;
+    }
+
     let vertices = std::mem::take(&mut edit.temp_vertices);
     if let Some(cfg) = app.engine.zones.get_mut(idx) {
         let name = format!("Zona {}", cfg.zones.len() + 1);
@@ -594,6 +640,31 @@ fn finish_zone(app: &mut App) {
     }
     persist_zones(app, idx);
     toast(app, "Zona salva");
+}
+
+/// Ask the daemon to store `zones` for camera `idx` (a camera of this window).
+fn send_zones(app: &mut App, idx: usize, zones: Vec<crate::domain::zones::MotionZone>) {
+    let Some(name) = app.sidebar.cameras.get(idx).map(|c| c.name.clone()) else {
+        return;
+    };
+    let Some(index) = daemon_index(app, &name) else {
+        return;
+    };
+    let wire = zones
+        .iter()
+        .map(crate::domain::zones::MotionZoneFile::from_zone)
+        .collect();
+    let ok = send_to_daemon(
+        app,
+        crate::ipc::protocol::Request::SetZones {
+            camera: index,
+            zones: wire,
+        },
+        PendingRequest::SetZones { camera: idx, zones },
+    );
+    if ok && let Some(edit) = app.zone_edit.as_mut() {
+        edit.saving = true;
+    }
 }
 
 /// Backspace: drop the last vertex; with no open polygon, the last saved zone.
@@ -642,6 +713,124 @@ fn drain_engine_events(app: &mut App) {
             event = event.with_description(d);
         }
         app.sidebar.timeline.push(event);
+    }
+}
+
+// ───────────────────────────── the rrv-daemon ─────────────────────────────
+
+/// Drain what the connection thread reported since the last tick.
+fn poll_daemon(app: &mut App) {
+    let Some(link) = app.link.as_ref() else {
+        return;
+    };
+    let events: Vec<_> = link.events.try_iter().collect();
+    for event in events {
+        match app.daemon.apply(event) {
+            Effect::None => {}
+            Effect::Toast(text) => toast(app, text),
+            Effect::Event(wire) => daemon_event(app, wire),
+            Effect::Reply { token, result } => handle_reply(app, token, result),
+        }
+    }
+}
+
+/// An event from the daemon: onto the timeline and, if its policy asked for
+/// one, a desktop notification (only while this window is open).
+fn daemon_event(app: &mut App, wire: crate::ipc::protocol::WireEvent) {
+    if let Some((title, body)) = &wire.notification {
+        crate::infrastructure::notify::send(title, body);
+    }
+    let Some(idx) = app.sidebar.cameras.iter().position(|c| c.name == wire.name) else {
+        return; // a camera this window does not have
+    };
+    let mut event = TimelineEvent::new(wire.unix_secs, idx, wire.kind);
+    if let Some(d) = wire.detail {
+        event = event.with_description(d);
+    }
+    app.sidebar.timeline.push(event);
+}
+
+/// Send a request to the daemon, remembering what to do with the reply. Returns
+/// `false` (with a toast) when there is no live connection: nothing is ever
+/// applied locally on faith.
+fn send_to_daemon(
+    app: &mut App,
+    request: crate::ipc::protocol::Request,
+    pending: PendingRequest,
+) -> bool {
+    if !app.daemon.is_connected() {
+        toast(
+            app,
+            "Sem conexão com o daemon: tente de novo quando ele voltar",
+        );
+        return false;
+    }
+    let Some(link) = app.link.as_ref() else {
+        return false;
+    };
+    let token = app.next_token;
+    app.next_token += 1;
+    app.pending.insert(token, pending);
+    link.request(token, request);
+    true
+}
+
+/// The daemon's index for a camera of this window, found by name.
+fn daemon_index(app: &mut App, name: &str) -> Option<usize> {
+    let found = app.daemon.info_for(name).map(|c| c.index);
+    if found.is_none() {
+        toast(app, format!("O daemon não conhece a câmera '{name}'"));
+    }
+    found
+}
+
+/// What came back for a request this window made.
+fn handle_reply(app: &mut App, token: u64, result: Result<crate::ipc::protocol::Response, String>) {
+    use crate::ipc::protocol::Response;
+    let Some(pending) = app.pending.remove(&token) else {
+        return;
+    };
+    let failure = match &result {
+        Ok(Response::Error { message }) | Err(message) => Some(message.clone()),
+        Ok(_) => None,
+    };
+    match (pending, failure) {
+        (PendingRequest::ToggleRecording { .. }, None) => {
+            if let Ok(Response::Recording { recording, .. }) = result {
+                toast(
+                    app,
+                    if recording {
+                        "Gravação iniciada no daemon"
+                    } else {
+                        "Gravação parada no daemon"
+                    },
+                );
+            }
+        }
+        (PendingRequest::SetEnabled { .. }, None) => {}
+        (PendingRequest::SetZones { camera, zones }, None) => {
+            if let Some(cfg) = app.engine.zones.get_mut(camera) {
+                cfg.zones = zones;
+            }
+            if let Some(edit) = app.zone_edit.as_mut() {
+                edit.temp_vertices.clear();
+                edit.saving = false;
+            }
+            toast(app, "Zona salva no daemon");
+        }
+        (PendingRequest::SetZones { .. }, Some(why)) => {
+            // O editor continua aberto com o desenho intacto.
+            if let Some(edit) = app.zone_edit.as_mut() {
+                edit.saving = false;
+            }
+            toast(app, format!("Não foi possível salvar a zona: {why}"));
+        }
+        (PendingRequest::ToggleRecording { .. }, Some(why)) => {
+            toast(app, format!("Falha na gravação: {why}"));
+        }
+        (PendingRequest::SetEnabled { camera }, Some(why)) => {
+            toast(app, format!("O daemon não aplicou '{camera}': {why}"));
+        }
     }
 }
 
@@ -902,6 +1091,7 @@ fn persist_view(app: &App) {
 }
 
 fn update_frame(app: &mut App) -> Task<Message> {
+    poll_daemon(app);
     app.toasts.retain(|t| !super::state::is_expired(t));
 
     // Latency / RTP-stats don't need 10 Hz; poll them every 5th tick (~500 ms)
@@ -1303,6 +1493,26 @@ fn update_recording(app: &mut App) -> Task<Message> {
         return Task::none();
     }
 
+    // Com um daemon, ele grava: a janela pede e só mostra REC quando ele confirma.
+    if app.daemon.is_daemon_mode() {
+        let name = app.sidebar.cameras[idx].name.clone();
+        let already = app
+            .pending
+            .values()
+            .any(|p| matches!(p, PendingRequest::ToggleRecording { camera } if *camera == name));
+        if already {
+            return Task::none(); // aguardando a resposta anterior
+        }
+        if let Some(index) = daemon_index(app, &name) {
+            send_to_daemon(
+                app,
+                crate::ipc::protocol::Request::ToggleRecording { camera: index },
+                PendingRequest::ToggleRecording { camera: name },
+            );
+        }
+        return Task::none();
+    }
+
     match toggle_camera_recording(app, idx) {
         Ok(true) => toast(app, "Gravação iniciada"),
         Ok(false) => toast(app, "Gravação parada"),
@@ -1487,6 +1697,19 @@ fn update_sidebar(app: &mut App, msg: super::sidebar::Message) -> Task<Message> 
             if idx < app.engine.camera_enabled.len() {
                 app.sidebar.cameras[idx].enabled = enabled;
                 app.engine.set_camera_enabled(idx, enabled);
+                if app.daemon.is_daemon_mode() {
+                    let name = app.sidebar.cameras[idx].name.clone();
+                    if let Some(index) = daemon_index(app, &name) {
+                        send_to_daemon(
+                            app,
+                            crate::ipc::protocol::Request::SetCameraEnabled {
+                                camera: index,
+                                enabled,
+                            },
+                            PendingRequest::SetEnabled { camera: name },
+                        );
+                    }
+                }
                 if !enabled {
                     // Audio is still the UI's: silence it with the video.
                     if let Some(pipeline) = app.audio_pipelines[idx].borrow_mut().take() {

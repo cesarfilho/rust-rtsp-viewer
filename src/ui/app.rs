@@ -42,6 +42,13 @@ pub(crate) const CHROME_REVEAL_SECS: u64 = 3;
 pub(crate) const DOUBLE_CLICK_MS: u128 = 350;
 
 pub struct App {
+    /// The connection to the rrv-daemon, and what the window shows of it.
+    pub daemon: super::daemon::DaemonState,
+    /// The connection thread; `None` in embedded mode.
+    pub link: Option<crate::ipc::link::DaemonLink>,
+    /// Requests sent to the daemon and not answered yet, by token.
+    pub pending: std::collections::HashMap<u64, super::daemon::PendingRequest>,
+    pub next_token: u64,
     /// The video engine: cameras, pipelines, reconnect, motion, notification state.
     pub engine: crate::engine::Engine,
     pub videos: Vec<VideoWidget>,
@@ -112,6 +119,8 @@ pub struct App {
 pub struct ZoneEdit {
     pub camera_idx: usize,
     pub temp_vertices: Vec<crate::domain::zones::Point>,
+    /// A save is waiting for the daemon's answer.
+    pub saving: bool,
 }
 
 /// A multi-frame snapshot burst in progress. Frames are captured one per
@@ -137,6 +146,7 @@ pub fn new_app(
     view_config: crate::config::ViewConfigFile,
     notify_config: crate::domain::notify::NotifyConfig,
     motion_config: crate::domain::motion::MotionConfig,
+    daemon_options: super::DaemonOptions,
 ) -> (App, Task<Message>) {
     let _ = gstreamer::init();
 
@@ -169,6 +179,22 @@ pub fn new_app(
         zones: &zones_file,
     });
     let count = engine.camera_count();
+
+    // The daemon, if there is one. With a daemon this window only *shows*: it
+    // must not also record, detect or notify (two owners would do it all twice).
+    let socket = daemon_options
+        .socket
+        .clone()
+        .unwrap_or_else(crate::ipc::default_socket_path);
+    let mode = super::daemon::initial_mode(daemon_options.embedded, socket.exists());
+    let (daemon, link) = if mode == super::daemon::Mode::Embedded {
+        (super::daemon::DaemonState::embedded(socket), None)
+    } else {
+        log::info!("rrv-daemon found at {}: connecting", socket.display());
+        let link = crate::ipc::link::DaemonLink::spawn(socket.clone());
+        (super::daemon::DaemonState::connecting(socket), Some(link))
+    };
+    engine.set_display_only(daemon.is_daemon_mode());
 
     let videos: Vec<VideoWidget> = engine
         .bridges
@@ -271,6 +297,10 @@ pub fn new_app(
 
     (
         App {
+            daemon,
+            link,
+            pending: std::collections::HashMap::new(),
+            next_token: 1,
             engine,
             videos,
             theme,

@@ -58,6 +58,34 @@ pub enum Effect {
     },
 }
 
+/// Como a janela abre: com `--embedded` ou sem socket, usa o motor local (quem
+/// nunca instalou o daemon não vê diferença); com socket, conecta. Nunca sobe um
+/// daemon sozinha.
+pub fn initial_mode(force_embedded: bool, socket_exists: bool) -> Mode {
+    if force_embedded || !socket_exists {
+        Mode::Embedded
+    } else {
+        Mode::Connecting
+    }
+}
+
+/// Um pedido à espera de resposta do daemon, para a janela saber o que fazer com
+/// ela (e mostrar "aguardando…" até lá).
+#[derive(Debug, Clone)]
+pub enum PendingRequest {
+    /// Gravar/parar a câmera de nome `camera`.
+    ToggleRecording { camera: String },
+    /// Ligar/desligar (a janela já aplicou localmente).
+    SetEnabled { camera: String },
+    /// Salvar as zonas da câmera de índice local `camera`. `zones` é a lista que
+    /// passa a valer **se** o daemon confirmar; até lá nada muda na janela e o
+    /// editor segue aberto com o desenho intacto.
+    SetZones {
+        camera: usize,
+        zones: Vec<crate::domain::zones::MotionZone>,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub struct DaemonState {
     pub mode: Mode,
@@ -283,6 +311,17 @@ mod tests {
             cameras: vec![cam(0, "Portão", true), cam(1, "Garagem", false)],
         });
         s
+    }
+
+    #[test]
+    fn the_initial_mode_never_starts_a_daemon_and_defaults_to_local() {
+        assert_eq!(
+            initial_mode(false, false),
+            Mode::Embedded,
+            "sem socket: motor local"
+        );
+        assert_eq!(initial_mode(true, true), Mode::Embedded, "--embedded vence");
+        assert_eq!(initial_mode(false, true), Mode::Connecting);
     }
 
     #[test]

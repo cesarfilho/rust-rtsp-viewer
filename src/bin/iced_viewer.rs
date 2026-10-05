@@ -16,6 +16,15 @@ struct Cli {
     /// Validate the config file and exit (0 = usable, 1 = errors); opens no window
     #[arg(long)]
     check: bool,
+
+    /// Use this window's own engine even if an rrv-daemon is running (it then
+    /// records and detects only while the window is open)
+    #[arg(long)]
+    embedded: bool,
+
+    /// Socket of the rrv-daemon (default: $RRV_SOCKET, else $XDG_RUNTIME_DIR/rrv/rrv.sock)
+    #[arg(long, env = "RRV_SOCKET", value_name = "PATH")]
+    daemon: Option<std::path::PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -25,7 +34,7 @@ fn main() -> ExitCode {
     let result = if cli.check {
         check_only(&cli.config)
     } else {
-        run(&cli.config)
+        run(&cli.config, &cli)
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -45,7 +54,7 @@ fn check_only(config_path: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn run(config_path: &str) -> Result<(), String> {
+fn run(config_path: &str, cli: &Cli) -> Result<(), String> {
     let (config, _) = rust_rtsp_viewer::startup::load_config(config_path, "rust-rtsp-viewer")?;
 
     let mut cameras = config.cameras.clone().unwrap_or_default();
@@ -87,6 +96,10 @@ fn run(config_path: &str) -> Result<(), String> {
         view_config,
         notify_config,
         motion_config,
+        rust_rtsp_viewer::ui::DaemonOptions {
+            embedded: cli.embedded,
+            socket: cli.daemon.clone(),
+        },
     )
     .map_err(|e| format!("GUI failed to start: {e}"))
 }

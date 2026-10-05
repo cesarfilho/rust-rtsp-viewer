@@ -28,6 +28,15 @@ use view::view;
 /// and show the real application name in the overview / dock.
 pub const APP_ID: &str = "rust-rtsp-viewer";
 
+/// Como a janela trata o daemon (flags `--embedded` e `--daemon`).
+#[derive(Debug, Clone, Default)]
+pub struct DaemonOptions {
+    /// Força o motor local, mesmo que haja um daemon.
+    pub embedded: bool,
+    /// Socket do daemon; padrão: `$RRV_SOCKET` ou `$XDG_RUNTIME_DIR/rrv/rrv.sock`.
+    pub socket: Option<std::path::PathBuf>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     cameras: Vec<crate::config::CameraConfig>,
@@ -40,6 +49,7 @@ pub fn run(
     view_config: crate::config::ViewConfigFile,
     notify_config: crate::domain::notify::NotifyConfig,
     motion_config: crate::domain::motion::MotionConfig,
+    daemon: DaemonOptions,
 ) -> iced::Result {
     let window = iced::window::Settings {
         size: iced::Size::new(1280.0, 720.0),
@@ -71,6 +81,7 @@ pub fn run(
                 view_config,
                 notify_config,
                 motion_config,
+                daemon,
             )
         })
 }
