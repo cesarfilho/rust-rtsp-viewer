@@ -1,32 +1,54 @@
 # Status dos módulos de domínio
 
-Levantado em 2026-09-24 por grep de referências (`domain::<mod>`) e contagem de `#[test]`.
-Não foi rodado `cargo build`/`cargo test` para gerar esta tabela.
+Revisado em 2026-10-05 (v0.8.0) contra o código: referências `domain::<mod>` por `grep`,
+contagem de `#[test]`, `cargo clippy --all-targets -- -D warnings` limpo e `cargo test`
+com 387 testes passando.
 
-"Ligado" = usado fora de `domain/mod.rs` e do próprio arquivo.
+"Ligado" = usado fora de `domain/mod.rs` e do próprio arquivo. Em "Testes", `—` = não
+contado nesta revisão (só os módulos que mudaram de situação foram contados).
 
-| Módulo | Linhas | Testes | Ligado? | O que existe | O que falta |
-|---|---|---|---|---|---|
-| `motion.rs` | 382 | 14 | **Não** | `MotionConfig`, `detect_motion(prev, curr, w, h, cfg, zones)` por diferença de luma com stride; aceita `ZoneConfig` | seção `[motion]` no `config.rs`; guardar frame anterior por câmera; chamar no tick/pipeline; emitir `EventType::Motion`; máscaras; `lightning_threshold` |
-| `zones.rs` | 250 | 11 | **Não** (só via `motion.rs` e `zone_editor.rs`) | `Point`, `MotionZone::contains`, `ZoneConfig::filter_motion_points`, `MotionZoneFile` (TOML) | `[[cameras.zones]]` no config; inertia/loitering; zonas obrigatórias para alerta |
-| `ui/zone_editor.rs` | 174 | — | **Não** | widget canvas | view, `Message`s, persistência, ligação ao menu de contexto |
-| `multi_stream.rs` | 156 | 10 | **Não** | `StreamQuality`, `MultiStreamConfig`, `stream_url_for_quality`, `has_sub_stream` | `sub_url` em `[[cameras]]`; troca de stream em `sync_active_streams`/spotlight; reinício de pipeline sem perder gravação |
-| `streaming.rs` | 237 | 7 | **Não** | máquina de estados `evaluate_streaming` (pausa em cena estática, warmup, retomada por movimento) | depende de `motion`; ligar ao `bridge.stop()`/start; snapshot estático enquanto pausado |
-| `ptz.rs` | 196 | 6 | **Não** | `PtzCommand`, `PtzConfig`, presets, `PtzResult` | cliente ONVIF (nenhum existe), UI de controle, atalhos |
-| `timelapse.rs` | 254 | 7 | **Não** | `SpeedMultiplier`, formato, nome de arquivo, estimativa de duração | pipeline que gera o timelapse; não há caller |
-| `hw_encoder.rs` | 198 | 9 | **Não** | `HwEncoderBackend`, `detect_backend`, `build_encoder_string` | `start_recording` em `ui/pipeline.rs` usa `x264enc` fixo; ligar a seleção de encoder (VA-API/NVENC/etc.). Verificar se `detect_backend` realmente sonda o GStreamer ou só devolve o preferido |
-| `bidirectional_audio.rs` | 147 | 6 | **Não** | config, `AudioEncoding`, `MicState` | captura do microfone e envio (backchannel RTSP); nenhum pipeline |
+## Ligados
 
-## Ligados (referência)
-`audio`, `codec`, `diagnostics`, `groups`, `metrics`, `recording`, `redact`, `snapshot`, `timeline`, `view`.
-Ressalva: `audio`, `codec`, `recording`, `snapshot` têm `#![allow(dead_code)]`, ou seja, parte
-da API dentro deles também não é usada.
+| Módulo | Testes | Onde é usado |
+|---|---|---|
+| `audio` | — | `infrastructure/audio.rs`, `ui/update.rs` (mute/volume, VU) |
+| `codec` | — | `ui/pipeline.rs` (rótulo do codec no Inspector) |
+| `diagnostics` | — | Inspector e hints (Night, Tamper, perda de pacotes) |
+| `groups` | — | `[[groups]]`, chips de filtro na sidebar e na grade |
+| `metrics` | — | `Metrics`, `StreamInfo` (agora com decoder), bitrate comprimido |
+| `motion` | 15 | `update::detect_camera_motion` (~2 Hz), filtrado por zonas |
+| `multi_stream` | 13 | **`sub_url`**: grade no sub, spotlight/flex/gravação no principal |
+| `notify` | — | `notify-send` com cooldown por câmera/tipo |
+| `recording` | — | gravação manual e por movimento (`on_motion`, pós-roll) |
+| `redact` | — | `mask_credentials` em todo log com URL |
+| `snapshot` | — | snapshot e burst |
+| `timeline` | — | linha do tempo de eventos (**só em memória**) |
+| `view` | — | densidade, paginação, carrossel, ordem |
+| `zones` | 13 | editor visual (`ui/zone_editor.rs`) e `zones.toml` por nome de câmera |
+
+## Ainda não ligados (lógica pura testada, sem chamador)
+
+| Módulo | Testes | O que existe | O que falta |
+|---|---|---|---|
+| `streaming.rs` | 7 | máquina de estados `evaluate_streaming` (pausa em cena estática, warmup, retomada por movimento) | `motion` já está ligado; falta chamar a avaliação no tick e ligar ao `bridge.stop()`/start, com snapshot estático enquanto pausado |
+| `ptz.rs` | 6 | `PtzCommand`, `PtzConfig`, presets | cliente ONVIF (não existe), UI de controle, atalhos |
+| `timelapse.rs` | 7 | velocidade, formato, nome de arquivo, estimativa | pipeline que gera o timelapse |
+| `hw_encoder.rs` | 9 | `HwEncoderBackend`, `detect_backend`, `build_encoder_string` | `start_recording` usa `x264enc` fixo; verificar se `detect_backend` sonda o GStreamer de fato |
+| `bidirectional_audio.rs` | 6 | config, `AudioEncoding`, `MicState` | captura do microfone e backchannel RTSP |
+
+Todos têm testes unitários, então o risco está na integração (threads, mutexes,
+pipeline), não no cálculo.
+
+## `allow(dead_code)` restantes (10)
+
+`domain/audio.rs`, `domain/codec.rs`, `domain/recording.rs`, `domain/snapshot.rs`,
+`infrastructure/audio.rs` (todos com `#![allow(dead_code)]` no arquivo inteiro, ou seja,
+parte da API dentro deles também não é usada), mais `ui/bridge.rs` (2), `ui/pipeline.rs`,
+`ui/view/style.rs` e `domain/diagnostics.rs` (1 cada).
 
 ## Observações
-- O `AGENTS.md` diz que "não há flags de CLI", mas `src/bin/iced_viewer.rs` usa `clap::Parser`
-  para o caminho do config (argumento posicional). Consistente com "sem flags", porém `clap`
-  com features `derive` e `env` é pesado para um argumento; `env` não é usado.
-- Os módulos não ligados têm testes unitários, então a lógica pura está coberta; o risco
-  está na integração (threads, mutexes, pipeline), não no cálculo.
-- Ordem de ligação recomendada (dependências): `motion` → `zones` (+ editor) → `streaming` →
-  `multi_stream`. `ptz`, `timelapse`, `hw_encoder`, `bidirectional_audio` são independentes.
+- Fora de testes não há `unwrap()`/`expect()` nem `unsafe`; há 1 `TODO` no código.
+- `clap` continua sendo usado só para o caminho do config (argumento posicional).
+- Ordem de ligação sugerida para o que falta: `streaming` → `hw_encoder` (junto com a
+  decisão de GPU, ver `docs/roadmap.md`) → `ptz` (depende de ONVIF) → `timelapse` →
+  `bidirectional_audio`.
