@@ -70,6 +70,9 @@
 # threshold = 25        # diferença de luma por pixel que conta como mudança (1–255)
 # contour_area = 0.005  # fração de pixels mudados para declarar movimento (0.0–1.0)
 # sample_stride = 8     # amostra 1 pixel a cada N em cada eixo (1–32; maior = mais leve)
+# lightning_threshold = 0.8  # se esta fração do quadro muda de uma vez (troca IR/cor ao
+#                       # anoitecer, exposição, PTZ) o quadro é descartado, não vira movimento
+#                       # (0.0 desliga). Mede o quadro todo, mesmo com zonas.
 
 # ── Áudio (tecla m alterna mute) ──────────────────────────────────────────
 # O áudio roda em uma pipeline separada, por câmera, iniciada sob demanda.

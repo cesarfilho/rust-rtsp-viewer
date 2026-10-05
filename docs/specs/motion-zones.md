@@ -42,8 +42,10 @@ sem afetar o display nem a UI thread.
 
 ## Falta (M1)
 - **1.2** ramo de detecção reduzido: **feito** (acima). Falta medir o custo de CPU com 16 câmeras (0.4).
-- **1.6** `lightning_threshold` (descartar mudança brusca do quadro inteiro: IR/cor, PTZ) e
-  inércia/loitering. Não existem no código.
+- **1.6** `lightning_threshold` **feito** (`[motion] lightning_threshold`, padrão 0,8, `0` desliga;
+  mede o quadro todo, mesmo com zonas, para um objeto que enche uma zona pequena continuar
+  contando). Verificado com câmera HLS ao vivo simulada: 6 flashes → 0 eventos com o guard, 6 sem.
+  Falta inércia/loitering.
 - Validação de valores de `[motion]`: `into_config` faz `clamp` silencioso; `config_check` já
   avisa fora de faixa, então o clamp fica como rede de segurança.
 

@@ -126,6 +126,7 @@ cooldown_secs = 60       # no mínimo 5
 threshold     = 25       # diferença de luma por pixel (1–255)
 contour_area  = 0.005    # fração mudada que declara movimento
 sample_stride = 8        # 1 pixel a cada N (1–32)
+lightning_threshold = 0.8  # mudança do quadro todo (IR/exposição/PTZ) não é movimento; 0 desliga
 ```
 
 `config.toml.example` traz todas as opções comentadas. **Não versione o seu

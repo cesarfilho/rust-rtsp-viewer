@@ -658,6 +658,15 @@ fn detect_camera_motion(app: &mut App, i: usize) {
     let Some(result) = result else {
         return;
     };
+    log::debug!(
+        "Motion sample, camera {i}: {:.1}% changed{}",
+        result.motion_level * 100.0,
+        if result.global_change {
+            " (global change, discarded)"
+        } else {
+            ""
+        }
+    );
     if result.motion_active && !app.motion_active[i] {
         log::info!(
             "Motion on camera {i}: {:.1}% of the frame",

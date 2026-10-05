@@ -187,6 +187,14 @@ pub fn validate(config: &Config) -> Vec<Issue> {
                 format!("{a} fora de (0, 1]"),
             ));
         }
+        if let Some(l) = m.lightning_threshold
+            && !(0.0..=1.0).contains(&l)
+        {
+            issues.push(Issue::warning(
+                "motion.lightning_threshold",
+                format!("{l} fora de 0–1 (0 desliga)"),
+            ));
+        }
         if let Some(s) = m.sample_stride
             && !(1..=32).contains(&s)
         {
@@ -437,7 +445,7 @@ mod tests {
     fn out_of_range_values_warn() {
         let text = "theme = \"neon\"\nlatency_ms = 60000\n\
                     [[cameras]]\nurl = \"rtsp://h/s\"\naudio_volume = 2.5\n\
-                    [motion]\nthreshold = 0\ncontour_area = 3.0\nsample_stride = 99\n\
+                    [motion]\nthreshold = 0\ncontour_area = 3.0\nsample_stride = 99\nlightning_threshold = 2.0\n\
                     [notifications]\ncooldown_secs = 1\n\
                     [view]\nmode = \"7x\"\nlayout = \"mosaic\"\n\
                     [recording]\ncontainer = \"avi\"\n\
@@ -451,6 +459,7 @@ mod tests {
             "motion.threshold",
             "motion.contour_area",
             "motion.sample_stride",
+            "motion.lightning_threshold",
             "notifications.cooldown_secs",
             "view.mode",
             "view.layout",

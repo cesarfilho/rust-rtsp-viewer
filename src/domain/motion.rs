@@ -32,7 +32,15 @@ pub struct MotionConfig {
     /// Subsampling stride for the frame comparison. Higher = faster but
     /// coarser. 1 = full resolution, 8 = sample every 8th pixel.
     pub sample_stride: usize,
+    /// Fraction of the whole sampled frame (0.0–1.0) at or above which it is
+    /// treated as a global change — an IR/colour switch at dusk, auto-exposure,
+    /// a PTZ move — and discarded instead of reported as motion. `0.0` turns
+    /// the guard off.
+    pub lightning_threshold: f64,
 }
+
+/// Default for [`MotionConfig::lightning_threshold`] (same as Frigate).
+pub const DEFAULT_LIGHTNING_THRESHOLD: f64 = 0.8;
 
 impl Default for MotionConfig {
     fn default() -> Self {
@@ -41,6 +49,7 @@ impl Default for MotionConfig {
             threshold: 25,
             contour_area: 0.005,
             sample_stride: 8,
+            lightning_threshold: DEFAULT_LIGHTNING_THRESHOLD,
         }
     }
 }
@@ -52,6 +61,7 @@ pub struct MotionConfigFile {
     pub threshold: Option<u8>,
     pub contour_area: Option<f64>,
     pub sample_stride: Option<usize>,
+    pub lightning_threshold: Option<f64>,
 }
 
 impl MotionConfigFile {
@@ -69,6 +79,9 @@ impl MotionConfigFile {
         if let Some(s) = self.sample_stride {
             config.sample_stride = s.clamp(1, 32);
         }
+        if let Some(l) = self.lightning_threshold {
+            config.lightning_threshold = l.clamp(0.0, 1.0);
+        }
         config
     }
 }
@@ -80,6 +93,9 @@ pub struct MotionResult {
     pub motion_level: f64,
     /// Whether the motion level exceeds the contour area threshold.
     pub motion_active: bool,
+    /// The change was so widespread (`lightning_threshold`) that the frame was
+    /// discarded as a global change; `motion_active` is false in that case.
+    pub global_change: bool,
     /// Number of changed pixels counted (before normalization).
     pub changed_pixels: u64,
     /// Total number of sampled pixels.
@@ -104,7 +120,9 @@ fn rgba_luma(r: u8, g: u8, b: u8) -> u32 {
 /// 2. Compute luma (BT.601) for each sampled pixel in both frames.
 /// 3. Count pixels where `|luma_curr - luma_prev| > threshold`.
 /// 4. `motion_level` = changed_pixels / total_sampled.
-/// 5. `motion_active` = motion_level > contour_area.
+/// 5. `motion_active` = motion_level > contour_area, unless the change covers
+///    the *whole frame* (`lightning_threshold`, zones ignored) — a global
+///    change, not motion.
 ///
 /// If `zone_config` is provided and has active zones, only pixels inside
 /// those zones are sampled: `motion_level` is the changed fraction of the zone.
@@ -124,6 +142,12 @@ pub fn detect_motion(
     let threshold = config.threshold as i64;
     let mut changed: u64 = 0;
     let mut total: u64 = 0;
+    // The same count over the whole sampled frame, zones or not: a global
+    // change (IR switch, exposure, PTZ) is a property of the frame, so the
+    // lightning guard must not be fooled by a small zone that an object
+    // legitimately fills.
+    let mut frame_changed: u64 = 0;
+    let mut frame_total: u64 = 0;
     let active_zones = zone_config.filter(|z| z.has_active());
 
     let mut row = 0;
@@ -147,6 +171,10 @@ pub fn detect_motion(
                         row as f64 / height as f64,
                     ))
                 });
+                frame_total += 1;
+                if diff > threshold {
+                    frame_changed += 1;
+                }
                 if in_scope {
                     total += 1;
                     if diff > threshold {
@@ -164,11 +192,18 @@ pub fn detect_motion(
     }
 
     let motion_level = changed as f64 / total as f64;
-    let motion_active = motion_level > config.contour_area;
+    // A change this widespread is the camera (IR/colour switch, exposure,
+    // PTZ), not something moving in the scene. The next sample compares
+    // against the new, stable frame, so this self-corrects after one tick.
+    let frame_level = frame_changed as f64 / frame_total.max(1) as f64;
+    let global_change =
+        config.lightning_threshold > 0.0 && frame_level >= config.lightning_threshold;
+    let motion_active = !global_change && motion_level > config.contour_area;
 
     Some(MotionResult {
         motion_level,
         motion_active,
+        global_change,
         changed_pixels: changed,
         total_sampled: total,
     })
@@ -221,9 +256,127 @@ mod tests {
     fn motion_on_completely_different_frames() {
         let dark = make_frame(64, 64, 0);
         let bright = make_frame(64, 64, 255);
-        let result = detect_motion(&dark, &bright, 64, 64, &MotionConfig::default(), None).unwrap();
+        let config = MotionConfig {
+            lightning_threshold: 0.0,
+            ..MotionConfig::default()
+        };
+        let result = detect_motion(&dark, &bright, 64, 64, &config, None).unwrap();
         assert!(result.motion_level > 0.9, "got {}", result.motion_level);
         assert!(result.motion_active);
+        assert!(!result.global_change);
+    }
+
+    #[test]
+    fn a_whole_frame_change_is_discarded_by_default() {
+        // IR cut / exposure jump: every pixel changes at once.
+        let dark = make_frame(64, 64, 0);
+        let bright = make_frame(64, 64, 255);
+        let result = detect_motion(&dark, &bright, 64, 64, &MotionConfig::default(), None).unwrap();
+        assert!(result.global_change);
+        assert!(!result.motion_active, "a global change is not motion");
+    }
+
+    #[test]
+    fn a_local_change_still_counts_with_the_guard_on() {
+        let a = make_frame(64, 64, 0);
+        let mut b = make_frame(64, 64, 0);
+        for y in 0..16 {
+            for x in 0..16 {
+                let i = (y * 64 + x) * 4;
+                b[i] = 255;
+                b[i + 1] = 255;
+                b[i + 2] = 255;
+            }
+        }
+        let config = MotionConfig {
+            sample_stride: 1,
+            ..MotionConfig::default()
+        };
+        let result = detect_motion(&a, &b, 64, 64, &config, None).unwrap();
+        assert!(result.motion_active);
+        assert!(!result.global_change, "6% of the frame is not global");
+    }
+
+    #[test]
+    fn an_object_filling_a_small_zone_is_still_motion() {
+        // The change fills the whole zone but only a quarter of the frame:
+        // that is something crossing the zone, not a global change.
+        let a = make_frame(64, 64, 0);
+        let mut b = make_frame(64, 64, 0);
+        for y in 0..32 {
+            for x in 0..32 {
+                let i = (y * 64 + x) * 4;
+                b[i] = 255;
+                b[i + 1] = 255;
+                b[i + 2] = 255;
+            }
+        }
+        let zones = ZoneConfig {
+            zones: vec![MotionZone {
+                name: "z".into(),
+                vertices: vec![
+                    Point::new(0.0, 0.0),
+                    Point::new(0.5, 0.0),
+                    Point::new(0.5, 0.5),
+                    Point::new(0.0, 0.5),
+                ],
+                enabled: true,
+            }],
+        };
+        let config = MotionConfig {
+            sample_stride: 1,
+            ..MotionConfig::default()
+        };
+        let result = detect_motion(&a, &b, 64, 64, &config, Some(&zones)).unwrap();
+        assert!(result.motion_level > 0.9, "the zone is fully changed");
+        assert!(
+            !result.global_change,
+            "a quarter of the frame is not global"
+        );
+        assert!(result.motion_active);
+    }
+
+    #[test]
+    fn a_whole_frame_change_is_global_even_with_zones() {
+        let a = make_frame(64, 64, 0);
+        let b = make_frame(64, 64, 255);
+        let zones = ZoneConfig {
+            zones: vec![MotionZone {
+                name: "z".into(),
+                vertices: vec![
+                    Point::new(0.0, 0.0),
+                    Point::new(0.5, 0.0),
+                    Point::new(0.5, 0.5),
+                    Point::new(0.0, 0.5),
+                ],
+                enabled: true,
+            }],
+        };
+        let result = detect_motion(&a, &b, 64, 64, &MotionConfig::default(), Some(&zones)).unwrap();
+        assert!(result.global_change);
+        assert!(!result.motion_active);
+    }
+
+    #[test]
+    fn lightning_threshold_is_parsed_and_clamped() {
+        let cfg = MotionConfigFile {
+            lightning_threshold: Some(5.0),
+            ..Default::default()
+        }
+        .into_config();
+        assert_eq!(cfg.lightning_threshold, 1.0);
+        let off = MotionConfigFile {
+            lightning_threshold: Some(0.0),
+            ..Default::default()
+        }
+        .into_config();
+        assert_eq!(off.lightning_threshold, 0.0);
+        assert_eq!(
+            MotionConfigFile::default()
+                .into_config()
+                .lightning_threshold,
+            DEFAULT_LIGHTNING_THRESHOLD
+        );
     }
 
     #[test]
@@ -285,6 +438,9 @@ mod tests {
         let config = MotionConfig {
             threshold: 20,
             sample_stride: 1,
+            // Every pixel changes here; this test is about the luma weights,
+            // not the global-change guard.
+            lightning_threshold: 0.0,
             ..MotionConfig::default()
         };
         let result = detect_motion(&red, &green, 64, 64, &config, None).unwrap();
@@ -430,12 +586,14 @@ mod tests {
             threshold: Some(10),
             contour_area: Some(0.1),
             sample_stride: Some(4),
+            lightning_threshold: Some(0.5),
         };
         let c = f.into_config();
         assert!(!c.enabled);
         assert_eq!(c.threshold, 10);
         assert!((c.contour_area - 0.1).abs() < 1e-9);
         assert_eq!(c.sample_stride, 4);
+        assert!((c.lightning_threshold - 0.5).abs() < 1e-9);
     }
 
     #[test]
