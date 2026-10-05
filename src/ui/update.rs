@@ -876,32 +876,8 @@ fn sync_active_streams(app: &mut App) {
     clamp_current_page(app);
     let want = desired_active_cameras(app);
 
-    for i in 0..app.engine.bridges.len() {
-        if !app.engine.camera_enabled[i] {
-            continue;
-        }
-        let should_run = want.contains(&i);
-        if should_run && !app.engine.active_stream[i] {
-            if !app.engine.start_queue.contains(&i) {
-                app.engine.start_queue.push_back(i);
-            }
-            if i < app.sidebar.cameras.len()
-                && app.engine.status[i] == sidebar::CameraStatus::Paused
-            {
-                app.engine.status[i] = sidebar::CameraStatus::Connecting;
-            }
-        } else if !should_run && app.engine.active_stream[i] {
-            pause_stream(app, i);
-        } else if !should_run && !app.engine.active_stream[i] {
-            // Off-page and not running: settle its placeholder on PAUSED
-            // (unless it never started and is still in the launch queue).
-            app.engine.start_queue.retain(|&q| q != i);
-            if i < app.sidebar.cameras.len()
-                && app.engine.status[i] == sidebar::CameraStatus::Connecting
-            {
-                app.engine.status[i] = sidebar::CameraStatus::Paused;
-            }
-        }
+    for i in app.engine.reconcile(&want) {
+        pause_stream(app, i);
     }
 
     // Running cameras whose view changed (grid tile ↔ spotlight) swap stream.
@@ -962,23 +938,12 @@ fn drive_previews(app: &mut App) {
 
 /// Start at most one queued camera per `stagger`.
 fn drain_start_queue(app: &mut App) {
-    if app.engine.start_queue.is_empty() || Instant::now() < app.engine.next_start_at {
+    if app.engine.start_queue.is_empty() {
         return;
     }
     let want = desired_active_cameras(app);
-    while let Some(i) = app.engine.start_queue.pop_front() {
-        if !app.engine.camera_enabled.get(i).copied().unwrap_or(false)
-            || app.engine.active_stream[i]
-        {
-            continue;
-        }
-        if !want.contains(&i) {
-            // No longer needed (page moved again before its turn came up).
-            continue;
-        }
+    if let Some(i) = app.engine.pop_next_start(&want) {
         start_stream(app, i);
-        app.engine.next_start_at = Instant::now() + app.engine.stagger;
-        break;
     }
 }
 
@@ -1259,10 +1224,6 @@ fn update_frame(app: &mut App) -> Task<Message> {
 
 /// Rebuild a camera's pipeline, preserving an in-progress recording.
 fn reconnect_camera(app: &mut App, i: usize, cam_label: &str) {
-    let Some(cam_config) = app.engine.camera_config_for(i) else {
-        return;
-    };
-
     // Remember whether audio was playing so it can be resumed after the
     // rebuild instead of forcing the user to press `m` on every reconnect.
     let prev_audio = app.audio_states[i];
@@ -1271,48 +1232,14 @@ fn reconnect_camera(app: &mut App, i: usize, cam_label: &str) {
     }
     app.audio_states[i] = AudioState::Muted;
 
-    let (restarted, was_recording) = {
-        let mut bridge = app.engine.bridges[i]
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let was_recording = bridge.is_recording();
-        bridge.note_reconnect();
-        // `stop` finalises the current segment; the recording resumes into a
-        // fresh segment below rather than silently ending at the outage.
-        bridge.stop();
-        match bridge.start_from_config(&cam_config) {
-            Ok(()) => {
-                if was_recording && let Err(e) = bridge.start_recording() {
-                    log::warn!("[{}] Could not resume recording: {}", cam_label, e);
-                }
-                (true, was_recording)
-            }
-            Err(e) => {
-                log::warn!("[{}] Reconnect failed: {}", cam_label, e);
-                (false, was_recording)
-            }
-        }
+    let Some(outcome) = app.engine.reconnect(i, cam_label) else {
+        return;
     };
-
-    if restarted {
-        // One rebuild per backoff period, and a fresh connect grace for it.
-        app.engine.backoff_states[i].disarm();
-        app.engine.connecting_since[i] = Some(Instant::now());
-        if prev_audio.is_audible() {
-            app.audio_states[i] = prev_audio;
-            spawn_audio(app, i, prev_audio.volume_f32());
-        }
-    } else {
-        // Only a genuine failure feeds the exponential backoff; a successful
-        // rebuild must not inflate `consecutive_failures` (which would drag the
-        // reconnect delay up and, before the cap, could overflow it).
-        app.engine.backoff_states[i].record_failure();
+    if outcome.restarted && prev_audio.is_audible() {
+        app.audio_states[i] = prev_audio;
+        spawn_audio(app, i, prev_audio.volume_f32());
     }
-
-    if i < app.sidebar.cameras.len() {
-        app.engine.status[i] = sidebar::CameraStatus::Reconnecting;
-    }
-    if restarted && was_recording {
+    if outcome.resumed_recording {
         push_event(
             app,
             i,
