@@ -135,10 +135,6 @@ cargo clippy --all-targets -- -D warnings
 cargo test            # all green (MSRV 1.88: let-chains)
 ```
 
-`cargo test --doc` currently fails on this machine with
-`rustdoc: error while loading shared libraries: libLLVM.so...` — that is a
-broken local toolchain install, not a code problem.
-
 The recording tests in `ui::pipeline` run real GStreamer pipelines
 (`videotestsrc`), write real files, and play them back to EOS to prove the
 muxer finalised them. They take ~6s.
@@ -206,6 +202,16 @@ via `subscription`'s `listen_with`, or any keypress) and auto-hides after
 - **Frame buffers are `iced::advanced::image::Bytes`** (refcounted), shared
   between the image `Handle` and the snapshot buffer. Do not go back to
   `Vec<u8>` + `.clone()`: that was two extra 8 MiB copies per 1080p frame.
+- **Retries are armed by `BackoffState::arm_if_idle`, not by the watchdog.** The
+  FPS watchdog only acts on a *live* RTSP stall and HLS is exempt, so a camera
+  that errors right after a successful start (offline at launch, playlist not
+  ready) would sit on "Reconectando" forever. `update_frame` arms the backoff for
+  an active camera that is down past `CONNECT_GRACE_SECS`; `reconnect_camera`
+  `disarm`s it after each rebuild (else the expired timer rebuilds every tick).
+- **The help popup is modal for the keyboard** (`handle_key` → `is_help_dismiss`):
+  only `?` / `Esc` act while it is open.
+- **`infrastructure::launch::quote_launch_value`** wraps every URL/path put into
+  a `parse_launch` string, including the audio pipelines.
 - **Mutex poisoning**: recover with `unwrap_or_else(|e| e.into_inner())`.
 - **`Container::align_top(x)` / `align_left(x)` set the container's *height /
   width*, not a margin** (iced 0.13). Using them as "x px from the edge" squeezes
