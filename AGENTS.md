@@ -143,8 +143,10 @@ staggered start — *initial* values; runtime tweaks persist to
 
 ```bash
 cargo build           # zero warnings expected
+cargo fmt --check     # CI enforces rustfmt (run `cargo fmt` to fix)
 cargo clippy --all-targets -- -D warnings
-cargo test            # all green (MSRV 1.88: let-chains)
+cargo test            # all green (MSRV 1.88: let-chains, checked by the CI `msrv` job)
+cargo deny check      # licences / RustSec advisories / sources (deny.toml)
 ```
 
 The recording tests in `ui::pipeline` run real GStreamer pipelines

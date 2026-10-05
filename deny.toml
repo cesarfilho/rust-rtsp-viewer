@@ -1,0 +1,41 @@
+# cargo-deny: licenças, vulnerabilidades conhecidas e fontes das dependências.
+# Rodar localmente: cargo deny check
+
+[graph]
+all-features = true
+
+[advisories]
+# Falha em vulnerabilidades e crates yanked; "unmaintained" só avisa
+# (dependências transitivas do iced/winit que não controlamos).
+yanked = "deny"
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+# O projeto é AGPL-3.0 (ADR 0009); dependências precisam ser compatíveis.
+# Expressões "A OR B" passam se qualquer alternativa estiver na lista.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unlicense",
+    "0BSD",
+    "CC0-1.0",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "AGPL-3.0-or-later", # o próprio crate
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "allow" # a árvore do iced/wgpu tem várias versões duplicadas
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

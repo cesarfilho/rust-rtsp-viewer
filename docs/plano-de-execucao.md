@@ -29,8 +29,8 @@ de saída, tamanhos e decisões pendentes (o como e o quando). Estado real do c�
 ## M0 — Fundação e medição (0.8.x)
 | # | Tarefa | Critério de saída | Tam. | Estado |
 |---|---|---|---|---|
-| 0.1 | Corrigir `baseline.sh` (`pgrep -f`) e testar | roda contra o app aberto e gera CSV | P | [ ] |
-| 0.2 | CI: `cargo fmt --check`, `deny.toml` (licenças, CVEs), `rust-toolchain.toml`; `cargo test --doc` | CI falha se formatação/licença/CVE falhar | P | [ ] |
+| 0.1 | Corrigir `baseline.sh` (`pgrep -f`) e testar | roda contra o app aberto e gera CSV | P | [x] |
+| 0.2 | CI: `cargo fmt --check`, `deny.toml` (licenças, CVEs), `rust-toolchain.toml`; `cargo test --doc` | CI falha se formatação/licença/CVE falhar | P | [x] |
 | 0.3 | Medir sessões RTSP por modelo (`check_rtsp_sessions.sh`), preencher o ADR 0008 | nº de sessões por modelo (**D2**) | P | [ ] |
 | 0.4 | Baseline real em 1/4/16 câmeras, main × sub → `docs/baseline.md` | CPU, RSS, fps, banda, VRAM por cenário (**D2**) | M | [ ] |
 | 0.5 | Spike `gstreamer` 0.25 + `iced` 0.14 em branch, limite de 3 dias | decisão go/no-go documentada | G | [ ] |

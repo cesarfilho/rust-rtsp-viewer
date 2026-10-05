@@ -1,0 +1,5 @@
+# Toolchain usada localmente e no CI. O MSRV (1.88, let-chains) é verificado
+# à parte no job `msrv` do CI.
+[toolchain]
+channel = "stable"
+components = ["clippy", "rustfmt"]
