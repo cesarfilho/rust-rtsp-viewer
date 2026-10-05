@@ -142,6 +142,7 @@ pub fn feature_actions(app: &App, idx: usize) -> Element<'_, Message> {
         .is_some_and(|c| c.status == CameraStatus::Recording);
     let is_audio = app.audio_states.get(idx).is_some_and(|s| s.is_audible());
     let zone_count = app
+        .engine
         .zones
         .get(idx)
         .map_or(0, |z| z.zones.iter().filter(|z| z.is_active()).count());

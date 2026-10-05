@@ -45,7 +45,8 @@ pub(crate) const CHROME_REVEAL_SECS: u64 = 3;
 pub(crate) const DOUBLE_CLICK_MS: u128 = 350;
 
 pub struct App {
-    pub bridges: Vec<Arc<Mutex<GStreamerBridge>>>,
+    /// The video engine: cameras, pipelines, reconnect, motion, notification state.
+    pub engine: crate::engine::Engine,
     pub videos: Vec<VideoWidget>,
     pub theme: Theme,
     pub sidebar: sidebar::Sidebar,
@@ -63,38 +64,16 @@ pub struct App {
     /// The carousel stays paused until this instant after a manual page change
     /// or camera pick.
     pub interaction_pause_until: Option<Instant>,
-    /// `[view] pause_hidden` — stop pipelines for cameras off the visible page.
-    pub pause_hidden: bool,
-    /// Spacing between staggered pipeline starts.
-    pub stagger: Duration,
-    /// Camera indices waiting for their pipeline to be started (initial launch
-    /// and page flips both feed this).
-    pub start_queue: VecDeque<usize>,
-    /// Earliest instant the next queued camera may start.
-    pub next_start_at: Instant,
-    /// Whether each camera's video pipeline is currently running. Kept in
-    /// lockstep with the other per-camera vecs.
-    pub active_stream: Vec<bool>,
     /// Camera briefly connected only to grab one preview frame for the flex
     /// thumbnail strip, and when it started.
     pub preview_cam: Option<(usize, Instant)>,
     /// Cameras whose preview attempt is over (frame grabbed or timed out).
     pub preview_done: Vec<bool>,
-    /// When each camera's pipeline was last (re)started, used to show
-    /// `CONNECTING` during the initial hand-shake. `None` once it has gone
-    /// live or was never started.
-    pub connecting_since: Vec<Option<Instant>>,
     pub is_recording: bool,
     pub audio_states: Vec<AudioState>,
     pub audio_pipelines: Vec<Rc<RefCell<Option<gstreamer::Pipeline>>>>,
     pub audio_urls: Vec<String>,
     pub audio_level_states: Vec<Arc<AudioLevelState>>,
-    pub reconnect_states: Vec<ReconnectState>,
-    pub backoff_states: Vec<BackoffState>,
-    pub camera_configs: Vec<crate::config::CameraConfig>,
-    /// Which stream each camera is running on (`Sub` only for cameras with a
-    /// `sub_url`). Drives `update::camera_config_for` and the Inspector.
-    pub stream_quality: Vec<crate::domain::multi_stream::StreamQuality>,
     pub is_fullscreen: bool,
     pub show_help: bool,
     /// Video presentation mode (Normal / Immersive / Spotlight). Not persisted.
@@ -120,33 +99,15 @@ pub struct App {
     pub fps_history: Vec<Vec<f64>>,
     pub snapshot_config: SnapshotConfig,
     pub audio_config: AudioConfig,
-    pub camera_enabled: Vec<bool>,
     /// True while the sidebar search box owns the keyboard, so single-key
     /// shortcuts must not steal the user's keystrokes.
     pub search_focused: bool,
     /// In-flight burst capture, advanced by the frame tick.
     pub pending_burst: Option<PendingBurst>,
-    /// Motion zones per camera (empty = the whole frame counts).
-    pub zones: Vec<crate::domain::zones::ZoneConfig>,
     /// Everything persisted to `zones.toml`, so saving one camera keeps the rest.
     pub zones_file: crate::infrastructure::zone_state::ZonesFile,
     /// Zone editor session, `Some` while the user is drawing.
     pub zone_edit: Option<ZoneEdit>,
-    pub motion_config: crate::domain::motion::MotionConfig,
-    /// Previous sampled frame per camera, for frame differencing.
-    pub prev_motion_frames: Vec<Option<iced::advanced::image::Bytes>>,
-    /// Whether motion was active at the last sample (events fire on the rising edge).
-    pub motion_active: Vec<bool>,
-    /// `[recording] on_motion` / `motion_post_roll_secs`.
-    pub motion_recording: bool,
-    pub motion_post_roll_secs: u32,
-    /// Last instant motion was seen per camera (drives the post-roll).
-    pub last_motion_at: Vec<Option<Instant>>,
-    /// True for recordings the motion trigger started, so it never stops a manual one.
-    pub auto_recording: Vec<bool>,
-    pub notify: crate::domain::notify::NotifyConfig,
-    /// Last desktop notification per (camera, event kind), for the cooldown.
-    pub notify_last: std::collections::HashMap<(usize, &'static str), Instant>,
 }
 
 /// A zone being drawn on one camera. Vertices are only committed to
@@ -384,9 +345,34 @@ pub fn new_app(
     let start_queue: VecDeque<usize> =
         crate::domain::view::apply_order(&view.order, &(0..count).collect::<Vec<_>>()).into();
 
+    let engine = crate::engine::Engine {
+        bridges,
+        pause_hidden,
+        stagger,
+        start_queue,
+        next_start_at: Instant::now(),
+        active_stream: vec![false; count],
+        connecting_since: vec![None; count],
+        reconnect_states,
+        backoff_states,
+        stream_quality: vec![crate::domain::multi_stream::StreamQuality::Main; kept_cameras.len()],
+        camera_configs: kept_cameras,
+        camera_enabled: vec![true; count],
+        motion_config,
+        prev_motion_frames: vec![None; count],
+        motion_active: vec![false; count],
+        motion_recording,
+        motion_post_roll_secs,
+        last_motion_at: vec![None; count],
+        auto_recording: vec![false; count],
+        zones,
+        notify: notify_config,
+        notify_last: std::collections::HashMap::new(),
+    };
+
     (
         App {
-            bridges,
+            engine,
             videos,
             theme,
             sidebar,
@@ -397,26 +383,13 @@ pub fn new_app(
             current_page: 0,
             rotate_last_advance: Instant::now(),
             interaction_pause_until: None,
-            pause_hidden,
-            stagger,
-            start_queue,
-            next_start_at: Instant::now(),
-            active_stream: vec![false; count],
             preview_cam: None,
             preview_done: vec![false; count],
-            connecting_since: vec![None; count],
             is_recording: false,
             audio_states: vec![AudioState::Muted; count],
             audio_pipelines,
             audio_urls,
             audio_level_states,
-            reconnect_states,
-            backoff_states,
-            stream_quality: vec![
-                crate::domain::multi_stream::StreamQuality::Main;
-                kept_cameras.len()
-            ],
-            camera_configs: kept_cameras,
             is_fullscreen: false,
             show_help: false,
             focus: ViewFocus::Normal,
@@ -434,21 +407,10 @@ pub fn new_app(
             fps_history: vec![Vec::new(); count],
             snapshot_config,
             audio_config,
-            camera_enabled: vec![true; count],
             search_focused: false,
             pending_burst: None,
-            zones,
             zones_file,
             zone_edit: None,
-            motion_config,
-            prev_motion_frames: vec![None; count],
-            motion_active: vec![false; count],
-            motion_recording,
-            motion_post_roll_secs,
-            last_motion_at: vec![None; count],
-            auto_recording: vec![false; count],
-            notify: notify_config,
-            notify_last: std::collections::HashMap::new(),
         },
         // iced 0.13's `window::Settings` has no "start maximized" flag, so ask
         // the compositor to maximize the window as soon as it exists. `size`

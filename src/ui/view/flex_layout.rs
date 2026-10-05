@@ -35,7 +35,10 @@ pub fn spotlight_view(app: &App, idx: usize) -> Element<'_, Message> {
             colors,
             name.clone(),
             &status,
-            app.backoff_states.get(idx).and_then(|b| b.status_detail()),
+            app.engine
+                .backoff_states
+                .get(idx)
+                .and_then(|b| b.status_detail()),
         )
     };
     let picture = iced::widget::container(picture)
@@ -103,12 +106,13 @@ fn zone_editor_layer<'a>(
     idx: usize,
     edit: &'a super::super::app::ZoneEdit,
 ) -> Element<'a, Message> {
-    let (_, w, h, _) = app.bridges[idx]
+    let (_, w, h, _) = app.engine.bridges[idx]
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .read_frame();
     let program = crate::ui::zone_editor::ZoneEditorProgram {
         zones: app
+            .engine
             .zones
             .get(idx)
             .map(|c| c.zones.clone())
@@ -195,7 +199,12 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
     let tile_radius: iced::border::Radius = Theme::RADIUS_MD.into();
 
     let main_idx = app.flex_main_idx.min(app.videos.len().saturating_sub(1));
-    let is_main_disabled = !app.camera_enabled.get(main_idx).copied().unwrap_or(true);
+    let is_main_disabled = !app
+        .engine
+        .camera_enabled
+        .get(main_idx)
+        .copied()
+        .unwrap_or(true);
     let is_audio_main = app
         .audio_states
         .get(main_idx)
@@ -305,7 +314,7 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
 
     let mut thumb_col = iced::widget::column![].spacing(4);
     for i in 0..app.videos.len() {
-        if !app.camera_enabled.get(i).copied().unwrap_or(true) {
+        if !app.engine.camera_enabled.get(i).copied().unwrap_or(true) {
             continue;
         }
         let is_selected = i == main_idx;
@@ -328,13 +337,13 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
         };
 
         // Only the main camera streams in flex; the others show one grabbed frame.
-        let has_frame = app.bridges[i]
+        let has_frame = app.engine.bridges[i]
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .capture_frame()
             .is_some();
         let thumb_pic: Element<'_, Message> =
-            if has_frame || app.active_stream.get(i).copied().unwrap_or(false) {
+            if has_frame || app.engine.active_stream.get(i).copied().unwrap_or(false) {
                 app.videos[i]
                     .view()
                     .map(move |_| Message::FlexMainSelected(i))

@@ -88,7 +88,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ZoneClear => {
             if let Some(idx) = app.zone_edit.as_ref().map(|e| e.camera_idx) {
-                if let Some(cfg) = app.zones.get_mut(idx) {
+                if let Some(cfg) = app.engine.zones.get_mut(idx) {
                     cfg.zones.clear();
                 }
                 persist_zones(app, idx);
@@ -548,7 +548,7 @@ fn shutdown(app: &mut App) {
             let _ = pipeline.set_state(gstreamer::State::Null);
         }
     }
-    for bridge in &app.bridges {
+    for bridge in &app.engine.bridges {
         // Blocking: the process is about to exit, so any recording must be
         // finalised now rather than on a thread that won't survive.
         bridge
@@ -578,7 +578,7 @@ fn finish_zone(app: &mut App) {
     }
     let idx = edit.camera_idx;
     let vertices = std::mem::take(&mut edit.temp_vertices);
-    if let Some(cfg) = app.zones.get_mut(idx) {
+    if let Some(cfg) = app.engine.zones.get_mut(idx) {
         let name = format!("Zona {}", cfg.zones.len() + 1);
         cfg.zones
             .push(crate::domain::zones::MotionZone::new(name, vertices));
@@ -597,6 +597,7 @@ fn undo_zone(app: &mut App) {
     }
     let idx = edit.camera_idx;
     if app
+        .engine
         .zones
         .get_mut(idx)
         .is_some_and(|c| c.zones.pop().is_some())
@@ -606,7 +607,7 @@ fn undo_zone(app: &mut App) {
 }
 
 fn persist_zones(app: &mut App, idx: usize) {
-    let (Some(cam), Some(cfg)) = (app.sidebar.cameras.get(idx), app.zones.get(idx)) else {
+    let (Some(cam), Some(cfg)) = (app.sidebar.cameras.get(idx), app.engine.zones.get(idx)) else {
         return;
     };
     app.zones_file.set(&cam.name, cfg);
@@ -616,19 +617,19 @@ fn persist_zones(app: &mut App, idx: usize) {
 /// Sample the camera's latest frame and compare it with the previous sample.
 /// Called at ~2 Hz per live camera; logs a timeline event on the rising edge.
 fn detect_camera_motion(app: &mut App, i: usize) {
-    if !app.motion_config.enabled
+    if !app.engine.motion_config.enabled
         || !matches!(
             app.sidebar.cameras[i].status,
             sidebar::CameraStatus::Live | sidebar::CameraStatus::Recording
         )
     {
-        app.prev_motion_frames[i] = None;
-        app.motion_active[i] = false;
+        app.engine.prev_motion_frames[i] = None;
+        app.engine.motion_active[i] = false;
         return;
     }
     // The reduced detection branch (~320 px), not the full-resolution display
     // frame: same answer for a fraction of the pixels.
-    let frame = app.bridges[i]
+    let frame = app.engine.bridges[i]
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .capture_detect_frame();
@@ -637,24 +638,24 @@ fn detect_camera_motion(app: &mut App, i: usize) {
     };
     // Same allocation as last time = the branch has not produced a new frame
     // yet; diffing a frame with itself would read as "stillness".
-    if app.prev_motion_frames[i]
+    if app.engine.prev_motion_frames[i]
         .as_ref()
         .is_some_and(|prev| prev.as_ptr() == curr.as_ptr() && prev.len() == curr.len())
     {
         return;
     }
-    let zones = app.zones.get(i).filter(|z| z.has_active());
-    let result = app.prev_motion_frames[i].as_ref().and_then(|prev| {
+    let zones = app.engine.zones.get(i).filter(|z| z.has_active());
+    let result = app.engine.prev_motion_frames[i].as_ref().and_then(|prev| {
         crate::domain::motion::detect_motion(
             prev,
             &curr,
             width as usize,
             height as usize,
-            &app.motion_config,
+            &app.engine.motion_config,
             zones,
         )
     });
-    app.prev_motion_frames[i] = Some(curr);
+    app.engine.prev_motion_frames[i] = Some(curr);
     let Some(result) = result else {
         return;
     };
@@ -667,7 +668,7 @@ fn detect_camera_motion(app: &mut App, i: usize) {
             ""
         }
     );
-    if result.motion_active && !app.motion_active[i] {
+    if result.motion_active && !app.engine.motion_active[i] {
         log::info!(
             "Motion on camera {i}: {:.1}% of the frame",
             result.motion_level * 100.0
@@ -679,13 +680,13 @@ fn detect_camera_motion(app: &mut App, i: usize) {
             Some(format!("{:.1}% do quadro", result.motion_level * 100.0)),
         );
     }
-    app.motion_active[i] = result.motion_active;
+    app.engine.motion_active[i] = result.motion_active;
 }
 
 /// Fire a desktop notification for motion / offline events, at most once per
 /// cooldown per camera and kind.
 fn notify_desktop(app: &mut App, camera_idx: usize, kind: EventType, detail: Option<&str>) {
-    if !app.notify.enabled {
+    if !app.engine.notify.enabled {
         return;
     }
     let name = app
@@ -697,11 +698,15 @@ fn notify_desktop(app: &mut App, camera_idx: usize, kind: EventType, detail: Opt
         return;
     };
     let key = (camera_idx, kind.label());
-    let since = app.notify_last.get(&key).map(|t| t.elapsed().as_secs());
-    if !crate::domain::notify::cooldown_elapsed(since, app.notify.cooldown_secs) {
+    let since = app
+        .engine
+        .notify_last
+        .get(&key)
+        .map(|t| t.elapsed().as_secs());
+    if !crate::domain::notify::cooldown_elapsed(since, app.engine.notify.cooldown_secs) {
         return;
     }
-    app.notify_last.insert(key, Instant::now());
+    app.engine.notify_last.insert(key, Instant::now());
     crate::infrastructure::notify::send(&title, &body);
 }
 
@@ -763,11 +768,11 @@ fn clamp_current_page(app: &mut App) {
 /// * Grid layout with `pause_hidden` → the current page, plus the next page
 ///   as a prefetch when the carousel is on or [`view::PREFETCH_NEXT_PAGE`].
 fn desired_active_cameras(app: &App) -> Vec<usize> {
-    let enabled_all: Vec<usize> = (0..app.bridges.len())
-        .filter(|&i| app.camera_enabled[i])
+    let enabled_all: Vec<usize> = (0..app.engine.bridges.len())
+        .filter(|&i| app.engine.camera_enabled[i])
         .collect();
 
-    if !app.pause_hidden {
+    if !app.engine.pause_hidden {
         return enabled_all;
     }
 
@@ -775,9 +780,9 @@ fn desired_active_cameras(app: &App) -> Vec<usize> {
     // When something reacts to motion, every camera keeps decoding (on its
     // sub-stream when it has one, see `wanted_quality`).
     if crate::domain::motion::needs_background_watch(
-        app.motion_config.enabled,
-        app.motion_recording,
-        app.notify.enabled,
+        app.engine.motion_config.enabled,
+        app.engine.motion_recording,
+        app.engine.notify.enabled,
     ) {
         return enabled_all;
     }
@@ -785,7 +790,9 @@ fn desired_active_cameras(app: &App) -> Vec<usize> {
     // Flex shows one live camera; the thumbnail strip stays paused until a
     // thumbnail is picked, so only the camera on screen holds a connection.
     if app.layout_mode == LayoutMode::Flex {
-        let mut hot = app.flex_main_idx.min(app.bridges.len().saturating_sub(1));
+        let mut hot = app
+            .flex_main_idx
+            .min(app.engine.bridges.len().saturating_sub(1));
         if let super::app::ViewFocus::Spotlight(idx) = app.focus {
             hot = idx;
         }
@@ -816,12 +823,12 @@ fn desired_active_cameras(app: &App) -> Vec<usize> {
         hot = Some(idx);
     }
     if let Some(sel) = hot
-        && app.camera_enabled.get(sel).copied().unwrap_or(false)
+        && app.engine.camera_enabled.get(sel).copied().unwrap_or(false)
         && !want.contains(&sel)
     {
         want.push(sel);
     }
-    want.retain(|&i| app.camera_enabled.get(i).copied().unwrap_or(false));
+    want.retain(|&i| app.engine.camera_enabled.get(i).copied().unwrap_or(false));
     want.sort_unstable();
     want.dedup();
     want
@@ -837,21 +844,23 @@ fn start_stream(app: &mut App, i: usize) {
 /// (Re)build a camera's pipeline on `quality`. `start_*` stops the old
 /// pipeline first, so this doubles as the sub/main switch.
 fn restart_stream(app: &mut App, i: usize, quality: StreamQuality) {
-    if i >= app.stream_quality.len() {
+    if i >= app.engine.stream_quality.len() {
         return;
     }
-    app.stream_quality[i] = quality;
+    app.engine.stream_quality[i] = quality;
     let Some(cfg) = camera_config_for(app, i) else {
         return;
     };
     let result = {
-        let mut bridge = app.bridges[i].lock().unwrap_or_else(|e| e.into_inner());
+        let mut bridge = app.engine.bridges[i]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         bridge.start_from_config(&cfg)
     };
-    app.active_stream[i] = true;
-    app.connecting_since[i] = Some(Instant::now());
-    app.reconnect_states[i].reset();
-    app.backoff_states[i] = BackoffState::new();
+    app.engine.active_stream[i] = true;
+    app.engine.connecting_since[i] = Some(Instant::now());
+    app.engine.reconnect_states[i].reset();
+    app.engine.backoff_states[i] = BackoffState::new();
     if i < app.sidebar.cameras.len() {
         app.sidebar.cameras[i].status = if result.is_err() {
             sidebar::CameraStatus::Offline
@@ -867,27 +876,38 @@ fn restart_stream(app: &mut App, i: usize, quality: StreamQuality) {
 /// The camera config with `url` swapped for the sub-stream when that is the
 /// stream it is running on.
 fn camera_config_for(app: &App, i: usize) -> Option<crate::config::CameraConfig> {
-    let mut cfg = app.camera_configs.get(i)?.clone();
+    let mut cfg = app.engine.camera_configs.get(i)?.clone();
     let multi = MultiStreamConfig {
         sub_stream_url: cfg.sub_url.clone(),
         default_quality: StreamQuality::Main,
     };
-    let quality = app.stream_quality.get(i).copied().unwrap_or_default();
+    let quality = app
+        .engine
+        .stream_quality
+        .get(i)
+        .copied()
+        .unwrap_or_default();
     cfg.url = stream_url_for_quality(&cfg.url, quality, &multi);
     Some(cfg)
 }
 
 /// The stream camera `i` should be on given what is on screen.
 fn wanted_quality(app: &App, i: usize) -> StreamQuality {
-    let current = app.stream_quality.get(i).copied().unwrap_or_default();
+    let current = app
+        .engine
+        .stream_quality
+        .get(i)
+        .copied()
+        .unwrap_or_default();
     let has_sub = app
+        .engine
         .camera_configs
         .get(i)
         .is_some_and(|c| c.sub_url.is_some());
     if !has_sub {
         return StreamQuality::Main;
     }
-    let recording = app.bridges[i]
+    let recording = app.engine.bridges[i]
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .is_recording();
@@ -908,18 +928,20 @@ fn is_large_view(app: &App, i: usize) -> bool {
 /// Tear a camera's video + audio pipeline down because it went off-page.
 fn pause_stream(app: &mut App, i: usize) {
     {
-        let mut bridge = app.bridges[i].lock().unwrap_or_else(|e| e.into_inner());
+        let mut bridge = app.engine.bridges[i]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         bridge.stop();
     }
     if let Some(pipeline) = app.audio_pipelines[i].borrow_mut().take() {
         let _ = pipeline.set_state(gstreamer::State::Null);
     }
     app.audio_states[i] = AudioState::Muted;
-    app.active_stream[i] = false;
-    app.connecting_since[i] = None;
-    app.reconnect_states[i].reset();
-    app.backoff_states[i] = BackoffState::new();
-    app.start_queue.retain(|&q| q != i);
+    app.engine.active_stream[i] = false;
+    app.engine.connecting_since[i] = None;
+    app.engine.reconnect_states[i].reset();
+    app.engine.backoff_states[i] = BackoffState::new();
+    app.engine.start_queue.retain(|&q| q != i);
     if i < app.sidebar.cameras.len() {
         app.sidebar.cameras[i].status = sidebar::CameraStatus::Paused;
     }
@@ -932,26 +954,26 @@ fn sync_active_streams(app: &mut App) {
     clamp_current_page(app);
     let want = desired_active_cameras(app);
 
-    for i in 0..app.bridges.len() {
-        if !app.camera_enabled[i] {
+    for i in 0..app.engine.bridges.len() {
+        if !app.engine.camera_enabled[i] {
             continue;
         }
         let should_run = want.contains(&i);
-        if should_run && !app.active_stream[i] {
-            if !app.start_queue.contains(&i) {
-                app.start_queue.push_back(i);
+        if should_run && !app.engine.active_stream[i] {
+            if !app.engine.start_queue.contains(&i) {
+                app.engine.start_queue.push_back(i);
             }
             if i < app.sidebar.cameras.len()
                 && app.sidebar.cameras[i].status == sidebar::CameraStatus::Paused
             {
                 app.sidebar.cameras[i].status = sidebar::CameraStatus::Connecting;
             }
-        } else if !should_run && app.active_stream[i] {
+        } else if !should_run && app.engine.active_stream[i] {
             pause_stream(app, i);
-        } else if !should_run && !app.active_stream[i] {
+        } else if !should_run && !app.engine.active_stream[i] {
             // Off-page and not running: settle its placeholder on PAUSED
             // (unless it never started and is still in the launch queue).
-            app.start_queue.retain(|&q| q != i);
+            app.engine.start_queue.retain(|&q| q != i);
             if i < app.sidebar.cameras.len()
                 && app.sidebar.cameras[i].status == sidebar::CameraStatus::Connecting
             {
@@ -961,12 +983,12 @@ fn sync_active_streams(app: &mut App) {
     }
 
     // Running cameras whose view changed (grid tile ↔ spotlight) swap stream.
-    for i in 0..app.bridges.len() {
-        if !app.camera_enabled[i] || !app.active_stream[i] {
+    for i in 0..app.engine.bridges.len() {
+        if !app.engine.camera_enabled[i] || !app.engine.active_stream[i] {
             continue;
         }
         let wanted = wanted_quality(app, i);
-        if wanted != app.stream_quality[i] {
+        if wanted != app.engine.stream_quality[i] {
             log::info!("Camera {i}: switching to the {} stream", wanted.label());
             restart_stream(app, i, wanted);
         }
@@ -978,11 +1000,11 @@ fn sync_active_streams(app: &mut App) {
 /// once the launch queue is empty so it never competes with the main stream.
 fn drive_previews(app: &mut App) {
     const PREVIEW_TIMEOUT_SECS: u64 = 10;
-    if app.layout_mode != LayoutMode::Flex || !app.pause_hidden {
+    if app.layout_mode != LayoutMode::Flex || !app.engine.pause_hidden {
         return;
     }
     if let Some((i, since)) = app.preview_cam {
-        let got = app.bridges[i]
+        let got = app.engine.bridges[i]
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .capture_frame()
@@ -996,14 +1018,14 @@ fn drive_previews(app: &mut App) {
         }
         return;
     }
-    if !app.start_queue.is_empty() || Instant::now() < app.next_start_at {
+    if !app.engine.start_queue.is_empty() || Instant::now() < app.engine.next_start_at {
         return;
     }
-    let next = (0..app.bridges.len()).find(|&i| {
-        app.camera_enabled[i]
-            && !app.active_stream[i]
+    let next = (0..app.engine.bridges.len()).find(|&i| {
+        app.engine.camera_enabled[i]
+            && !app.engine.active_stream[i]
             && !app.preview_done[i]
-            && app.bridges[i]
+            && app.engine.bridges[i]
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .capture_frame()
@@ -1012,18 +1034,20 @@ fn drive_previews(app: &mut App) {
     if let Some(i) = next {
         app.preview_cam = Some((i, Instant::now()));
         start_stream(app, i);
-        app.next_start_at = Instant::now() + app.stagger;
+        app.engine.next_start_at = Instant::now() + app.engine.stagger;
     }
 }
 
 /// Start at most one queued camera per `stagger`.
 fn drain_start_queue(app: &mut App) {
-    if app.start_queue.is_empty() || Instant::now() < app.next_start_at {
+    if app.engine.start_queue.is_empty() || Instant::now() < app.engine.next_start_at {
         return;
     }
     let want = desired_active_cameras(app);
-    while let Some(i) = app.start_queue.pop_front() {
-        if !app.camera_enabled.get(i).copied().unwrap_or(false) || app.active_stream[i] {
+    while let Some(i) = app.engine.start_queue.pop_front() {
+        if !app.engine.camera_enabled.get(i).copied().unwrap_or(false)
+            || app.engine.active_stream[i]
+        {
             continue;
         }
         if !want.contains(&i) {
@@ -1031,7 +1055,7 @@ fn drain_start_queue(app: &mut App) {
             continue;
         }
         start_stream(app, i);
-        app.next_start_at = Instant::now() + app.stagger;
+        app.engine.next_start_at = Instant::now() + app.engine.stagger;
         break;
     }
 }
@@ -1101,11 +1125,11 @@ fn update_frame(app: &mut App) -> Task<Message> {
         app.chrome_revealed = false;
     }
 
-    for i in 0..app.bridges.len() {
+    for i in 0..app.engine.bridges.len() {
         // A camera that is disabled, paused off-page, or still waiting in the
         // start queue has no live pipeline — skip the bus/FPS/reconnect work
         // and leave its placeholder status untouched.
-        if !app.camera_enabled[i] || !app.active_stream[i] {
+        if !app.engine.camera_enabled[i] || !app.engine.active_stream[i] {
             continue;
         }
 
@@ -1126,7 +1150,9 @@ fn update_frame(app: &mut App) -> Task<Message> {
         // same mutex — `std::sync::Mutex` is not reentrant, so holding it
         // across both deadlocks the UI thread permanently.
         let (needs_reconnect, errored) = {
-            let mut bridge = app.bridges[i].lock().unwrap_or_else(|e| e.into_inner());
+            let mut bridge = app.engine.bridges[i]
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             bridge.poll_bus();
             let fps = bridge.update_fps();
             app.fps_history[i].push(fps);
@@ -1161,6 +1187,7 @@ fn update_frame(app: &mut App) -> Task<Message> {
 
             let is_live = bridge.is_live();
             let is_uridecodebin = app
+                .engine
                 .camera_configs
                 .get(i)
                 .map(|c| {
@@ -1170,8 +1197,8 @@ fn update_frame(app: &mut App) -> Task<Message> {
                 })
                 .unwrap_or(false);
 
-            let backoff_due = app.backoff_states[i].is_due();
-            let decision = app.reconnect_states[i].tick(
+            let backoff_due = app.engine.backoff_states[i].is_due();
+            let decision = app.engine.reconnect_states[i].tick(
                 is_live,
                 is_uridecodebin,
                 Some(fps),
@@ -1180,7 +1207,7 @@ fn update_frame(app: &mut App) -> Task<Message> {
             );
 
             if is_live && fps > 0.0 && matches!(decision, ReconnectDecision::None) {
-                app.backoff_states[i].record_success();
+                app.engine.backoff_states[i].record_success();
             }
 
             let errored = bridge
@@ -1212,9 +1239,9 @@ fn update_frame(app: &mut App) -> Task<Message> {
         // Cosmetic: a pipeline we started in the last few seconds shows
         // CONNECTING rather than flapping to RECONNECTING/OFFLINE while it
         // hand-shakes. Cleared once it actually goes live.
-        match app.connecting_since[i] {
+        match app.engine.connecting_since[i] {
             Some(_) if app.sidebar.cameras[i].status == sidebar::CameraStatus::Live => {
-                app.connecting_since[i] = None;
+                app.engine.connecting_since[i] = None;
             }
             Some(t) if t.elapsed().as_secs() < CONNECT_GRACE_SECS => {
                 if matches!(
@@ -1224,7 +1251,7 @@ fn update_frame(app: &mut App) -> Task<Message> {
                     app.sidebar.cameras[i].status = sidebar::CameraStatus::Connecting;
                 }
             }
-            Some(_) => app.connecting_since[i] = None,
+            Some(_) => app.engine.connecting_since[i] = None,
             None => {}
         }
 
@@ -1238,9 +1265,13 @@ fn update_frame(app: &mut App) -> Task<Message> {
             sidebar::CameraStatus::Offline | sidebar::CameraStatus::Reconnecting
         );
         if !needs_reconnect
-            && BackoffState::should_schedule_retry(app.connecting_since[i].is_some(), down, errored)
+            && BackoffState::should_schedule_retry(
+                app.engine.connecting_since[i].is_some(),
+                down,
+                errored,
+            )
         {
-            app.backoff_states[i].arm_if_idle();
+            app.engine.backoff_states[i].arm_if_idle();
         }
 
         if needs_reconnect {
@@ -1284,8 +1315,8 @@ fn update_frame(app: &mut App) -> Task<Message> {
         .sidebar
         .selected
         .and_then(|i| {
-            let enabled = *app.camera_enabled.get(i)?;
-            let bridge = app.bridges.get(i)?;
+            let enabled = *app.engine.camera_enabled.get(i)?;
+            let bridge = app.engine.bridges.get(i)?;
             Some(
                 enabled
                     && bridge
@@ -1316,7 +1347,9 @@ fn reconnect_camera(app: &mut App, i: usize, cam_label: &str) {
     app.audio_states[i] = AudioState::Muted;
 
     let (restarted, was_recording) = {
-        let mut bridge = app.bridges[i].lock().unwrap_or_else(|e| e.into_inner());
+        let mut bridge = app.engine.bridges[i]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let was_recording = bridge.is_recording();
         bridge.note_reconnect();
         // `stop` finalises the current segment; the recording resumes into a
@@ -1338,8 +1371,8 @@ fn reconnect_camera(app: &mut App, i: usize, cam_label: &str) {
 
     if restarted {
         // One rebuild per backoff period, and a fresh connect grace for it.
-        app.backoff_states[i].disarm();
-        app.connecting_since[i] = Some(Instant::now());
+        app.engine.backoff_states[i].disarm();
+        app.engine.connecting_since[i] = Some(Instant::now());
         if prev_audio.is_audible() {
             app.audio_states[i] = prev_audio;
             spawn_audio(app, i, prev_audio.volume_f32());
@@ -1348,7 +1381,7 @@ fn reconnect_camera(app: &mut App, i: usize, cam_label: &str) {
         // Only a genuine failure feeds the exponential backoff; a successful
         // rebuild must not inflate `consecutive_failures` (which would drag the
         // reconnect delay up and, before the cap, could overflow it).
-        app.backoff_states[i].record_failure();
+        app.engine.backoff_states[i].record_failure();
     }
 
     if i < app.sidebar.cameras.len() {
@@ -1368,11 +1401,13 @@ fn update_selected_metrics(app: &mut App) {
     let Some(idx) = app.sidebar.selected else {
         return;
     };
-    if idx >= app.bridges.len() {
+    if idx >= app.engine.bridges.len() {
         return;
     }
 
-    let bridge = app.bridges[idx].lock().unwrap_or_else(|e| e.into_inner());
+    let bridge = app.engine.bridges[idx]
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let m = bridge.metrics().clone();
     let hints = crate::domain::diagnostics::diagnose(&m);
     app.sidebar.diagnostics = hints;
@@ -1402,10 +1437,11 @@ fn update_selected_metrics(app: &mut App) {
         decoder: si.decoder.clone(),
         decoder_hw: si.decoder_hw,
         stream_quality: app
+            .engine
             .camera_configs
             .get(idx)
             .filter(|c| c.sub_url.is_some())
-            .and_then(|_| app.stream_quality.get(idx).map(|q| q.label())),
+            .and_then(|_| app.engine.stream_quality.get(idx).map(|q| q.label())),
         width: si.width,
         height: si.height,
         framerate_num: si.framerate_num,
@@ -1458,7 +1494,9 @@ fn grab_snapshot_job(
     timestamp: u64,
     sequence: u32,
 ) -> Result<SnapshotJob, String> {
-    let bridge = app.bridges[idx].lock().unwrap_or_else(|e| e.into_inner());
+    let bridge = app.engine.bridges[idx]
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let (rgba, width, height) = bridge.capture_frame().ok_or("no frame available yet")?;
     drop(bridge);
 
@@ -1541,7 +1579,7 @@ fn update_snapshot(app: &mut App) -> Task<Message> {
         toast(app, "Selecione uma câmera primeiro");
         return Task::none();
     };
-    if idx >= app.bridges.len() {
+    if idx >= app.engine.bridges.len() {
         return Task::none();
     }
 
@@ -1614,7 +1652,7 @@ fn update_recording(app: &mut App) -> Task<Message> {
         toast(app, "Selecione uma câmera primeiro");
         return Task::none();
     };
-    if idx >= app.bridges.len() {
+    if idx >= app.engine.bridges.len() {
         return Task::none();
     }
 
@@ -1635,15 +1673,17 @@ fn toggle_camera_recording(app: &mut App, idx: usize) -> Result<bool, String> {
     // A recording is taken from the decoded frames, so starting one on the
     // sub-stream would save a low-resolution file. Move to the main stream
     // first; `wanted_quality` then leaves it alone until the recording stops.
-    let starting = !app.bridges[idx]
+    let starting = !app.engine.bridges[idx]
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .is_recording();
-    if starting && app.stream_quality.get(idx) == Some(&StreamQuality::Sub) {
+    if starting && app.engine.stream_quality.get(idx) == Some(&StreamQuality::Sub) {
         restart_stream(app, idx, StreamQuality::Main);
     }
     let is_recording = {
-        let mut bridge = app.bridges[idx].lock().unwrap_or_else(|e| e.into_inner());
+        let mut bridge = app.engine.bridges[idx]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         bridge.toggle_recording()?
     };
     app.is_recording = is_recording;
@@ -1666,39 +1706,39 @@ fn toggle_camera_recording(app: &mut App, idx: usize) -> Result<bool, String> {
 /// `[recording] on_motion`: start recording on motion, stop after the
 /// post-roll of quiet. Runs right after each motion sample.
 fn drive_motion_recording(app: &mut App, i: usize) {
-    if !app.motion_recording {
+    if !app.engine.motion_recording {
         return;
     }
-    let is_recording = app.bridges[i]
+    let is_recording = app.engine.bridges[i]
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .is_recording();
     if !is_recording {
         // Stopped by the user (or a reconnect): the trigger no longer owns it.
-        app.auto_recording[i] = false;
+        app.engine.auto_recording[i] = false;
     }
-    if app.motion_active[i] {
-        app.last_motion_at[i] = Some(Instant::now());
+    if app.engine.motion_active[i] {
+        app.engine.last_motion_at[i] = Some(Instant::now());
     }
-    let quiet = app.last_motion_at[i].map_or(u64::MAX, |t| t.elapsed().as_secs());
+    let quiet = app.engine.last_motion_at[i].map_or(u64::MAX, |t| t.elapsed().as_secs());
     let action = crate::domain::recording::motion_recording_action(
         is_recording,
-        app.auto_recording[i],
-        app.motion_active[i],
+        app.engine.auto_recording[i],
+        app.engine.motion_active[i],
         quiet,
-        app.motion_post_roll_secs,
+        app.engine.motion_post_roll_secs,
     );
     match action {
         crate::domain::recording::MotionRecAction::None => {}
         crate::domain::recording::MotionRecAction::Start => match toggle_camera_recording(app, i) {
-            Ok(_) => app.auto_recording[i] = true,
+            Ok(_) => app.engine.auto_recording[i] = true,
             Err(e) => log::warn!("Motion recording could not start on camera {i}: {e}"),
         },
         crate::domain::recording::MotionRecAction::Stop => {
             if let Err(e) = toggle_camera_recording(app, i) {
                 log::warn!("Motion recording could not stop on camera {i}: {e}");
             }
-            app.auto_recording[i] = false;
+            app.engine.auto_recording[i] = false;
         }
     }
 }
@@ -1749,6 +1789,7 @@ fn update_audio(app: &mut App) -> Task<Message> {
         // Per-camera `audio_volume` wins; otherwise fall back to the global
         // `[audio] volume` rather than a hardcoded default.
         let vol_x1000 = app
+            .engine
             .camera_configs
             .get(idx)
             .and_then(|c| c.audio_volume)
@@ -1864,12 +1905,12 @@ fn update_sidebar(app: &mut App, msg: super::sidebar::Message) -> Task<Message> 
             persist_view(app);
         }
         super::sidebar::Message::CameraToggled(idx, enabled) => {
-            if idx < app.camera_enabled.len() {
-                app.camera_enabled[idx] = enabled;
+            if idx < app.engine.camera_enabled.len() {
+                app.engine.camera_enabled[idx] = enabled;
                 app.sidebar.cameras[idx].enabled = enabled;
 
                 if !enabled {
-                    app.bridges[idx]
+                    app.engine.bridges[idx]
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
                         .stop();
@@ -1877,19 +1918,19 @@ fn update_sidebar(app: &mut App, msg: super::sidebar::Message) -> Task<Message> 
                         let _ = pipeline.set_state(gstreamer::State::Null);
                     }
                     app.audio_states[idx] = AudioState::Muted;
-                    app.active_stream[idx] = false;
-                    app.connecting_since[idx] = None;
-                    app.start_queue.retain(|&q| q != idx);
+                    app.engine.active_stream[idx] = false;
+                    app.engine.connecting_since[idx] = None;
+                    app.engine.start_queue.retain(|&q| q != idx);
                     app.sidebar.cameras[idx].status = sidebar::CameraStatus::Disabled;
-                    app.reconnect_states[idx].reset();
-                    app.backoff_states[idx] = super::state::BackoffState::new();
+                    app.engine.reconnect_states[idx].reset();
+                    app.engine.backoff_states[idx] = super::state::BackoffState::new();
                 } else {
                     // Re-enabled: leave the actual (re)start to
                     // `sync_active_streams`, which only spins it up if the
                     // camera is on the visible page.
-                    app.active_stream[idx] = false;
-                    app.backoff_states[idx] = super::state::BackoffState::new();
-                    app.reconnect_states[idx].reset();
+                    app.engine.active_stream[idx] = false;
+                    app.engine.backoff_states[idx] = super::state::BackoffState::new();
+                    app.engine.reconnect_states[idx].reset();
                     if idx < app.sidebar.cameras.len() {
                         app.sidebar.cameras[idx].status = sidebar::CameraStatus::Connecting;
                     }

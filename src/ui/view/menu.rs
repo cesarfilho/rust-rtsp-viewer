@@ -227,7 +227,7 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
         && let Some(cam) = app.sidebar.cameras.get(idx)
     {
         {
-            let enabled = app.camera_enabled.get(idx).copied().unwrap_or(true);
+            let enabled = app.engine.camera_enabled.get(idx).copied().unwrap_or(true);
             col = col
                 .push(hairline(theme))
                 .push(section_header(theme, format!("Câmera · {}", cam.name)))

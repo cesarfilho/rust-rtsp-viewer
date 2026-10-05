@@ -142,7 +142,10 @@ pub fn grid_layout(app: &App, sidebar_width: f32, available_height: f32) -> Elem
                     colors,
                     name.clone(),
                     &status,
-                    app.backoff_states.get(idx).and_then(|b| b.status_detail()),
+                    app.engine
+                        .backoff_states
+                        .get(idx)
+                        .and_then(|b| b.status_detail()),
                 )
             };
             let base = iced::widget::container(inner)
@@ -171,7 +174,7 @@ pub fn grid_layout(app: &App, sidebar_width: f32, available_height: f32) -> Elem
                 ));
             }
             if is_recording {
-                let e = app.bridges[idx]
+                let e = app.engine.bridges[idx]
                     .lock()
                     .map(|b| b.recording_elapsed_secs())
                     .unwrap_or(0);
