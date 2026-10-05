@@ -25,6 +25,7 @@ serde_ignored = "0.1.14"
 thiserror = "1"
 chrono = { version = "0.4", features = ["clock"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 [dev-dependencies]
 toml = "0.8"
