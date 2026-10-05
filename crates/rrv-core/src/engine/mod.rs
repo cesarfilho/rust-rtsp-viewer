@@ -165,13 +165,13 @@ impl Engine {
             let mut bridge = match bridge::GStreamerBridge::new(1920, 1080) {
                 Ok(b) => b,
                 Err(e) => {
-                    log::error!(
-                        "Skipping camera {:?}: {e}",
-                        cam.label
-                            .as_deref()
-                            .or(cam.name.as_deref())
-                            .unwrap_or(cam.url.as_str())
-                    );
+                    // Sem nome nem rótulo cai para a URL, que pode levar a senha.
+                    let who = cam
+                        .label
+                        .clone()
+                        .or_else(|| cam.name.clone())
+                        .unwrap_or_else(|| crate::domain::redact::mask_credentials(&cam.url));
+                    log::error!("Skipping camera {who:?}: {e}");
                     continue;
                 }
             };

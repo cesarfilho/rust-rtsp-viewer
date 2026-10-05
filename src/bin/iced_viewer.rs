@@ -47,8 +47,12 @@ fn main() -> ExitCode {
 
 /// `--check`: validate and report, without starting GStreamer or the GUI.
 fn check_only(config_path: &str) -> Result<(), String> {
-    let (config, warnings) =
-        rust_rtsp_viewer::startup::load_config(config_path, "rust-rtsp-viewer")?;
+    // `--check` valida o arquivo sem exigir os `${SEGREDOS}` (avisa que faltam).
+    let (config, warnings) = rust_rtsp_viewer::startup::load_config_with(
+        config_path,
+        "rust-rtsp-viewer",
+        rust_rtsp_viewer::startup::Secrets::Lenient,
+    )?;
     let cameras = config.cameras.as_ref().map_or(0, Vec::len);
     println!("{config_path}: ok — {cameras} câmera(s), {warnings} aviso(s)");
     Ok(())

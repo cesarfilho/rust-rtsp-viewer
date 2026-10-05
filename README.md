@@ -295,7 +295,8 @@ nativa).
 
 ```bash
 cp config.docker.toml.example config.docker.toml   # edite as câmeras (o arquivo é ignorado pelo git)
-mkdir -p recordings state "$XDG_RUNTIME_DIR/rrv"
+mkdir -p recordings state secrets "$XDG_RUNTIME_DIR/rrv"
+printf '%s' 'a-senha-da-camera' > secrets/cam_portao_password && chmod 600 secrets/cam_portao_password
 docker compose up -d --build
 docker compose logs -f rrv
 ```
@@ -310,6 +311,13 @@ docker compose logs -f rrv
 - **Saúde:** `healthcheck` do Docker lê um batimento que o laço do daemon escreve a cada segundo.
   Uma câmera fora do ar *não* deixa o contêiner doente: reiniciá-lo não a consertaria.
 - **Validar a configuração** sem subir nada: `docker run --rm -v ./config.docker.toml:/config/config.toml:ro rust-rtsp-viewer/rrv-daemon:local --check`.
+- **Senhas fora do `config.toml`:** qualquer URL do config (câmeras, `sub_url`, `[webhook]`) aceita
+  `${NOME}`; o valor vem da variável de ambiente `NOME` ou do arquivo `/run/secrets/NOME` (é onde o
+  Docker monta os *secrets*; `RRV_SECRETS_DIR` muda o diretório). Na parte `usuário:senha@` da URL o
+  valor é *percent-encoded* sozinho: uma senha com `@`, `/` ou `:` não quebra a URL. `$${` escreve um
+  `${` literal. Um segredo ausente impede o daemon de subir e a mensagem **nomeia o segredo, nunca o
+  valor**; já o `--check` só avisa, para validar o arquivo sem ter os segredos. A senha também nunca
+  vai para o log. (A janela nativa lê o mesmo `${NOME}` do ambiente; o chaveiro do sistema é a 5.3.)
 - **Aviso com a janela fechada:** `[webhook] url = "https://…"` no `config.toml` faz o daemon dar um
   POST a cada movimento ou câmera offline (mesmo cooldown de `[notifications]`). `format = "json"`
   (Home Assistant, n8n, Node-RED: `camera`, `event`, `detail`, `title`, `message`, `time_unix`) ou

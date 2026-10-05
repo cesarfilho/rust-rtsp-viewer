@@ -1,7 +1,8 @@
 # O NVR sem janela: grava e detecta mesmo com a janela fechada (ADR 0010).
 #
 #   cp config.docker.toml.example config.docker.toml   # e edite as câmeras
-#   mkdir -p recordings state "$XDG_RUNTIME_DIR/rrv"
+#   mkdir -p recordings state secrets "$XDG_RUNTIME_DIR/rrv"
+#   printf '%s' 'a-senha-da-camera' > secrets/cam_portao_password && chmod 600 secrets/cam_portao_password
 #   docker compose up -d --build
 #   docker compose logs -f rrv
 #
@@ -24,6 +25,10 @@ services:
     # Tempo para finalizar os segmentos de gravação antes do SIGKILL.
     stop_grace_period: 30s
 
+    # A senha da câmera entra como segredo (montado em /run/secrets/<nome>), não no config.
+    secrets:
+      - cam_portao_password
+
     environment:
       TZ: "${TZ:-America/Sao_Paulo}"
 
@@ -38,3 +43,7 @@ services:
 
     # Decodificação por GPU Intel (VA-API) é a tarefa 2.5.10:
     # devices: ["/dev/dri:/dev/dri"]
+
+secrets:
+  cam_portao_password:
+    file: ./secrets/cam_portao_password

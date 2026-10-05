@@ -10,6 +10,7 @@ pub mod domain;
 pub mod engine;
 pub mod infrastructure;
 pub mod ipc;
+pub mod secrets;
 pub mod startup;
 pub mod webhook;
 

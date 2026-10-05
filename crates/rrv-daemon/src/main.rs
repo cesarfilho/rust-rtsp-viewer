@@ -16,7 +16,7 @@ use rrv_core::engine::{Engine, EngineEvent, EngineSettings, TICK_MS};
 use rrv_core::ipc::handler::Host;
 use rrv_core::ipc::protocol::WireEvent;
 use rrv_core::ipc::server::IpcServer;
-use rrv_core::startup::{load_config, merge_global_camera_defaults};
+use rrv_core::startup::{Secrets, load_config_with, merge_global_camera_defaults};
 
 #[derive(Parser)]
 #[command(
@@ -68,7 +68,15 @@ fn run(cli: &Cli) -> Result<(), String> {
     if cli.health {
         return check_health(&cli.health_file);
     }
-    let (config, warnings) = load_config(&cli.config, "rrv-daemon")?;
+    let (config, warnings) = load_config_with(
+        &cli.config,
+        "rrv-daemon",
+        if cli.check {
+            Secrets::Lenient
+        } else {
+            Secrets::Strict
+        },
+    )?;
     let mut cameras = config.cameras.clone().unwrap_or_default();
     merge_global_camera_defaults(&mut cameras, &config);
     if cli.check {

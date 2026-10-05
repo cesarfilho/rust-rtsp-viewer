@@ -14,10 +14,12 @@ dir = "/state/logs"
 [motion]
 enabled = true
 
+# A senha NÃO fica aqui: `${cam_portao_password}` é um segredo do Docker (veja o compose.yaml e o
+# README). O valor vem de /run/secrets/cam_portao_password, ou de uma variável de ambiente de mesmo nome.
 [[cameras]]
 name = "Portão"
-url = "rtsp://usuario:senha@192.168.0.10:554/stream1"
-# sub_url = "rtsp://usuario:senha@192.168.0.10:554/stream2"
+url = "rtsp://usuario:${cam_portao_password}@192.168.0.10:554/stream1"
+# sub_url = "rtsp://usuario:${cam_portao_password}@192.168.0.10:554/stream2"
 
 # ── Aviso com a janela fechada (rrv-daemon) ──────────────────────────────
 # O daemon envia um POST a esta URL quando acontece um evento que merece aviso

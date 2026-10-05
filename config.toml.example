@@ -140,6 +140,12 @@ label = "Rio Jardim Sofia"
 # name = "Fundos"
 # cameras = [2]
 
+# ── Senhas fora deste arquivo ────────────────────────────────────────────
+# Qualquer URL (câmeras, sub_url, [webhook]) aceita `${NOME}`: o valor vem da variável de
+# ambiente NOME ou do arquivo /run/secrets/NOME (Docker secrets). Na parte usuário:senha@ ele é
+# percent-encoded sozinho (senha com @ / : não quebra a URL). `$${` escreve um `${` literal.
+#   url = "rtsp://admin:${CAM_PORTAO_SENHA}@192.168.0.10:554/stream1"
+
 # ── Aviso com a janela fechada (rrv-daemon) ──────────────────────────────
 # O daemon envia um POST a esta URL quando acontece um evento que merece aviso
 # (movimento, câmera offline), com o mesmo cooldown de `[notifications]`.

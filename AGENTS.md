@@ -107,6 +107,16 @@ index. Losing the daemon does NOT fall back to the local engine (it may still be
 user chooses (banner / chip menu, with a confirmation). The banner takes height, so grid sizing and
 pointer tracking use `view::chrome_top`, not `TOOLBAR_HEIGHT`.
 
+## Secrets (plan 2.5.8)
+
+URLs in the config may carry `${NAME}` (`rrv_core::secrets`): value from env var `NAME`, else file
+`$RRV_SECRETS_DIR/NAME` (default `/run/secrets`, Docker secrets), trailing newline trimmed. Inside
+`scheme://user:HERE@host` the value is percent-encoded; `$${` is a literal `${`. Resolved once in
+`startup::load_config_with` (`Secrets::Strict` aborts naming the secret, never the value;
+`Lenient` — used by `--check` — warns). **The expanded URL contains the password: every log site
+must go through `domain::redact::mask_credentials` (or `webhook::safe_target`).** The window's
+keyring is plan 5.3.
+
 ## Source layout
 
 ### Domain (`src/domain/` — pure logic, no I/O)
