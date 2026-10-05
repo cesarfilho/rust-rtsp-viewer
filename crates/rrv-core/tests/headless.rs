@@ -239,8 +239,25 @@ fn the_headless_engine_brings_a_camera_up_and_keeps_it_live() {
     run(&mut e, 4, &mut events, |_, _| false);
     let advanced = generation(&e) - before;
     let state = describe(&e);
+    // O decodificador de software criado pelo `decodebin` sai com os threads
+    // limitados (senão usa um por núcleo e a memória cresce com as câmeras).
+    let threads: Vec<i32> = {
+        let pl = e.bridges[0].lock().unwrap().pipeline().cloned().unwrap();
+        let mut found = Vec::new();
+        let mut it = pl.iterate_recurse();
+        while let Ok(Some(el)) = it.next() {
+            if el.factory().is_some_and(|f| f.name().starts_with("avdec_")) {
+                found.push(el.property::<i32>("max-threads"));
+            }
+        }
+        found
+    };
     e.shutdown();
 
+    assert!(
+        !threads.is_empty() && threads.iter().all(|&t| t == 2),
+        "decodificadores de software sem o limite de threads: {threads:?}"
+    );
     assert!(live, "a câmera não ficou ao vivo");
     assert!(
         advanced >= 30,
@@ -312,4 +329,49 @@ fn display_only_shows_video_but_never_records_until_switched_back() {
     let files = mkv_files(&rec);
     assert_eq!(files.len(), 1, "{files:?}");
     assert!(is_playable(&files[0]), "{} não toca", files[0].display());
+}
+
+/// Ferramenta de diagnóstico manual (ignorada): `RRV_PROBE_URL=rtsp://… cargo test -p rrv-core
+/// --test headless probe_url -- --ignored --nocapture`. Sobe o motor numa URL real e imprime, a cada
+/// segundo, o contador de quadros e o estado do pipeline (filas, elementos que não estão em PLAYING).
+/// A URL pode levar `${SEGREDO}`; nada disto imprime a URL.
+#[test]
+#[ignore]
+fn probe_url() {
+    let Some(raw) = std::env::var_os("RRV_PROBE_URL") else {
+        eprintln!("defina RRV_PROBE_URL");
+        return;
+    };
+    let url = rrv_core::secrets::expand(&raw.to_string_lossy(), &rrv_core::secrets::lookup)
+        .expect("segredo ausente");
+    let tmp = TempDir::new("probe");
+    let mut e = engine(&url, &tmp.path("rec"), 3600);
+    e.set_display_only(true);
+    let generation = |e: &Engine| e.bridges[0].lock().unwrap().read_frame().3;
+    let secs: u64 = std::env::var("RRV_PROBE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(20);
+    let start = Instant::now();
+    let mut tick = 0u64;
+    let mut last = 0u64;
+    while start.elapsed() < Duration::from_secs(secs) {
+        e.step(tick);
+        if tick.is_multiple_of(10) {
+            let g = generation(&e);
+            eprintln!(
+                "t={:>4.1}s quadros(+{}) status={:?}",
+                tick as f64 * 0.1,
+                g - last,
+                e.status[0]
+            );
+            last = g;
+        }
+        if tick == 100 {
+            eprintln!("{}", describe(&e));
+        }
+        tick += 1;
+        std::thread::sleep(Duration::from_millis(TICK_MS));
+    }
+    e.shutdown();
 }

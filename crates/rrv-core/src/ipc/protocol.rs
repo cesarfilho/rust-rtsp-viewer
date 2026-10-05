@@ -72,7 +72,7 @@ pub enum ServerMessage {
 }
 
 /// Uma câmera como o cliente a vê.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CameraInfo {
     pub index: usize,
     pub name: String,
@@ -91,6 +91,20 @@ pub struct CameraInfo {
     /// O decodificador roda na GPU (ou num bloco de função fixa).
     #[serde(default)]
     pub decoder_hw: bool,
+    /// Resolução do vídeo (0 até a câmera subir).
+    #[serde(default)]
+    pub width: u32,
+    #[serde(default)]
+    pub height: u32,
+    /// Quadros por segundo medidos agora.
+    #[serde(default)]
+    pub fps: f64,
+    /// Taxa do fluxo comprimido, em kbit/s.
+    #[serde(default)]
+    pub bitrate_kbps: u64,
+    /// Codec do fluxo (`H264`, `H265`…).
+    #[serde(default)]
+    pub codec: Option<String>,
 }
 
 /// Um evento do motor, no formato do fio.

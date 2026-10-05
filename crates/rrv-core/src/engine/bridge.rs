@@ -671,6 +671,23 @@ impl GStreamerBridge {
         calc.bitrate_kbps
     }
 
+    /// The fps measured by the last health tick (`0.0` before the first one).
+    /// Read-only: unlike `update_fps` it does not move the sampling window.
+    pub fn last_fps(&self) -> f64 {
+        match self.metrics.current_fps_x1000.load(Ordering::Relaxed) {
+            u64::MAX => 0.0,
+            v => v as f64 / 1000.0,
+        }
+    }
+
+    /// The compressed bitrate (kbit/s) of the last sample, without sampling again.
+    pub fn last_bitrate_kbps(&self) -> u64 {
+        self.fps_calc
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .bitrate_kbps
+    }
+
     pub fn is_live(&self) -> bool {
         self.is_live.load(Ordering::Relaxed)
     }

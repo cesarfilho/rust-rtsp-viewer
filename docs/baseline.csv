@@ -1,0 +1,13 @@
+label,cams,live,cpu_avg_pct,cpu_max_pct,rss_mib,net_mbps,stream_mbps,fps_avg,resolution,decoder
+1 Intelbras principal (1080p),1,1,1.2,11.1,96,3.49,0.06,0.0,1920x1080,avdec_h264
+1 Intelbras sub (480p),1,1,0.6,2.5,49,1.88,0.00,0.0,640x480,avdec_h264
+4 sessões da Intelbras principal,4,4,2.2,13.1,331,7.25,0.39,0.0,1920x1080,avdec_h264
+11 câmeras HLS (sem movimento),11,11,169.2,210.3,2180,22.48,23.01,24.7,1280x720/1920x1080,avdec_h264
+"12 câmeras (1 RTSP lossy + 11 HLS), sem movimento",12,11,188.1,216.1,2239,23.14,23.22,26.2,1280x720/1920x1080,avdec_h264
+"12 câmeras, COM detecção de movimento",12,10,153.9,185.0,2369,24.14,13.08,26.9,1280x720/1920x1080,avdec_h264
+"11 câmeras HLS, MALLOC_ARENA_MAX=2",11,11,170.5,205.9,1982,24.51,23.67,26.2,1280x720/1920x1080,avdec_h264
+"11 câmeras HLS, ARENA_MAX=2 + TRIM",11,11,211.6,299.4,1877,23.63,15.94,26.3,1280x720/1920x1080,avdec_h264
+"11 HLS, decoder max-threads=2",11,11,143.0,208.4,939,24.42,20.49,26.5,1280x720/1920x1080,avdec_h264
+"11 HLS, max-threads=2 (2ª rodada)",11,11,149.9,203.6,945,23.46,15.71,26.3,1280x720/1920x1080,avdec_h264
+"11 HLS, decoder max-threads=1",11,11,153.3,217.5,805,24.01,20.83,26.7,1280x720/1920x1080,avdec_h264
+"11 HLS, decoder max-threads=4",11,11,156.9,205.7,1113,22.63,18.87,26.3,1280x720/1920x1080,avdec_h264

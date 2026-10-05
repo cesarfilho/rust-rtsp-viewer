@@ -418,6 +418,38 @@ fn setup_appsink(pipeline: &gst::Pipeline, bridge: &mut GStreamerBridge) -> Resu
     Ok(())
 }
 
+/// Software decoders (`avdec_*`) default to one thread per CPU core, each holding
+/// frames in flight. With many cameras that multiplies memory and wakeups for no
+/// gain (a camera stream is a single decode at 20–30 fps). Cap them.
+const DECODER_THREADS: i32 = 2;
+
+/// Threads per software decoder: `RRV_DECODER_THREADS` (1–16) or [`DECODER_THREADS`].
+fn decoder_threads() -> i32 {
+    std::env::var("RRV_DECODER_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<i32>().ok())
+        .filter(|n| (1..=16).contains(n))
+        .unwrap_or(DECODER_THREADS)
+}
+
+/// Limit `max-threads` of every software decoder the pipeline creates, now or
+/// later (`decodebin` creates its decoder at runtime, hence the signal).
+fn limit_decoder_threads(pipeline: &gst::Pipeline) {
+    let threads = decoder_threads();
+    let cap = move |el: &gst::Element| {
+        let is_sw_decoder = el.factory().is_some_and(|f| f.name().starts_with("avdec_"));
+        if is_sw_decoder && el.has_property("max-threads") {
+            el.set_property("max-threads", threads);
+        }
+    };
+    pipeline.connect("deep-element-added", false, move |args| {
+        if let Ok(el) = args[2].get::<gst::Element>() {
+            cap(&el);
+        }
+        None
+    });
+}
+
 /// Turn `rust-rtsp-viewer-2026-08-10-143022-000.mkv` into
 /// `rust-rtsp-viewer-2026-08-10-143022-%03d.mkv`, the pattern `splitmuxsink`
 /// expands with the fragment index.
@@ -721,6 +753,7 @@ impl GStreamerBridge {
             .downcast::<gst::Pipeline>()
             .map_err(|_| "parse_launch must produce a Pipeline".to_string())?;
 
+        limit_decoder_threads(&pipeline);
         setup_appsink(&pipeline, self)?;
         insert_tee(&pipeline)?;
         if self.detect_enabled {
@@ -866,6 +899,7 @@ impl GStreamerBridge {
             }
         });
 
+        limit_decoder_threads(&pipeline);
         setup_appsink(&pipeline, self)?;
         insert_tee(&pipeline)?;
         if self.detect_enabled {
@@ -908,6 +942,7 @@ impl GStreamerBridge {
             .downcast::<gst::Pipeline>()
             .map_err(|_| "parse_launch must produce a Pipeline".to_string())?;
 
+        limit_decoder_threads(&pipeline);
         setup_appsink(&pipeline, self)?;
         insert_tee(&pipeline)?;
         if self.detect_enabled {

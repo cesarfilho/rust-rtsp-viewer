@@ -112,11 +112,18 @@ fn run(cli: &Cli) -> Result<(), String> {
                         (None, _) => "—".to_string(),
                     };
                     println!(
-                        "{:<3} {:<24} {:<13} {:<6} {:<16} {}{}",
+                        "{:<3} {:<24} {:<13} {:<6} {:<10} {:>4.0} {:>6} {:<16} {}{}",
                         cam.index,
                         cam.name,
                         cam.status,
                         cam.stream,
+                        if cam.width > 0 {
+                            format!("{}x{}", cam.width, cam.height)
+                        } else {
+                            "—".into()
+                        },
+                        cam.fps,
+                        cam.bitrate_kbps,
                         decoder,
                         if cam.recording { "sim" } else { "não" },
                         if cam.motion { "  (movimento)" } else { "" }

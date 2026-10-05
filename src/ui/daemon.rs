@@ -369,6 +369,7 @@ mod tests {
             stream: "main".into(),
             decoder: None,
             decoder_hw: false,
+            ..Default::default()
         }
     }
 

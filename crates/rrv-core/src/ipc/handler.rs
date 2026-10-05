@@ -40,11 +40,14 @@ fn error(message: impl Into<String>) -> Response {
 pub fn camera_infos(engine: &Engine) -> Vec<CameraInfo> {
     (0..engine.camera_count())
         .map(|i| {
-            let stream = engine.bridges[i]
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .metrics()
-                .snapshot_stream_info();
+            let (stream, fps, bitrate_kbps) = {
+                let b = engine.bridges[i].lock().unwrap_or_else(|e| e.into_inner());
+                (
+                    b.metrics().snapshot_stream_info(),
+                    b.last_fps(),
+                    b.last_bitrate_kbps(),
+                )
+            };
             CameraInfo {
                 index: i,
                 name: engine.names[i].clone(),
@@ -63,6 +66,11 @@ pub fn camera_infos(engine: &Engine) -> Vec<CameraInfo> {
                 .into(),
                 decoder: stream.decoder,
                 decoder_hw: stream.decoder_hw,
+                width: stream.width.unwrap_or(0).max(0) as u32,
+                height: stream.height.unwrap_or(0).max(0) as u32,
+                fps,
+                bitrate_kbps,
+                codec: stream.codec,
             }
         })
         .collect()
