@@ -310,6 +310,11 @@ docker compose logs -f rrv
 - **Saúde:** `healthcheck` do Docker lê um batimento que o laço do daemon escreve a cada segundo.
   Uma câmera fora do ar *não* deixa o contêiner doente: reiniciá-lo não a consertaria.
 - **Validar a configuração** sem subir nada: `docker run --rm -v ./config.docker.toml:/config/config.toml:ro rust-rtsp-viewer/rrv-daemon:local --check`.
+- **Aviso com a janela fechada:** `[webhook] url = "https://…"` no `config.toml` faz o daemon dar um
+  POST a cada movimento ou câmera offline (mesmo cooldown de `[notifications]`). `format = "json"`
+  (Home Assistant, n8n, Node-RED: `camera`, `event`, `detail`, `title`, `message`, `time_unix`) ou
+  `"ntfy"` (celular). A URL, que costuma levar o token, **nunca** aparece no log. Um destino fora do
+  ar não atrapalha o daemon nem o desligamento. Usa o `curl`, que a imagem já traz.
 - **Controle pelo socket:** o daemon abre `$XDG_RUNTIME_DIR/rrv/rrv.sock` (modo `0600`; no contêiner,
   `/run/rrv/rrv.sock` num volume compartilhado). A janela e o `rrvctl` falam com ele por aí:
   `rrvctl status`, `rrvctl record "Portão"`, `rrvctl enable|disable 2`, `rrvctl zones "Portão"`,
@@ -317,8 +322,8 @@ docker compose logs -f rrv
 - Fora do Docker: `cargo run -p rrv-daemon -- config.toml` (mesmos `--check` e `--health`).
 
 Ainda não há decodificação por GPU no contêiner (a iGPU Intel por VA-API é a tarefa 2.5.10, a
-NVIDIA exige o `nvidia-container-toolkit`), nem aviso de movimento com a janela fechada (webhook,
-tarefa 2.5.11): por ora os eventos vão para `docker compose logs`. A imagem tem ~1 GB (plugins
+NVIDIA exige o `nvidia-container-toolkit`), e o aviso de movimento com a janela fechada é o `[webhook]` (abaixo); os eventos também vão para
+`docker compose logs`. A imagem tem ~1 GB (plugins
 `bad`/`ugly`/`libav` do GStreamer).
 
 ### A janela com o daemon

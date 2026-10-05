@@ -204,6 +204,11 @@ pub fn validate(config: &Config) -> Vec<Issue> {
             ));
         }
     }
+    if let Some(w) = &config.webhook
+        && let Err(message) = w.clone().into_config()
+    {
+        issues.push(Issue::error("webhook", message));
+    }
     if let Some(n) = &config.notifications
         && let Some(c) = n.cooldown_secs
         && c < crate::domain::notify::MIN_COOLDOWN_SECS

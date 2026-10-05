@@ -89,10 +89,23 @@ fn run(cli: &Cli) -> Result<(), String> {
         .map(|r| r.into_config())
         .unwrap_or_default();
     let motion = config.motion.map(|m| m.into_config()).unwrap_or_default();
-    let notify = config
+    let mut notify = config
         .notifications
         .map(|n| n.into_config())
         .unwrap_or_default();
+    // O webhook é o aviso com a janela fechada. Configurá-lo liga a política de
+    // aviso do motor (tipos de evento e cooldown de `[notifications]`); o
+    // `enabled` de `[notifications]` continua valendo só para o desktop da janela.
+    let webhook = config
+        .webhook
+        .map(|w| w.into_config())
+        .transpose()?
+        .flatten()
+        .map(rrv_core::webhook::Webhook::spawn);
+    if let Some(w) = &webhook {
+        notify.enabled = true;
+        log::info!("webhook ligado: {}", w.target());
+    }
     let logs = config.logs.unwrap_or_default();
     let view = config.view.unwrap_or_default();
     let mut zones = rrv_core::infrastructure::zone_state::load();
@@ -149,6 +162,11 @@ fn run(cli: &Cli) -> Result<(), String> {
             })
             .collect();
         server.publish(&wire);
+        if let Some(w) = &webhook {
+            for ev in &wire {
+                w.send(ev);
+            }
+        }
         for event in &events {
             log_event(&engine, event);
         }

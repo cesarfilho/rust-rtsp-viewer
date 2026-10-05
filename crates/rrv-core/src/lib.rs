@@ -11,6 +11,7 @@ pub mod engine;
 pub mod infrastructure;
 pub mod ipc;
 pub mod startup;
+pub mod webhook;
 
 /// Câmera simulada e utilitários dos testes (feature `testing`).
 #[cfg(feature = "testing")]

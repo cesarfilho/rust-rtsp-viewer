@@ -34,6 +34,9 @@ pub struct Config {
     pub view: Option<ViewConfigFile>,
     /// `[notifications]` — desktop alerts for motion and offline cameras.
     pub notifications: Option<NotificationsConfigFile>,
+    /// `[webhook]` — the daemon posts its notifications to a URL (works with the
+    /// window closed).
+    pub webhook: Option<crate::webhook::WebhookFile>,
     /// `[motion]` — frame-difference detector tuning (`enabled`, `threshold`,
     /// `contour_area`, `sample_stride`).
     pub motion: Option<crate::domain::motion::MotionConfigFile>,

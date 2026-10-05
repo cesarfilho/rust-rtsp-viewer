@@ -26,11 +26,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # ---- execução --------------------------------------------------------------
 FROM debian:bookworm-slim
 # good/bad/ugly/libav: decodebin, hlsdemux, x264enc (gravação) e os decodificadores.
+# curl: o webhook de aviso (`[webhook]`) o usa como subprocesso.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       libgstreamer1.0-0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
       gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
-      ca-certificates tzdata \
+      ca-certificates tzdata curl \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /rrv-daemon /rrvctl /usr/local/bin/

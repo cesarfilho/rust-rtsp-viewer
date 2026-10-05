@@ -18,3 +18,13 @@ enabled = true
 name = "Portão"
 url = "rtsp://usuario:senha@192.168.0.10:554/stream1"
 # sub_url = "rtsp://usuario:senha@192.168.0.10:554/stream2"
+
+# ── Aviso com a janela fechada (rrv-daemon) ──────────────────────────────
+# O daemon envia um POST a esta URL quando acontece um evento que merece aviso
+# (movimento, câmera offline), com o mesmo cooldown de `[notifications]`.
+# Funciona com Home Assistant (webhook), ntfy, n8n, Node-RED... Usa o `curl`.
+# A URL costuma levar o token: ela nunca é escrita no log (só esquema://host).
+# [webhook]
+# url = "https://ntfy.sh/meu-topico-secreto"
+# format = "json"       # "json" (padrão: camera, event, detail, title, message, time_unix) ou "ntfy"
+# timeout_secs = 5      # 1–60

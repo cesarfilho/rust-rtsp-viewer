@@ -77,7 +77,10 @@ core modules (`src/lib.rs`), so `crate::domain::…` and `rust_rtsp_viewer::conf
 (`rrv_core::startup`), builds an `Engine` and calls `Engine::step` every `TICK_MS`; SIGTERM / SIGINT
 / SIGHUP stop it through `Engine::shutdown`, which finalises recordings in progress (a process
 killed without that leaves an empty, unplayable file; `docker stop` sends SIGTERM). Events are
-logged for now; the outbound webhook (plan 2.5.11) plugs into `log_event`. `rrv-daemon --check`
+logged and, if `[webhook]` is set, posted (`rrv_core::webhook`, `curl` subprocess on its own thread,
+bounded queue dropped on shutdown, URL never logged beyond `scheme://host`; setting it turns the
+engine's notification policy on in the daemon; the window only shows desktop notifications if its
+own `[notifications] enabled` is set). `rrv-daemon --check`
 validates a config. Test cameras live in `rrv_core::testing` (feature `testing`). Paths below that start with
 `src/domain`, `src/infrastructure`, `src/engine` or `src/config*.rs` now live under
 `crates/rrv-core/src/`.

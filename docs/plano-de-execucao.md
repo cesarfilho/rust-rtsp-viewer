@@ -85,7 +85,7 @@ passam a viver no daemon; construí-las dentro de `update.rs` e migrar depois cu
 | 2.5.8 | Segredos fora do `config.toml` (Docker secrets/variáveis; keyring no cliente — antecipa 5.3) | senha fora do `config.toml`, do IPC e da imagem | M | [ ] |
 | 2.5.9 | **Docker**: `Dockerfile` multi-estágio (usuário não-root, GStreamer + x264), `compose.yaml` (`restart: unless-stopped`, `network_mode: host`, volumes `/data` `/state`, config `:ro`, `TZ`), `healthcheck` e build da imagem no CI | `docker compose up -d` sobe o NVR; `kill -9` no processo o reinicia sem segmento corrompido | M | [x] 2026-10-05: `Dockerfile`, `compose.yaml`, `.dockerignore` (exclui `config.toml`), healthcheck por batimento, job `docker` no CI. Verificado no Docker: `healthy`, `docker stop` → SIGTERM → exit 0, arquivo tocável e do UID certo. Imagem ~977 MB (otimizar) |
 | 2.5.10 | GPU no container: VA-API por `/dev/dri` (Intel) agora; NVIDIA só com **D6** | `Decoder` no Inspector mostra GPU dentro do container | M | [ ] |
-| 2.5.11 | Notificação com a janela fechada: webhook/MQTT de saída (antecipa 5.4) | aviso de movimento chega sem a janela aberta | M | [ ] |
+| 2.5.11 | Notificação com a janela fechada: webhook/MQTT de saída (antecipa 5.4) | aviso de movimento chega sem a janela aberta | M | [x] 2026-10-05: `[webhook]` (json/ntfy) via `curl`, fila limitada, URL nunca no log, desligamento descarta a fila; 9 testes + 2 de processo com receptor HTTP. **Não é MQTT**: MQTT ficou para o 5.4 |
 
 Gate M2.5: fechar a janela não interrompe uma gravação em curso; matar o container com `kill -9`
 o reinicia e não deixa segmento corrompido (testes em `tests/`); `docker compose up -d` do zero

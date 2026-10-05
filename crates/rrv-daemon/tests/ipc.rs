@@ -264,3 +264,205 @@ fn a_client_without_a_daemon_gets_a_clear_message() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("ele está rodando?"));
 }
+
+// ---------------------------------------------------------------- webhook ---
+
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpListener;
+use std::sync::{Arc, Mutex};
+
+/// Cabeçalhos e corpo de cada POST recebido.
+type Posts = Arc<Mutex<Vec<(Vec<String>, String)>>>;
+
+/// Um receptor HTTP mínimo: guarda cada POST (cabeçalhos e corpo) e responde 200.
+fn http_sink() -> (u16, Posts) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let got = Arc::new(Mutex::new(Vec::new()));
+    let sink = got.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let sink = sink.clone();
+            std::thread::spawn(move || {
+                let mut r = BufReader::new(stream.try_clone().unwrap());
+                let mut headers = Vec::new();
+                let mut len = 0usize;
+                loop {
+                    let mut l = String::new();
+                    if r.read_line(&mut l).unwrap_or(0) == 0 || l == "\r\n" {
+                        break;
+                    }
+                    if let Some(v) = l.to_ascii_lowercase().strip_prefix("content-length:") {
+                        len = v.trim().parse().unwrap_or(0);
+                    }
+                    headers.push(l.trim_end().to_string());
+                }
+                let mut body = vec![0u8; len];
+                let _ = r.read_exact(&mut body);
+                sink.lock()
+                    .unwrap()
+                    .push((headers, String::from_utf8_lossy(&body).to_string()));
+                let mut w = stream;
+                let _ = w.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+            });
+        }
+    });
+    (port, got)
+}
+
+/// O aviso com a janela fechada: movimento vira um POST JSON no destino, e a URL
+/// (que carrega o token) não aparece no log do daemon.
+#[test]
+fn the_daemon_posts_motion_to_the_webhook_without_leaking_the_url() {
+    let tmp = TempDir::new("dipc-webhook");
+    let cam = LiveCamera::start(&tmp.0); // a bola se mexe
+    let (port, received) = http_sink();
+    let cfg = format!(
+        "[recording]\ndir = {rec:?}\n\
+         [motion]\nsample_stride = 2\ncontour_area = 0.002\nthreshold = 20\n\
+         [webhook]\nurl = \"http://127.0.0.1:{port}/hook/TOKEN-SECRETO\"\n\
+         [logs]\ndir = {logs:?}\n\
+         [[cameras]]\nurl = {url:?}\nname = \"Portão\"\n",
+        rec = tmp.path("rec"),
+        logs = tmp.path("logs"),
+        url = cam.url(),
+    );
+    std::fs::write(tmp.path("config.toml"), cfg).unwrap();
+    let mut child = Command::new(DAEMON)
+        .arg(tmp.path("config.toml"))
+        .env("XDG_STATE_HOME", tmp.path("state"))
+        .env("RRV_SOCKET", tmp.path("rrv.sock"))
+        .env("RUST_LOG", "info")
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    let log = Arc::new(Mutex::new(String::new()));
+    let sink = log.clone();
+    let stderr = child.stderr.take().unwrap();
+    let reader = std::thread::spawn(move || {
+        for l in BufReader::new(stderr).lines().map_while(Result::ok) {
+            let mut g = sink.lock().unwrap();
+            g.push_str(&l);
+            g.push('\n');
+        }
+    });
+
+    let arrived = wait_until(60, || !received.lock().unwrap().is_empty());
+    let _ = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status();
+    let status = child.wait().unwrap();
+    let _ = reader.join();
+    let log = log.lock().unwrap().clone();
+
+    assert!(arrived, "nenhum POST chegou. Log:\n{log}");
+    assert!(status.success(), "{status:?}\n{log}");
+    let (headers, body) = received.lock().unwrap()[0].clone();
+    assert!(
+        headers
+            .iter()
+            .any(|h| h.starts_with("POST /hook/TOKEN-SECRETO")),
+        "{headers:?}"
+    );
+    assert!(
+        headers.iter().any(|h| h
+            .to_ascii_lowercase()
+            .starts_with("content-type: application/json")),
+        "{headers:?}"
+    );
+    let v: serde_json::Value = serde_json::from_str(&body).expect("o corpo não é JSON");
+    assert_eq!(v["camera"], "Portão");
+    assert_eq!(v["event"], "motion");
+    assert_eq!(v["title"], "Movimento detectado");
+    assert!(
+        v["message"].as_str().is_some_and(|m| m.contains("Portão")),
+        "{v}"
+    );
+    assert!(
+        log.contains("webhook ligado: http://127.0.0.1"),
+        "o daemon deve anunciar o destino. Log:\n{log}"
+    );
+    assert!(!log.contains("TOKEN-SECRETO"), "a URL vazou no log:\n{log}");
+}
+
+/// Um destino fora do ar não atrapalha o daemon: continua saudável e desliga
+/// rápido no SIGTERM (a fila é descartada, não esperada).
+#[test]
+fn a_dead_webhook_never_blocks_the_daemon_or_its_shutdown() {
+    let tmp = TempDir::new("dipc-webhook-dead");
+    let cam = LiveCamera::start(&tmp.0);
+    // uma porta em que ninguém escuta
+    let dead = {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let cfg = format!(
+        "[recording]\ndir = {rec:?}\n\
+         [motion]\nsample_stride = 2\ncontour_area = 0.002\nthreshold = 20\n\
+         [webhook]\nurl = \"http://127.0.0.1:{dead}/hook/OUTRO-SEGREDO\"\ntimeout_secs = 2\n\
+         [logs]\ndir = {logs:?}\n\
+         [[cameras]]\nurl = {url:?}\nname = \"Portão\"\n",
+        rec = tmp.path("rec"),
+        logs = tmp.path("logs"),
+        url = cam.url(),
+    );
+    std::fs::write(tmp.path("config.toml"), cfg).unwrap();
+    let beat = tmp.path("beat");
+    let mut child = Command::new(DAEMON)
+        .arg(tmp.path("config.toml"))
+        .arg("--health-file")
+        .arg(&beat)
+        .env("XDG_STATE_HOME", tmp.path("state"))
+        .env("RRV_SOCKET", tmp.path("rrv.sock"))
+        .env("RUST_LOG", "info")
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    let log = Arc::new(Mutex::new(String::new()));
+    let sink = log.clone();
+    let stderr = child.stderr.take().unwrap();
+    let reader = std::thread::spawn(move || {
+        for l in BufReader::new(stderr).lines().map_while(Result::ok) {
+            let mut g = sink.lock().unwrap();
+            g.push_str(&l);
+            g.push('\n');
+        }
+    });
+    // espera o aviso falhar (a bola gera movimento) e confere que o daemon vive
+    assert!(
+        wait_until(60, || log.lock().unwrap().contains("falhou")),
+        "o webhook morto nunca foi tentado. Log:\n{}",
+        log.lock().unwrap()
+    );
+    let health = Command::new(DAEMON)
+        .arg("--health")
+        .arg("--health-file")
+        .arg(&beat)
+        .output()
+        .unwrap();
+    assert!(
+        health.status.success(),
+        "o daemon travou com o webhook morto"
+    );
+
+    let started = Instant::now();
+    let _ = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status();
+    let status = child.wait().unwrap();
+    let took = started.elapsed();
+    let _ = reader.join();
+    let log = log.lock().unwrap().clone();
+
+    assert!(status.success(), "{status:?}\n{log}");
+    assert!(
+        took < Duration::from_secs(8),
+        "o desligamento esperou a fila do webhook: {took:?}"
+    );
+    assert!(!log.contains("OUTRO-SEGREDO"), "a URL vazou no log:\n{log}");
+    assert!(log.contains("webhook para http://127.0.0.1"), "{log}");
+}

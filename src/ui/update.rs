@@ -827,7 +827,11 @@ fn poll_daemon(app: &mut App) {
 /// An event from the daemon: onto the timeline and, if its policy asked for
 /// one, a desktop notification (only while this window is open).
 fn daemon_event(app: &mut App, wire: crate::ipc::protocol::WireEvent) {
-    if let Some((title, body)) = &wire.notification {
+    // O daemon decidiu o aviso, mas o desktop é desta janela: só aparece se a
+    // configuração dela pediu (`[notifications] enabled`).
+    if app.engine.configured.notify_enabled
+        && let Some((title, body)) = &wire.notification
+    {
         crate::infrastructure::notify::send(title, body);
     }
     let Some(idx) = app.sidebar.cameras.iter().position(|c| c.name == wire.name) else {
