@@ -96,7 +96,7 @@ funciona em uma máquina limpa.
 Spec de UX aprovada: `docs/specs/ux-historico.md` (padrões: movimento + pré-roll 5 s, retenção 7 dias, reprodução embutida).
 | # | Tarefa | Critério de saída | Tam. |
 |---|---|---|---|
-| 3.1 | **Gravação sem reencode** (ADR 0007): `rtph264depay ! h264parse ! splitmuxsink` com `tee` antes do decoder (troca o `decodebin` por cadeia manual) | arquivo tocável, sem CPU de encode, com áudio, H.265 | G |
+| 3.1 | **Gravação sem reencode** (ADR 0007): `rtph264depay ! h264parse ! splitmuxsink` com `tee` antes do decoder (troca o `decodebin` por cadeia manual) | arquivo tocável, sem CPU de encode, com áudio, H.265 | G | [~] **RTSP H.264/H.265 feito:** `rtspsrc ! parsebin ! enc_tee` grava o stream da câmera sem reencode (começa no keyframe; Intelbras real: 1080p tocável, ~0,1% de CPU). Falta: áudio na gravação, HLS/arquivo (continuam reencodando), MJPEG |
 | 3.2 | SQLite (`rusqlite` bundled, WAL, thread própria): `events` e `segments`; reconciliação na partida | queda no meio de um segmento não deixa órfão | G |
 | 3.3 | Retenção por modo (contínuo × movimento) e limpeza por espaço; apagar arquivo e depois a linha | disco nunca passa do limite | M |
 | 3.4 | Timeline persistente: clique no evento abre o trecho | busca por câmera e intervalo | M |

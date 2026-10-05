@@ -49,6 +49,9 @@ pub(crate) struct DetectFrame {
 /// permanently with the sink pointed at `/dev/null`) is what keeps an idle
 /// camera from burning a core on H.264 encoding it will never use.
 pub(crate) struct RecordingBranch {
+    /// Which `tee` the branch hangs from (`tee` for decoded frames, `enc_tee`
+    /// for the camera's own stream).
+    pub(crate) tee_name: &'static str,
     /// The `tee` request pad feeding this branch; must be released on teardown.
     pub(crate) tee_pad: gst::Pad,
     /// Head of the branch — the pad we inject EOS into to finalise the file.

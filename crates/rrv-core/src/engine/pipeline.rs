@@ -50,6 +50,21 @@ fn named_decoder(decoder: &str) -> String {
     }
 }
 
+/// Name of the `tee` on the *encoded* stream (before the decoder).
+const ENCODED_TEE: &str = "enc_tee";
+
+/// The encoded tap: `parsebin ! tee ! queue`, placed right after `rtspsrc`, so a
+/// recording can take the camera's own H.264/H.265 and write it without
+/// decoding and re-encoding it (plan 3.1). Only for the default `decodebin`: a
+/// custom `decoder` chain (e.g. one that starts with `rtph264depay`) expects RTP.
+fn encoded_tap(decoder: &str) -> String {
+    if decoder.trim() == "decodebin" {
+        format!("! parsebin name=parser ! tee name={ENCODED_TEE} ! queue name=enc_dec_queue")
+    } else {
+        String::new()
+    }
+}
+
 /// Insert the `tee` that lets a recording branch be attached later.
 ///
 /// Before: `... → capsfilter → appsink`
@@ -449,9 +464,15 @@ fn decoder_threads() -> i32 {
 fn limit_decoder_threads(pipeline: &gst::Pipeline) {
     let threads = decoder_threads();
     let cap = move |el: &gst::Element| {
-        let is_sw_decoder = el.factory().is_some_and(|f| f.name().starts_with("avdec_"));
-        if is_sw_decoder && el.has_property("max-threads") {
+        let factory = el.factory().map(|f| f.name().to_string());
+        let name = factory.as_deref().unwrap_or_default();
+        if name.starts_with("avdec_") && el.has_property("max-threads") {
             el.set_property("max-threads", threads);
+        }
+        // A recording that joins the encoded stream mid-way needs the SPS/PPS
+        // (VPS for H.265) in front of every keyframe, not only at the start.
+        if (name == "h264parse" || name == "h265parse") && el.has_property("config-interval") {
+            el.set_property("config-interval", -1i32);
         }
     };
     pipeline.connect("deep-element-added", false, move |args| {
@@ -486,9 +507,29 @@ impl GStreamerBridge {
         self.recording_seq += 1;
         let seq = self.recording_seq;
         let pipeline = self.pipeline.as_ref().ok_or("No pipeline active")?;
-        let tee = pipeline
-            .by_name("tee")
-            .ok_or("tee not found — pipeline was not built for recording")?;
+        // Prefer the camera's own stream (no decode, no encode) when it is
+        // H.264/H.265 and the pipeline has the encoded tap.
+        let parser_factory = pipeline.by_name(ENCODED_TEE).and_then(|t| {
+            let caps = t.static_pad("sink")?.current_caps()?;
+            match caps.structure(0)?.name().as_str() {
+                "video/x-h264" => Some("h264parse"),
+                "video/x-h265" => Some("h265parse"),
+                _ => None,
+            }
+        });
+        if parser_factory.is_none()
+            && let Some(t) = pipeline.by_name(ENCODED_TEE)
+        {
+            log::info!(
+                "Encoded tap not usable for recording (caps: {:?}); re-encoding",
+                t.static_pad("sink").and_then(|p| p.current_caps())
+            );
+        }
+        let (tee_name, tee) = match parser_factory {
+            Some(_) => (ENCODED_TEE, pipeline.by_name(ENCODED_TEE)),
+            None => ("tee", pipeline.by_name("tee")),
+        };
+        let tee = tee.ok_or("tee not found — pipeline was not built for recording")?;
 
         self.recording_config
             .validate()
@@ -504,18 +545,32 @@ impl GStreamerBridge {
             .name(format!("recording_queue_{seq}"))
             .build()
             .map_err(|e| format!("Failed to create recording_queue: {e}"))?;
-        let convert = gst::ElementFactory::make("videoconvert")
-            .name(format!("rec_convert_{seq}"))
-            .build()
-            .map_err(|e| format!("Failed to create rec videoconvert: {e}"))?;
-        let encoder = gst::ElementFactory::make("x264enc")
-            .name(format!("rec_encoder_{seq}"))
-            .property("bitrate", 2048u32)
-            .property("key-int-max", 30u32)
-            .build()
-            .map_err(|e| format!("Failed to create x264enc: {e}"))?;
-        encoder.set_property_from_str("speed-preset", "ultrafast");
-        encoder.set_property_from_str("tune", "zerolatency");
+        // Re-encode path (decoded frames): videoconvert → x264enc. Copy path: a
+        // parser only, so no CPU goes into encoding.
+        let chain: Vec<gst::Element> = match parser_factory {
+            Some(factory) => vec![
+                gst::ElementFactory::make(factory)
+                    .name(format!("rec_parse_{seq}"))
+                    .property("config-interval", -1i32)
+                    .build()
+                    .map_err(|e| format!("Failed to create {factory}: {e}"))?,
+            ],
+            None => {
+                let convert = gst::ElementFactory::make("videoconvert")
+                    .name(format!("rec_convert_{seq}"))
+                    .build()
+                    .map_err(|e| format!("Failed to create rec videoconvert: {e}"))?;
+                let encoder = gst::ElementFactory::make("x264enc")
+                    .name(format!("rec_encoder_{seq}"))
+                    .property("bitrate", 2048u32)
+                    .property("key-int-max", 30u32)
+                    .build()
+                    .map_err(|e| format!("Failed to create x264enc: {e}"))?;
+                encoder.set_property_from_str("speed-preset", "ultrafast");
+                encoder.set_property_from_str("tune", "zerolatency");
+                vec![convert, encoder]
+            }
+        };
 
         let muxer = gst::ElementFactory::make(container.muxer_element())
             .name(format!("rec_muxer_{seq}"))
@@ -547,12 +602,9 @@ impl GStreamerBridge {
             .build()
             .map_err(|e| format!("Failed to create splitmuxsink: {e}"))?;
 
-        let elements = vec![
-            queue.clone(),
-            convert.clone(),
-            encoder.clone(),
-            sink.clone(),
-        ];
+        let mut elements = vec![queue.clone()];
+        elements.extend(chain.iter().cloned());
+        elements.push(sink.clone());
         for el in &elements {
             pipeline
                 .add(el)
@@ -561,14 +613,33 @@ impl GStreamerBridge {
 
         let tee_pad_slot = std::cell::RefCell::new(None::<gst::Pad>);
         let attach = || -> Result<Arc<AtomicBool>, String> {
-            queue
-                .link(&convert)
-                .map_err(|e| format!("recording_queue → rec_convert link failed: {e}"))?;
-            convert
-                .link(&encoder)
-                .map_err(|e| format!("rec_convert → encoder link failed: {e}"))?;
+            let mut upstream = queue.clone();
+            for el in &chain {
+                upstream
+                    .link(el)
+                    .map_err(|e| format!("{} → {} link failed: {e}", upstream.name(), el.name()))?;
+                upstream = el.clone();
+            }
 
-            let enc_src = encoder.static_pad("src").ok_or("encoder has no src pad")?;
+            let enc_src = upstream.static_pad("src").ok_or("encoder has no src pad")?;
+            if parser_factory.is_some() {
+                // The file must start on a keyframe: a segment that begins in
+                // the middle of a GOP shows grey/garbage until the next one.
+                let seen_key = AtomicBool::new(false);
+                enc_src.add_probe(gst::PadProbeType::BUFFER, move |_pad, info| {
+                    if let Some(gst::PadProbeData::Buffer(ref b)) = info.data {
+                        if seen_key.load(Ordering::Relaxed) {
+                            return gst::PadProbeReturn::Ok;
+                        }
+                        if !b.flags().contains(gst::BufferFlags::DELTA_UNIT) {
+                            seen_key.store(true, Ordering::Relaxed);
+                            return gst::PadProbeReturn::Ok;
+                        }
+                        return gst::PadProbeReturn::Drop;
+                    }
+                    gst::PadProbeReturn::Ok
+                });
+            }
             let mux_pad = sink
                 .request_pad_simple("video")
                 .ok_or("splitmuxsink refused a video pad")?;
@@ -625,13 +696,19 @@ impl GStreamerBridge {
             .ok_or("tee pad missing after attach")?;
 
         log::info!(
-            "Recording started: {} (segments: {}s / {} bytes)",
+            "Recording started{}: {} (segments: {}s / {} bytes)",
+            if parser_factory.is_some() {
+                " (camera stream, no re-encode)"
+            } else {
+                ""
+            },
             location.display(),
             self.recording_config.max_segment_duration_secs,
             self.recording_config.max_segment_size_bytes
         );
 
         self.recording = Some(RecordingBranch {
+            tee_name,
             tee_pad,
             queue,
             elements,
@@ -685,7 +762,7 @@ impl GStreamerBridge {
         for el in &branch.elements {
             let _ = pipeline.remove(el);
         }
-        if let Some(tee) = pipeline.by_name("tee") {
+        if let Some(tee) = pipeline.by_name(branch.tee_name) {
             tee.release_request_pad(&branch.tee_pad);
         }
         log::info!("Recording stopped and finalised");
@@ -735,6 +812,7 @@ impl GStreamerBridge {
 
         let pipeline_str = format!(
             "rtspsrc name=source location={} latency={} protocols=tcp timeout=5000000000 udp-reconnect=true{} \
+             {} \
              ! {} \
              ! {} \
              ! videoconvert name=converter \
@@ -747,6 +825,7 @@ impl GStreamerBridge {
             } else {
                 ""
             },
+            encoded_tap(decoder),
             named_decoder(decoder),
             POSTDEC_QUEUE,
         );
@@ -1176,6 +1255,68 @@ mod tests {
             "segment did not decode to EOS — the muxer was not finalised"
         );
 
+        bridge.stop();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// With the encoded tap the recording takes the camera's own H.264: there is
+    /// no re-encoder in the branch, the file is playable and it starts on a
+    /// keyframe, even though it was attached in the middle of a GOP.
+    #[test]
+    fn recording_from_the_encoded_tap_does_not_reencode() {
+        let _ = gst::init();
+
+        let dir = std::env::temp_dir().join(format!("rrv-rec-copy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // Long GOP (60 frames = 2 s), so attaching at 0.4 s lands mid-GOP.
+        let desc = "videotestsrc is-live=true \
+             ! video/x-raw,format=I420,width=320,height=240,framerate=30/1 \
+             ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=60 \
+             ! h264parse \
+             ! tee name=enc_tee \
+             ! queue \
+             ! avdec_h264 \
+             ! videoconvert name=converter \
+             ! capsfilter name=filter caps=\"video/x-raw,format=RGBA\" \
+             ! appsink name=display_sink sync=false emit-signals=true max-buffers=2 drop=true";
+        let pipeline = gst::parse::launch(desc)
+            .unwrap()
+            .downcast::<gst::Pipeline>()
+            .unwrap();
+        let mut bridge = GStreamerBridge::new(320, 240).unwrap();
+        bridge.recording_config.dir = dir.clone();
+        setup_appsink(&pipeline, &mut bridge).unwrap();
+        insert_tee(&pipeline).unwrap();
+        bridge.pipeline = Some(pipeline.clone());
+        bridge.start_playing().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(400));
+
+        bridge.start_recording().expect("recording should start");
+        assert!(
+            !pipeline
+                .iterate_recurse()
+                .into_iter()
+                .flatten()
+                .any(|e| e.name().starts_with("rec_encoder")),
+            "the copy path must not add an encoder"
+        );
+        assert!(pipeline.by_name("rec_parse_1").is_some());
+        std::thread::sleep(std::time::Duration::from_millis(3500));
+        bridge.stop_recording_blocking().unwrap();
+
+        let segments: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "mkv"))
+            .collect();
+        assert_eq!(segments.len(), 1, "expected one segment, got {segments:?}");
+        assert!(std::fs::metadata(&segments[0]).unwrap().len() > 1024);
+        assert!(
+            file_is_playable(&segments[0]),
+            "the copied segment did not decode to EOS"
+        );
         bridge.stop();
         let _ = std::fs::remove_dir_all(&dir);
     }
