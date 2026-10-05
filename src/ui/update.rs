@@ -734,7 +734,9 @@ fn clamp_current_page(app: &mut App) {
 
 /// The set of camera indices whose pipelines should be running right now.
 ///
-/// * Flex layout, or `pause_hidden` off → every enabled camera.
+/// * `pause_hidden` off, or motion recording / alerts on
+///   ([`crate::domain::motion::needs_background_watch`]) → every enabled camera.
+/// * Flex layout → the main camera (thumbnails are stills).
 /// * Grid layout with `pause_hidden` → the current page, plus the next page
 ///   as a prefetch when the carousel is on or [`view::PREFETCH_NEXT_PAGE`].
 fn desired_active_cameras(app: &App) -> Vec<usize> {
@@ -743,6 +745,17 @@ fn desired_active_cameras(app: &App) -> Vec<usize> {
         .collect();
 
     if !app.pause_hidden {
+        return enabled_all;
+    }
+
+    // A hidden camera is blind: no motion, so no motion recording or alert.
+    // When something reacts to motion, every camera keeps decoding (on its
+    // sub-stream when it has one, see `wanted_quality`).
+    if crate::domain::motion::needs_background_watch(
+        app.motion_config.enabled,
+        app.motion_recording,
+        app.notify.enabled,
+    ) {
         return enabled_all;
     }
 

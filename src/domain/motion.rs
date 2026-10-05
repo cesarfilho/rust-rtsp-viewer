@@ -2,6 +2,22 @@ use serde::Deserialize;
 
 use crate::domain::zones::ZoneConfig;
 
+/// Whether cameras that are not on screen must keep decoding so motion can
+/// still be seen.
+///
+/// Motion is computed from decoded frames, so a camera paused by
+/// `[view] pause_hidden` is blind: it cannot start a motion recording or raise
+/// a notification. That only matters when something *reacts* to motion
+/// (`[recording] on_motion` or `[notifications]`); the on-screen indicator
+/// alone does not justify decoding every camera. Detection must also be on.
+pub fn needs_background_watch(
+    motion_enabled: bool,
+    on_motion_recording: bool,
+    notifications_enabled: bool,
+) -> bool {
+    motion_enabled && (on_motion_recording || notifications_enabled)
+}
+
 /// Configuration for motion detection via frame differencing.
 #[derive(Debug, Clone)]
 pub struct MotionConfig {
@@ -161,6 +177,18 @@ pub fn detect_motion(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn background_watch_needs_detection_and_a_reaction() {
+        // detection off: nothing to watch for
+        assert!(!needs_background_watch(false, true, true));
+        // detection on, nothing reacts: the indicator alone is not enough
+        assert!(!needs_background_watch(true, false, false));
+        // detection on and something reacts to it
+        assert!(needs_background_watch(true, true, false));
+        assert!(needs_background_watch(true, false, true));
+        assert!(needs_background_watch(true, true, true));
+    }
     use crate::domain::zones::{MotionZone, Point, ZoneConfig};
 
     fn make_frame(width: usize, height: usize, fill: u8) -> Vec<u8> {

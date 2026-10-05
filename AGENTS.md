@@ -46,6 +46,10 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
   (`domain::metrics::video_decoder_kind`), shows it in the Inspector (Decoder / Via CPU|GPU)
   and installs a probe on its sink pad that feeds `bytes_counter`, so Bitrate is the
   *compressed* rate. `decodebin` currently picks `avdec_*` (CPU) on this machine.
+- **Hidden cameras are blind**: motion is computed from decoded frames, so a camera paused by
+  `pause_hidden` cannot trigger `on_motion` recording or alerts.
+  `domain::motion::needs_background_watch` (`[motion] enabled` **and** `on_motion` or
+  `[notifications]`) makes `desired_active_cameras` keep every enabled camera decoding.
 - **Lazy streaming**: `update::sync_active_streams` keeps only the visible
   page's cameras (+ next page prefetch, + selected) decoding when
   `[view] pause_hidden` is on; the rest are `bridge.stop()`ped and shown

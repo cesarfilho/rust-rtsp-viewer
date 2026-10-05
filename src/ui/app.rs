@@ -356,6 +356,18 @@ pub fn new_app(
         sidebar.active_group = Some(g);
     }
     let motion_recording = recording_config.on_motion;
+    if pause_hidden
+        && crate::domain::motion::needs_background_watch(
+            motion_config.enabled,
+            motion_recording,
+            notify_config.enabled,
+        )
+    {
+        log::info!(
+            "[view] pause_hidden is overridden: on_motion / notifications need every \
+             camera decoding so hidden cameras are not blind"
+        );
+    }
     let motion_post_roll_secs = recording_config.motion_post_roll_secs;
     let zones_file = crate::infrastructure::zone_state::load();
     let zones: Vec<crate::domain::zones::ZoneConfig> = sidebar

@@ -6,6 +6,20 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 
 ## [Unreleased]
 
+### 🐛 Corrigido
+
+- **Câmeras fora da página ficavam cegas**: com `[view] pause_hidden` (padrão) elas eram
+  paradas e não detectavam movimento, então `[recording] on_motion` e `[notifications]`
+  não funcionavam nelas. Agora, quando `[motion]` está ligado e algo reage a movimento,
+  todas as câmeras continuam decodificando (no sub-stream, se houver `sub_url`).
+  Sem `on_motion`/notificações, o `pause_hidden` segue valendo.
+- `scripts/baseline.sh` nunca achava o processo (`pgrep -x` com nome de 16 caracteres).
+
+### 🔧 Alterado
+
+- CI: `cargo fmt --check`, `cargo-deny` (licenças/RustSec/fontes), testes de doc e job
+  que garante o MSRV 1.88. Código formatado com `cargo fmt`.
+
 ## [0.8.0]
 
 ### ✨ Adicionado

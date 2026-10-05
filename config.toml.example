@@ -92,7 +92,11 @@
 # pause_hidden = true     # só decodifica as câmeras da página visível (+ a
 #                         # próxima como prefetch); pausa o resto. false mantém
 #                         # todas as pipelines ativas (troca de página instantânea,
-#                         # mais CPU/rede).
+#                         # mais CPU/rede). Câmera pausada não detecta movimento:
+#                         # com [recording] on_motion ou [notifications] ligados
+#                         # (e [motion] enabled), todas as câmeras continuam
+#                         # decodificando mesmo fora da página — use sub_url para
+#                         # que isso custe pouco.
 # stagger_ms = 200        # intervalo entre o início de cada pipeline no arranque
 #                         # e nas trocas de página (evita congelar abrindo uma
 #                         # dúzia de streams de uma vez). 0 = o mais rápido possível.

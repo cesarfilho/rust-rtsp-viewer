@@ -44,7 +44,7 @@ Gate M0: baseline real publicado, 0.5 decidido, ADRs "Proposta" promovidos ou re
 ## M1 — Movimento confiável (0.9)
 | # | Tarefa | Critério de saída | Tam. | Estado |
 |---|---|---|---|---|
-| 1.1 | **Corrigir a cegueira**: câmeras com `[motion]`/`on_motion` ficam fora do `pause_hidden`, decodificando o sub | movimento e gravação funcionam em câmera de página oculta; teste | P–M | [ ] |
+| 1.1 | **Corrigir a cegueira**: câmeras com `[motion]`/`on_motion` ficam fora do `pause_hidden`, decodificando o sub | movimento e gravação funcionam em câmera de página oculta; teste | P–M | [x] |
 | 1.2 | Ramo de detecção reduzido (ADR 0005): `tee → leaky queue → videorate → videoscale → ~320×180 GRAY8 → appsink` no lugar do `capture_frame` em resolução cheia | CPU dentro do orçamento medido em 0.4 | M | [ ] |
 | 1.3 | Recuperação rápida na partida: retentar em segundos, não só após os 12 s de graça | câmera que falha ao iniciar volta em < 5 s | P | [ ] |
 | 1.4 | Áudio usa o sub (ou só abre a sessão quando ouvido) | sem sessão extra com a câmera na grade | P | [ ] |
