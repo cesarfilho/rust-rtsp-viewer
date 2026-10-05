@@ -293,6 +293,14 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
         .push(hairline(theme))
         .push(menu_row(
             theme,
+            "\u{25B6}",
+            "Gravações",
+            Some("t"),
+            Message::Recordings(crate::ui::recordings::RecMsg::Open),
+            false,
+        ))
+        .push(menu_row(
+            theme,
             "?",
             "Ajuda",
             Some("?"),

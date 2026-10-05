@@ -114,6 +114,15 @@ pub struct App {
     pub zones_file: crate::infrastructure::zone_state::ZonesFile,
     /// Zone editor session, `Some` while the user is drawing.
     pub zone_edit: Option<ZoneEdit>,
+    /// The recordings view (timeline + player), open while `Some`.
+    pub recordings: Option<super::recordings::RecordingsView>,
+    /// Where this window reads the daemon's recordings (`[recording] dir`).
+    pub recordings_dir: std::path::PathBuf,
+    /// Test aid (`RRV_OPEN_RECORDINGS=1`): open the recordings view as soon as the
+    /// daemon connects, so it can be checked without synthetic key presses.
+    pub open_recordings_on_connect: bool,
+    /// `RRV_OPEN_RECORDINGS=play`: also play the latest finished segment (test aid).
+    pub recordings_autoplay: bool,
 }
 
 /// A zone being drawn on one camera. Vertices are only committed to
@@ -343,6 +352,10 @@ pub fn new_app(
             pending_burst: None,
             zones_file,
             zone_edit: None,
+            recordings: None,
+            recordings_dir: recording_config.dir.clone(),
+            open_recordings_on_connect: std::env::var_os("RRV_OPEN_RECORDINGS").is_some(),
+            recordings_autoplay: std::env::var("RRV_OPEN_RECORDINGS").is_ok_and(|v| v == "play"),
         },
         // iced 0.13's `window::Settings` has no "start maximized" flag, so ask
         // the compositor to maximize the window as soon as it exists. `size`

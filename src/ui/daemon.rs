@@ -137,6 +137,10 @@ pub enum PendingRequest {
         camera: usize,
         zones: Vec<crate::domain::zones::MotionZone>,
     },
+    /// O histórico da vista de gravações.
+    History,
+    /// Exportar um clipe.
+    Export,
 }
 
 #[derive(Debug, Clone)]

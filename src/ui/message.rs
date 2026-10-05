@@ -101,6 +101,8 @@ pub enum Message {
     EditZones(usize),
     /// A vertex clicked on the editor canvas, normalized to the video frame.
     ZoneVertex(f64, f64),
+    /// The recordings view (timeline, player, export).
+    Recordings(super::recordings::RecMsg),
     /// Swallows a click so it does not fall through to the layer below.
     Noop,
     /// Close the polygon being drawn and store it as a zone (`Enter`).

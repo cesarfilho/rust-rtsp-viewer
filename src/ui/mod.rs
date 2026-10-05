@@ -6,6 +6,7 @@ pub mod daemon;
 pub mod grid;
 pub(crate) mod icons;
 pub(crate) mod message;
+pub mod recordings;
 pub mod sidebar;
 pub(crate) mod state;
 pub(crate) mod subscription;

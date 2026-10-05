@@ -97,7 +97,7 @@ pub struct Bar {
 /// As barras dos segmentos que tocam o intervalo, cortadas nas bordas. Segmentos
 /// invisíveis (menos de meio pixel de 1000) ganham uma largura mínima para ainda se verem.
 pub fn bars(segments: &[SegmentSpan], span: Span, now: i64) -> Vec<Bar> {
-    const MIN_WIDTH: f32 = 0.0015;
+    const MIN_WIDTH: f32 = 0.004;
     segments
         .iter()
         .filter_map(|s| {
@@ -291,7 +291,7 @@ mod tests {
             s,
             NOW,
         );
-        assert!(b[0].end - b[0].start >= 0.0015);
+        assert!(b[0].end - b[0].start >= 0.004);
     }
 
     #[test]

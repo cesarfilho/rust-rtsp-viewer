@@ -66,6 +66,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
         layers = layers.push(dismiss_backdrop(Message::DismissContextMenu));
         layers = layers.push(menu);
     }
+    if app.recordings.is_some() {
+        layers = layers.push(super::recordings::view(app));
+    }
     if let Some(m) = app.modal {
         layers = layers.push(daemon::modal(app, m));
     }

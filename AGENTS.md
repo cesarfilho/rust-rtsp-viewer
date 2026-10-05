@@ -107,6 +107,18 @@ index. Losing the daemon does NOT fall back to the local engine (it may still be
 user chooses (banner / chip menu, with a confirmation). The banner takes height, so grid sizing and
 pointer tracking use `view::chrome_top`, not `TOOLBAR_HEIGHT`.
 
+## Recordings view (plan 3.4/3.5)
+
+`ui::recordings` (key `t`, overflow menu "Gravações"): one lane per daemon camera on a canvas
+timeline (`domain::timeline_view` does the pure math: span, zoom, bars, ticks), an embedded player
+and clip export. Everything comes from the daemon over IPC (`history`, `export_clip`); **the video
+files are read from this window's own `[recording] dir`**, joined to the daemon-relative `file` of
+each segment (with Docker, set it to the host folder mounted as `/data`). The player is a
+`GStreamerBridge::start_file` (`engine::playback`: seek, rate, pause, step) shown by the same
+`VideoWidget` as a live camera. Marks `I`/`O` + `E` export `[in, out]` as `.mp4` in
+`<recordings>/exports/`. Test aid: `RRV_OPEN_RECORDINGS=1` opens the view once the daemon connects,
+`=play` also plays the latest finished segment (no synthetic key presses needed).
+
 ## Secrets (plan 2.5.8)
 
 URLs in the config may carry `${NAME}` (`rrv_core::secrets`): value from env var `NAME`, else file
@@ -244,6 +256,7 @@ recording tests), `gstreamer1.0-libav` (Ubuntu 24.04).
 | `F11` | OS fullscreen + immersive |
 | `/` | Focus camera search |
 | `Esc` | Cascade: spotlight → immersive → menu → search |
+| `t` | Recordings view (timeline + player; needs the daemon) |
 | `?` | Show help popup |
 | `Ctrl+Q` | Quit |
 

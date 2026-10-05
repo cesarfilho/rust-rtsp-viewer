@@ -16,6 +16,7 @@ use super::app::PendingBurst;
 use super::bridge::now_unix_secs;
 use super::daemon::{Effect, PendingRequest};
 use super::message::LayoutMode;
+use super::recordings::RecMsg;
 use super::sidebar;
 use super::state::{Toast, VU_PEAK_DECAY_MS};
 use super::{App, Message};
@@ -64,6 +65,7 @@ fn sync_status_rows(app: &mut App) {
 fn update_inner(app: &mut App, message: Message) -> Task<Message> {
     match message {
         Message::FrameUpdate => update_frame(app),
+        Message::Recordings(m) => super::recordings::update(app, m),
         Message::KeyPressed(key, modifiers) => handle_key(app, key, modifiers),
         Message::OpenDir(dir) => {
             crate::infrastructure::notify::open_dir(&dir);
@@ -488,6 +490,34 @@ fn is_help_dismiss(key: &iced::keyboard::Key) -> bool {
 /// This runs in `update` rather than the subscription because iced identifies
 /// a subscription by its closure type: a captured "is the search box focused"
 /// flag would be baked in at first subscribe and never refresh.
+/// Keys while the recordings view is open.
+fn recordings_key(app: &mut App, key: iced::keyboard::Key<&str>) -> Task<Message> {
+    use iced::keyboard::Key;
+    use iced::keyboard::key::Named;
+    let msg = match key {
+        Key::Named(Named::Escape) => RecMsg::Close,
+        Key::Named(Named::Space) => RecMsg::PlayPause,
+        Key::Named(Named::ArrowLeft) => RecMsg::Skip(-10_000),
+        Key::Named(Named::ArrowRight) => RecMsg::Skip(10_000),
+        Key::Character("l") => RecMsg::Live,
+        Key::Character("i") => RecMsg::MarkIn,
+        Key::Character("o") => RecMsg::MarkOut,
+        Key::Character("e") => RecMsg::Export,
+        Key::Character(",") => RecMsg::Rate(0.5),
+        Key::Character(".") => RecMsg::Rate(2.0),
+        Key::Character("-") => RecMsg::Zoom {
+            factor: 1.25,
+            anchor: 1.0,
+        },
+        Key::Character("+") | Key::Character("=") => RecMsg::Zoom {
+            factor: 0.8,
+            anchor: 1.0,
+        },
+        _ => return Task::none(),
+    };
+    update(app, Message::Recordings(msg))
+}
+
 fn handle_key(
     app: &mut App,
     key: iced::keyboard::Key,
@@ -526,6 +556,11 @@ fn handle_key(
         } else {
             Task::none()
         };
+    }
+
+    // The recordings view owns the keyboard while it is open.
+    if app.recordings.is_some() {
+        return recordings_key(app, key.as_ref());
     }
 
     // While drawing zones the keyboard belongs to the editor: Enter closes the
@@ -584,6 +619,7 @@ fn handle_key(
     }
 
     match key.as_ref() {
+        Key::Character("t") => update(app, Message::Recordings(RecMsg::Open)),
         Key::Named(Named::Space) => update(app, Message::ToggleSelection),
         Key::Named(Named::Tab) => update(app, Message::CycleLayout),
         Key::Named(Named::PageDown) => update(app, Message::NextPage),
@@ -822,6 +858,10 @@ fn poll_daemon(app: &mut App) {
             Effect::Reply { token, result } => handle_reply(app, token, result),
         }
     }
+    if app.open_recordings_on_connect && app.daemon.is_connected() {
+        app.open_recordings_on_connect = false;
+        let _ = super::recordings::update(app, RecMsg::Open);
+    }
 }
 
 /// An event from the daemon: onto the timeline and, if its policy asked for
@@ -847,7 +887,7 @@ fn daemon_event(app: &mut App, wire: crate::ipc::protocol::WireEvent) {
 /// Send a request to the daemon, remembering what to do with the reply. Returns
 /// `false` (with a toast) when there is no live connection: nothing is ever
 /// applied locally on faith.
-fn send_to_daemon(
+pub(super) fn send_to_daemon(
     app: &mut App,
     request: crate::ipc::protocol::Request,
     pending: PendingRequest,
@@ -889,6 +929,8 @@ fn handle_reply(app: &mut App, token: u64, result: Result<crate::ipc::protocol::
         Ok(_) => None,
     };
     match (pending, failure) {
+        (PendingRequest::History, _) => super::recordings::on_history(app, result),
+        (PendingRequest::Export, _) => super::recordings::on_exported(app, result),
         (PendingRequest::ToggleRecording { .. }, None) => {
             if let Ok(Response::Recording { recording, .. }) = result {
                 toast(
@@ -928,11 +970,24 @@ fn handle_reply(app: &mut App, token: u64, result: Result<crate::ipc::protocol::
     }
 }
 
-fn toast(app: &mut App, message: impl Into<String>) {
+pub(super) fn toast(app: &mut App, message: impl Into<String>) {
     app.toasts.push(Toast {
         message: message.into(),
         shown_at: Instant::now(),
         open_dir: None,
+    });
+}
+
+/// A toast that opens `dir` in the file manager when clicked.
+pub(super) fn toast_open_dir(
+    app: &mut App,
+    message: impl Into<String>,
+    dir: Option<std::path::PathBuf>,
+) {
+    app.toasts.push(Toast {
+        message: message.into(),
+        shown_at: Instant::now(),
+        open_dir: dir,
     });
 }
 
@@ -1186,6 +1241,7 @@ fn persist_view(app: &App) {
 
 fn update_frame(app: &mut App) -> Task<Message> {
     poll_daemon(app);
+    super::recordings::tick(app);
     app.toasts.retain(|t| !super::state::is_expired(t));
 
     // Latency / RTP-stats don't need 10 Hz; poll them every 5th tick (~500 ms)
@@ -2057,6 +2113,177 @@ mod tests {
         handle_reply(&mut app, token, Ok(Response::Ok));
         assert_eq!(app.engine.zones[0].zones.len(), 1);
         assert!(app.zone_edit.as_ref().unwrap().temp_vertices.is_empty());
+    }
+
+    fn seg(id: i64, start: i64, end: Option<i64>, file: &str) -> crate::ipc::protocol::SegmentInfo {
+        crate::ipc::protocol::SegmentInfo {
+            id,
+            camera: "Portão".into(),
+            ts_start: start,
+            ts_end: end,
+            bytes: 1,
+            has_motion: false,
+            protected: false,
+            mode: "manual".into(),
+            file: file.into(),
+        }
+    }
+
+    fn history_reply(segs: Vec<crate::ipc::protocol::SegmentInfo>) -> Response {
+        Response::History {
+            segments: segs,
+            events: Vec::new(),
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn the_recordings_view_needs_the_daemon() {
+        let mut app = test_app();
+        let _ = update(&mut app, Message::Recordings(RecMsg::Open));
+        assert!(app.recordings.is_none(), "sem daemon não há histórico");
+        assert!(app.toasts.iter().any(|t| t.message.contains("daemon")));
+    }
+
+    #[test]
+    fn opening_the_recordings_view_asks_the_daemon_for_the_history() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        let _ = update(&mut app, Message::Recordings(RecMsg::Open));
+        let v = app.recordings.as_ref().expect("a vista abriu");
+        assert!(v.loading);
+        assert_eq!(v.lanes, ["Portão"], "uma faixa por câmera do daemon");
+        assert!(
+            app.pending
+                .values()
+                .any(|p| matches!(p, PendingRequest::History)),
+            "o pedido de histórico saiu"
+        );
+        // a resposta preenche a vista
+        let token = *app.pending.keys().next().unwrap();
+        handle_reply(
+            &mut app,
+            token,
+            Ok(history_reply(vec![seg(1, 1_000, Some(2_000), "a.mkv")])),
+        );
+        let v = app.recordings.as_ref().unwrap();
+        assert!(!v.loading && v.error.is_none());
+        assert_eq!(v.segments.len(), 1);
+    }
+
+    #[test]
+    fn a_history_error_is_shown_not_swallowed() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        let _ = update(&mut app, Message::Recordings(RecMsg::Open));
+        let token = *app.pending.keys().next().unwrap();
+        handle_reply(
+            &mut app,
+            token,
+            Ok(Response::Error {
+                message: "o daemon está sem histórico".into(),
+            }),
+        );
+        let v = app.recordings.as_ref().unwrap();
+        assert!(!v.loading);
+        assert!(v.error.as_deref().unwrap().contains("sem histórico"));
+    }
+
+    #[test]
+    fn clicking_a_missing_file_says_where_it_looked_and_starts_no_player() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        app.recordings_dir = std::env::temp_dir().join("rrv-nao-existe-mesmo");
+        let _ = update(&mut app, Message::Recordings(RecMsg::Open));
+        let token = *app.pending.keys().next().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        handle_reply(
+            &mut app,
+            token,
+            Ok(history_reply(vec![seg(
+                1,
+                now - 60_000,
+                Some(now - 30_000),
+                "a.mkv",
+            )])),
+        );
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::Clicked {
+                lane: 0,
+                t_ms: now - 45_000,
+            }),
+        );
+        assert!(app.recordings.as_ref().unwrap().player.is_none());
+        assert!(
+            app.toasts
+                .iter()
+                .any(|t| t.message.contains("Arquivo não encontrado")
+                    && t.message.contains("[recording] dir")),
+            "{:?}",
+            app.toasts.iter().map(|t| &t.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn clicking_where_nothing_was_recorded_says_so() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        let _ = update(&mut app, Message::Recordings(RecMsg::Open));
+        let token = *app.pending.keys().next().unwrap();
+        handle_reply(&mut app, token, Ok(history_reply(vec![])));
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::Clicked { lane: 0, t_ms: 5 }),
+        );
+        assert!(
+            app.toasts
+                .iter()
+                .any(|t| t.message.contains("Sem gravação"))
+        );
+    }
+
+    #[test]
+    fn exporting_without_marks_explains_what_to_do_and_sends_nothing() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        let _ = update(&mut app, Message::Recordings(RecMsg::Open));
+        app.pending.clear();
+        let _ = update(&mut app, Message::Recordings(RecMsg::Export));
+        assert!(
+            app.toasts
+                .iter()
+                .any(|t| t.message.contains("Marque o início"))
+        );
+        assert!(app.pending.is_empty());
+    }
+
+    #[test]
+    fn the_recordings_view_owns_the_keyboard_and_escape_closes_it() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        let _ = update(&mut app, Message::Recordings(RecMsg::Open));
+        // `r` normalmente grava; com a vista aberta não faz nada
+        let _ = handle_key(
+            &mut app,
+            iced::keyboard::Key::Character("r".into()),
+            iced::keyboard::Modifiers::default(),
+        );
+        assert!(app.recordings.is_some());
+        assert!(
+            !app.pending
+                .values()
+                .any(|p| matches!(p, PendingRequest::ToggleRecording { .. }))
+        );
+        let _ = handle_key(
+            &mut app,
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+            iced::keyboard::Modifiers::default(),
+        );
+        assert!(app.recordings.is_none());
     }
 
     #[test]
