@@ -16,6 +16,7 @@ use crate::config::CameraConfig;
 use crate::domain::camera_status::CameraStatus;
 use crate::domain::motion::MotionConfig;
 use crate::domain::multi_stream::StreamQuality;
+use crate::domain::multi_stream::{MultiStreamConfig, desired_quality, stream_url_for_quality};
 use crate::domain::notify::NotifyConfig;
 use crate::domain::zones::ZoneConfig;
 use crate::infrastructure::reconnect::ReconnectState;
@@ -73,4 +74,100 @@ pub struct Engine {
     pub notify: NotifyConfig,
     /// Last desktop notification per (camera, event kind), for the cooldown.
     pub notify_last: HashMap<(usize, &'static str), Instant>,
+}
+
+impl Engine {
+    /// Cameras the user has not switched off.
+    pub fn enabled_cameras(&self) -> Vec<usize> {
+        (0..self.bridges.len())
+            .filter(|&i| self.camera_enabled[i])
+            .collect()
+    }
+
+    /// Whether every enabled camera must keep decoding no matter what is on
+    /// screen: either `pause_hidden` is off, or something reacts to motion (a
+    /// hidden camera is blind, so it could not start a recording or an alert).
+    pub fn must_run_everything(&self) -> bool {
+        !self.pause_hidden
+            || crate::domain::motion::needs_background_watch(
+                self.motion_config.enabled,
+                self.motion_recording,
+                self.notify.enabled,
+            )
+    }
+
+    /// The camera config with `url` swapped for the sub-stream when that is the
+    /// stream it is running on.
+    pub fn camera_config_for(&self, i: usize) -> Option<CameraConfig> {
+        let mut cfg = self.camera_configs.get(i)?.clone();
+        let multi = MultiStreamConfig {
+            sub_stream_url: cfg.sub_url.clone(),
+            default_quality: StreamQuality::Main,
+        };
+        let quality = self.stream_quality.get(i).copied().unwrap_or_default();
+        cfg.url = stream_url_for_quality(&cfg.url, quality, &multi);
+        Some(cfg)
+    }
+
+    /// The stream camera `i` should be on. `large_view` says whether it fills
+    /// the view (spotlight, flex main, or alone on the page) — the only part of
+    /// this decision that belongs to the UI.
+    pub fn wanted_quality(&self, i: usize, large_view: bool) -> StreamQuality {
+        let current = self.stream_quality.get(i).copied().unwrap_or_default();
+        let has_sub = self
+            .camera_configs
+            .get(i)
+            .is_some_and(|c| c.sub_url.is_some());
+        if !has_sub {
+            return StreamQuality::Main;
+        }
+        let recording = self.bridges[i]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_recording();
+        desired_quality(has_sub, recording, current, large_view)
+    }
+
+    /// (Re)build a camera's pipeline on `quality`. `start_*` stops the old
+    /// pipeline first, so this doubles as the sub/main switch.
+    pub fn restart_stream(&mut self, i: usize, quality: StreamQuality) {
+        if i >= self.stream_quality.len() {
+            return;
+        }
+        self.stream_quality[i] = quality;
+        let Some(cfg) = self.camera_config_for(i) else {
+            return;
+        };
+        let result = {
+            let mut bridge = self.bridges[i].lock().unwrap_or_else(|e| e.into_inner());
+            bridge.start_from_config(&cfg)
+        };
+        self.active_stream[i] = true;
+        self.connecting_since[i] = Some(Instant::now());
+        self.reconnect_states[i].reset();
+        self.backoff_states[i] = BackoffState::new();
+        self.status[i] = if result.is_err() {
+            CameraStatus::Offline
+        } else {
+            CameraStatus::Connecting
+        };
+        if let Err(e) = result {
+            log::warn!("Could not start camera {i}: {e}");
+        }
+    }
+
+    /// Stop a camera's video pipeline because it is not needed right now.
+    /// It shows `Paused` (not a fault) and leaves the start queue.
+    pub fn pause_stream(&mut self, i: usize) {
+        self.bridges[i]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .stop();
+        self.active_stream[i] = false;
+        self.connecting_since[i] = None;
+        self.reconnect_states[i].reset();
+        self.backoff_states[i] = BackoffState::new();
+        self.start_queue.retain(|&q| q != i);
+        self.status[i] = CameraStatus::Paused;
+    }
 }

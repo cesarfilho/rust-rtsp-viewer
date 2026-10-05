@@ -5,9 +5,7 @@ use std::time::{Duration, Instant};
 use gstreamer::prelude::*;
 
 use crate::domain::audio::AudioState;
-use crate::domain::multi_stream::{
-    MultiStreamConfig, StreamQuality, desired_quality, stream_url_for_quality,
-};
+use crate::domain::multi_stream::StreamQuality;
 use crate::domain::snapshot::BURST_INTERVAL_MS;
 use crate::domain::timeline::{EventType, TimelineEvent};
 use crate::domain::view;
@@ -784,22 +782,10 @@ fn clamp_current_page(app: &mut App) {
 /// * Grid layout with `pause_hidden` → the current page, plus the next page
 ///   as a prefetch when the carousel is on or [`view::PREFETCH_NEXT_PAGE`].
 fn desired_active_cameras(app: &App) -> Vec<usize> {
-    let enabled_all: Vec<usize> = (0..app.engine.bridges.len())
-        .filter(|&i| app.engine.camera_enabled[i])
-        .collect();
-
-    if !app.engine.pause_hidden {
-        return enabled_all;
-    }
-
-    // A hidden camera is blind: no motion, so no motion recording or alert.
-    // When something reacts to motion, every camera keeps decoding (on its
-    // sub-stream when it has one, see `wanted_quality`).
-    if crate::domain::motion::needs_background_watch(
-        app.engine.motion_config.enabled,
-        app.engine.motion_recording,
-        app.engine.notify.enabled,
-    ) {
+    let enabled_all = app.engine.enabled_cameras();
+    // Engine policy: everything keeps decoding when `pause_hidden` is off or
+    // something reacts to motion. Only otherwise does the view decide.
+    if app.engine.must_run_everything() {
         return enabled_all;
     }
 
@@ -854,80 +840,12 @@ fn desired_active_cameras(app: &App) -> Vec<usize> {
 /// stream its current view calls for.
 fn start_stream(app: &mut App, i: usize) {
     let quality = wanted_quality(app, i);
-    restart_stream(app, i, quality);
-}
-
-/// (Re)build a camera's pipeline on `quality`. `start_*` stops the old
-/// pipeline first, so this doubles as the sub/main switch.
-fn restart_stream(app: &mut App, i: usize, quality: StreamQuality) {
-    if i >= app.engine.stream_quality.len() {
-        return;
-    }
-    app.engine.stream_quality[i] = quality;
-    let Some(cfg) = camera_config_for(app, i) else {
-        return;
-    };
-    let result = {
-        let mut bridge = app.engine.bridges[i]
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        bridge.start_from_config(&cfg)
-    };
-    app.engine.active_stream[i] = true;
-    app.engine.connecting_since[i] = Some(Instant::now());
-    app.engine.reconnect_states[i].reset();
-    app.engine.backoff_states[i] = BackoffState::new();
-    if i < app.sidebar.cameras.len() {
-        app.engine.status[i] = if result.is_err() {
-            sidebar::CameraStatus::Offline
-        } else {
-            sidebar::CameraStatus::Connecting
-        };
-    }
-    if let Err(e) = result {
-        log::warn!("Could not start camera {i}: {e}");
-    }
-}
-
-/// The camera config with `url` swapped for the sub-stream when that is the
-/// stream it is running on.
-fn camera_config_for(app: &App, i: usize) -> Option<crate::config::CameraConfig> {
-    let mut cfg = app.engine.camera_configs.get(i)?.clone();
-    let multi = MultiStreamConfig {
-        sub_stream_url: cfg.sub_url.clone(),
-        default_quality: StreamQuality::Main,
-    };
-    let quality = app
-        .engine
-        .stream_quality
-        .get(i)
-        .copied()
-        .unwrap_or_default();
-    cfg.url = stream_url_for_quality(&cfg.url, quality, &multi);
-    Some(cfg)
+    app.engine.restart_stream(i, quality);
 }
 
 /// The stream camera `i` should be on given what is on screen.
 fn wanted_quality(app: &App, i: usize) -> StreamQuality {
-    let current = app
-        .engine
-        .stream_quality
-        .get(i)
-        .copied()
-        .unwrap_or_default();
-    let has_sub = app
-        .engine
-        .camera_configs
-        .get(i)
-        .is_some_and(|c| c.sub_url.is_some());
-    if !has_sub {
-        return StreamQuality::Main;
-    }
-    let recording = app.engine.bridges[i]
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .is_recording();
-    desired_quality(has_sub, recording, current, is_large_view(app, i))
+    app.engine.wanted_quality(i, is_large_view(app, i))
 }
 
 /// Does camera `i` fill the view (spotlight, flex main, or alone on the page)?
@@ -943,24 +861,12 @@ fn is_large_view(app: &App, i: usize) -> bool {
 
 /// Tear a camera's video + audio pipeline down because it went off-page.
 fn pause_stream(app: &mut App, i: usize) {
-    {
-        let mut bridge = app.engine.bridges[i]
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        bridge.stop();
-    }
+    app.engine.pause_stream(i);
+    // Audio is still the UI's: silence it along with the video.
     if let Some(pipeline) = app.audio_pipelines[i].borrow_mut().take() {
         let _ = pipeline.set_state(gstreamer::State::Null);
     }
     app.audio_states[i] = AudioState::Muted;
-    app.engine.active_stream[i] = false;
-    app.engine.connecting_since[i] = None;
-    app.engine.reconnect_states[i].reset();
-    app.engine.backoff_states[i] = BackoffState::new();
-    app.engine.start_queue.retain(|&q| q != i);
-    if i < app.sidebar.cameras.len() {
-        app.engine.status[i] = sidebar::CameraStatus::Paused;
-    }
 }
 
 /// Reconcile running pipelines with [`desired_active_cameras`]. Cameras that
@@ -1006,7 +912,7 @@ fn sync_active_streams(app: &mut App) {
         let wanted = wanted_quality(app, i);
         if wanted != app.engine.stream_quality[i] {
             log::info!("Camera {i}: switching to the {} stream", wanted.label());
-            restart_stream(app, i, wanted);
+            app.engine.restart_stream(i, wanted);
         }
     }
 }
@@ -1353,7 +1259,7 @@ fn update_frame(app: &mut App) -> Task<Message> {
 
 /// Rebuild a camera's pipeline, preserving an in-progress recording.
 fn reconnect_camera(app: &mut App, i: usize, cam_label: &str) {
-    let Some(cam_config) = camera_config_for(app, i) else {
+    let Some(cam_config) = app.engine.camera_config_for(i) else {
         return;
     };
 
@@ -1697,7 +1603,7 @@ fn toggle_camera_recording(app: &mut App, idx: usize) -> Result<bool, String> {
         .unwrap_or_else(|e| e.into_inner())
         .is_recording();
     if starting && app.engine.stream_quality.get(idx) == Some(&StreamQuality::Sub) {
-        restart_stream(app, idx, StreamQuality::Main);
+        app.engine.restart_stream(idx, StreamQuality::Main);
     }
     let is_recording = {
         let mut bridge = app.engine.bridges[idx]
