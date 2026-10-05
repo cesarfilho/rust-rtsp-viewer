@@ -11,6 +11,29 @@ use super::protocol::{
     PROTOCOL_VERSION, Request, Response, ServerMessage, WireEvent, decode_line, encode_line,
 };
 
+/// Por que uma conexão falhou. A janela mostra mensagens diferentes e age de
+/// forma diferente em cada caso (spec `ux-daemon.md`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectError {
+    /// Nada ouvindo no socket (daemon parado ou ainda subindo).
+    NotRunning(String),
+    /// O socket existe mas é de outro usuário.
+    PermissionDenied(String),
+    /// O daemon fala outra versão do protocolo.
+    Incompatible(String),
+    Other(String),
+}
+
+impl std::fmt::Display for ConnectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (Self::NotRunning(m)
+        | Self::PermissionDenied(m)
+        | Self::Incompatible(m)
+        | Self::Other(m)) = self;
+        f.write_str(m)
+    }
+}
+
 pub struct IpcClient {
     reader: BufReader<UnixStream>,
     writer: UnixStream,
@@ -24,26 +47,48 @@ impl IpcClient {
     /// Conecta e faz o `Hello`. Erro claro se o daemon não está rodando ou se
     /// fala outra versão do protocolo.
     pub fn connect(path: &Path) -> Result<Self, String> {
-        super::check_socket_path(path)?;
+        Self::connect_detailed(path).map_err(|e| e.to_string())
+    }
+
+    /// Como [`IpcClient::connect`], dizendo *por que* falhou.
+    pub fn connect_detailed(path: &Path) -> Result<Self, ConnectError> {
+        super::check_socket_path(path).map_err(ConnectError::Other)?;
         let stream = UnixStream::connect(path).map_err(|e| {
-            format!(
+            let msg = format!(
                 "não consegui falar com o daemon em {} ({e}); ele está rodando?",
                 path.display()
-            )
+            );
+            if e.kind() == ErrorKind::PermissionDenied {
+                ConnectError::PermissionDenied(msg)
+            } else {
+                ConnectError::NotRunning(msg)
+            }
         })?;
-        let writer = stream.try_clone().map_err(|e| e.to_string())?;
+        let writer = stream
+            .try_clone()
+            .map_err(|e| ConnectError::Other(e.to_string()))?;
         let mut client = Self {
             reader: BufReader::new(stream),
             writer,
             events: VecDeque::new(),
             server: String::new(),
         };
-        match client.request(&Request::Hello {
-            protocol: PROTOCOL_VERSION,
-        })? {
+        match client
+            .request(&Request::Hello {
+                protocol: PROTOCOL_VERSION,
+            })
+            .map_err(ConnectError::Other)?
+        {
             Response::Hello { server, .. } => client.server = server,
-            Response::Error { message } => return Err(message),
-            other => return Err(format!("resposta inesperada ao Hello: {other:?}")),
+            Response::Error { message } if message.contains("versão do protocolo") => {
+                return Err(ConnectError::Incompatible(message));
+            }
+            Response::Error { message } => return Err(ConnectError::Other(message)),
+            other => {
+                return Err(ConnectError::Other(format!(
+                    "resposta inesperada ao Hello: {other:?}"
+                )));
+            }
         }
         Ok(client)
     }
@@ -51,9 +96,19 @@ impl IpcClient {
     /// Faz um pedido e devolve a resposta. Eventos que chegarem no meio ficam
     /// na fila de [`IpcClient::next_event`].
     pub fn request(&mut self, request: &Request) -> Result<Response, String> {
+        self.request_timeout(request, Duration::from_secs(10))
+    }
+
+    /// Como [`IpcClient::request`], com o prazo que o chamador escolhe (o
+    /// heartbeat da janela usa um curto).
+    pub fn request_timeout(
+        &mut self,
+        request: &Request,
+        timeout: Duration,
+    ) -> Result<Response, String> {
         self.reader
             .get_ref()
-            .set_read_timeout(Some(Duration::from_secs(10)))
+            .set_read_timeout(Some(timeout))
             .map_err(|e| e.to_string())?;
         self.writer
             .write_all(encode_line(request).as_bytes())

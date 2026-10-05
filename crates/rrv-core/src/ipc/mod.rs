@@ -5,9 +5,11 @@
 //! - [`handler`]: o que cada pedido faz no motor (puro, sem socket).
 //! - [`server`]: o socket do daemon.
 //! - [`client`]: o lado da janela (e do `rrvctl`).
+//! - [`link`]: a conexão da janela mantida numa thread (heartbeat, backoff).
 
 pub mod client;
 pub mod handler;
+pub mod link;
 pub mod protocol;
 pub mod server;
 
