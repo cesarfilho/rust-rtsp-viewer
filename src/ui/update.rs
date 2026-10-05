@@ -875,6 +875,15 @@ fn daemon_event(app: &mut App, wire: crate::ipc::protocol::WireEvent) {
     {
         crate::infrastructure::notify::send(title, body);
     }
+    // A system event, not a camera's: the disk is nearly full.
+    if wire.kind == EventType::DiskLow {
+        if let Some(d) = &wire.detail
+            && wire.notification.is_some()
+        {
+            toast(app, format!("Disco das gravações quase cheio: {d}"));
+        }
+        return;
+    }
     let Some(idx) = app.sidebar.cameras.iter().position(|c| c.name == wire.name) else {
         return; // a camera this window does not have
     };
@@ -2337,6 +2346,47 @@ mod tests {
         app.next_token += 1;
         app.pending.insert(token, pending);
         handle_reply(app, token, result);
+    }
+
+    #[test]
+    fn a_disk_low_event_shows_a_toast_and_never_lands_on_a_camera() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        let before = app.sidebar.timeline.events_in_range(0, u64::MAX).len();
+        daemon_event(
+            &mut app,
+            crate::ipc::protocol::WireEvent {
+                camera: 0,
+                name: "Disco".into(),
+                kind: EventType::DiskLow,
+                detail: Some("8% livre (40.0 GiB)".into()),
+                notification: Some(("Disco quase cheio".into(), "x".into())),
+                unix_secs: 1,
+            },
+        );
+        assert!(
+            app.toasts
+                .iter()
+                .any(|t| t.message.contains("quase cheio") && t.message.contains("8% livre"))
+        );
+        assert_eq!(
+            app.sidebar.timeline.events_in_range(0, u64::MAX).len(),
+            before
+        );
+        // a recuperação (sem notificação) não incomoda
+        let n = app.toasts.len();
+        daemon_event(
+            &mut app,
+            crate::ipc::protocol::WireEvent {
+                camera: 0,
+                name: "Disco".into(),
+                kind: EventType::DiskLow,
+                detail: Some("20% livre".into()),
+                notification: None,
+                unix_secs: 2,
+            },
+        );
+        assert_eq!(app.toasts.len(), n);
     }
 
     #[test]

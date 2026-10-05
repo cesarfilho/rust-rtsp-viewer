@@ -61,6 +61,43 @@ pub struct DiskUsage {
     pub used: u64,
 }
 
+/// Abaixo disto de espaço livre o disco está "quase cheio" (spec `ux-historico.md`).
+pub const DISK_LOW_FREE_PERCENT: u64 = 10;
+/// E só volta ao normal quando passa disto (histerese: sem avisar a cada oscilação).
+pub const DISK_RECOVERED_FREE_PERCENT: u64 = 15;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiskTransition {
+    /// Passou a "quase cheio": avisar uma vez.
+    BecameLow { free_percent: u64 },
+    /// Voltou ao normal.
+    Recovered { free_percent: u64 },
+}
+
+/// Observa o disco e diz **quando muda** de estado, para o aviso sair uma vez só.
+#[derive(Debug, Default)]
+pub struct DiskWatch {
+    low: bool,
+}
+
+impl DiskWatch {
+    pub fn update(&mut self, usage: DiskUsage) -> Option<DiskTransition> {
+        if usage.total == 0 {
+            return None;
+        }
+        let free = usage.total.saturating_sub(usage.used) * 100 / usage.total;
+        if !self.low && free < DISK_LOW_FREE_PERCENT {
+            self.low = true;
+            Some(DiskTransition::BecameLow { free_percent: free })
+        } else if self.low && free >= DISK_RECOVERED_FREE_PERCENT {
+            self.low = false;
+            Some(DiskTransition::Recovered { free_percent: free })
+        } else {
+            None
+        }
+    }
+}
+
 /// Um segmento que a retenção pode apagar (fechado e não protegido).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
@@ -198,6 +235,41 @@ mod tests {
             )
             .is_empty()
         );
+    }
+
+    fn usage(free_percent: u64) -> DiskUsage {
+        DiskUsage {
+            total: 1000,
+            used: 1000 - free_percent * 10,
+        }
+    }
+
+    #[test]
+    fn the_disk_warning_fires_once_and_has_hysteresis() {
+        let mut w = DiskWatch::default();
+        assert_eq!(w.update(usage(50)), None);
+        assert_eq!(w.update(usage(12)), None, "ainda acima de 10%");
+        assert_eq!(
+            w.update(usage(9)),
+            Some(DiskTransition::BecameLow { free_percent: 9 })
+        );
+        assert_eq!(w.update(usage(8)), None, "já avisou: não repete");
+        assert_eq!(w.update(usage(12)), None, "entre 10% e 15% continua baixo");
+        assert_eq!(
+            w.update(usage(16)),
+            Some(DiskTransition::Recovered { free_percent: 16 })
+        );
+        // pode avisar de novo numa próxima queda
+        assert!(matches!(
+            w.update(usage(5)),
+            Some(DiskTransition::BecameLow { .. })
+        ));
+    }
+
+    #[test]
+    fn an_unreadable_disk_never_warns() {
+        let mut w = DiskWatch::default();
+        assert_eq!(w.update(DiskUsage { total: 0, used: 0 }), None);
     }
 
     #[test]

@@ -15,6 +15,8 @@ pub enum EventType {
     Online,
     /// Snapshot was taken.
     Snapshot,
+    /// The recordings disk is nearly full (a system event, not a camera's).
+    DiskLow,
 }
 
 impl EventType {
@@ -27,6 +29,7 @@ impl EventType {
             EventType::Offline => "offline",
             EventType::Online => "online",
             EventType::Snapshot => "snapshot",
+            EventType::DiskLow => "disk_low",
         }
     }
 
@@ -38,6 +41,7 @@ impl EventType {
             EventType::Offline => "Offline",
             EventType::Online => "Online",
             EventType::Snapshot => "Snapshot",
+            EventType::DiskLow => "Disk low",
         }
     }
 
@@ -49,6 +53,7 @@ impl EventType {
             EventType::Offline => "#FF4444",
             EventType::Online => "#44FF44",
             EventType::Snapshot => "#4488FF",
+            EventType::DiskLow => "#FFCC00",
         }
     }
 }

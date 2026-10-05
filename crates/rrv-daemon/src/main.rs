@@ -174,6 +174,7 @@ fn run(cli: &Cli) -> Result<(), String> {
 
     let period = Duration::from_millis(TICK_MS);
     let mut tick = 0u64;
+    let mut disk_watch = rrv_core::domain::retention::DiskWatch::default();
     while !stop.load(Ordering::SeqCst) {
         let started = Instant::now();
         // Pedidos da janela/rrvctl primeiro, depois o tick do motor.
@@ -192,6 +193,12 @@ fn run(cli: &Cli) -> Result<(), String> {
                 cfg: retention,
                 dir: recording.dir.clone(),
             });
+        }
+        if tick.is_multiple_of(RETENTION_EVERY_TICKS)
+            && let Some(usage) = rrv_core::infrastructure::disk::usage(&recording.dir)
+            && let Some(t) = disk_watch.update(usage)
+        {
+            announce_disk(t, usage, &server, webhook.as_ref(), &engine);
         }
         let events = engine.step(tick);
         let now = unix_secs();
@@ -229,6 +236,58 @@ fn run(cli: &Cli) -> Result<(), String> {
 /// O host do motor entrega os eventos: aqui só registra no log. O webhook/MQTT
 /// de saída (plano 2.5.11) entra neste ponto, com o `notification` que a
 /// política do motor já decidiu.
+/// Avisa que o disco das gravações ficou quase cheio (ou voltou ao normal): log, webhook,
+/// janela (toast) e o histórico. Uma vez por mudança de estado.
+fn announce_disk(
+    t: rrv_core::domain::retention::DiskTransition,
+    usage: rrv_core::domain::retention::DiskUsage,
+    server: &IpcServer,
+    webhook: Option<&rrv_core::webhook::Webhook>,
+    engine: &Engine,
+) {
+    use rrv_core::domain::retention::DiskTransition::{BecameLow, Recovered};
+    let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
+    let free = usage.total.saturating_sub(usage.used);
+    let (detail, notification) = match t {
+        BecameLow { free_percent } => {
+            let d = format!("{free_percent}% livre ({:.1} GiB)", gib(free));
+            log::warn!("disco das gravações quase cheio: {d}");
+            (
+                d.clone(),
+                Some((
+                    "Disco quase cheio".to_string(),
+                    format!("Restam {d}. A retenção apaga o mais antigo; aumente o espaço."),
+                )),
+            )
+        }
+        Recovered { free_percent } => {
+            log::info!("disco das gravações voltou ao normal: {free_percent}% livre");
+            (format!("{free_percent}% livre"), None)
+        }
+    };
+    let wire = WireEvent {
+        camera: 0,
+        name: "Disco".into(),
+        kind: rrv_core::domain::timeline::EventType::DiskLow,
+        detail: Some(detail.clone()),
+        notification,
+        unix_secs: unix_secs(),
+    };
+    server.publish(std::slice::from_ref(&wire));
+    if let Some(w) = webhook {
+        w.send(&wire);
+    }
+    if let Some(store) = &engine.store {
+        store.send(StoreCmd::Event {
+            camera: "Disco".into(),
+            ts: chrono::Utc::now().timestamp_millis(),
+            kind: "disk_low".into(),
+            label: detail,
+            score: None,
+        });
+    }
+}
+
 /// A retenção roda a cada minuto.
 const RETENTION_EVERY_TICKS: u64 = 600;
 

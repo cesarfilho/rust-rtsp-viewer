@@ -105,6 +105,7 @@ fn kind_slug(kind: EventType) -> &'static str {
         EventType::Offline => "offline",
         EventType::Online => "online",
         EventType::Snapshot => "snapshot",
+        EventType::DiskLow => "disk_low",
     }
 }
 
