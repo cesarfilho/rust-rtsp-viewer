@@ -626,13 +626,23 @@ fn detect_camera_motion(app: &mut App, i: usize) {
         app.motion_active[i] = false;
         return;
     }
+    // The reduced detection branch (~320 px), not the full-resolution display
+    // frame: same answer for a fraction of the pixels.
     let frame = app.bridges[i]
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .capture_frame();
+        .capture_detect_frame();
     let Some((curr, width, height)) = frame else {
         return;
     };
+    // Same allocation as last time = the branch has not produced a new frame
+    // yet; diffing a frame with itself would read as "stillness".
+    if app.prev_motion_frames[i]
+        .as_ref()
+        .is_some_and(|prev| prev.as_ptr() == curr.as_ptr() && prev.len() == curr.len())
+    {
+        return;
+    }
     let zones = app.zones.get(i).filter(|z| z.has_active());
     let result = app.prev_motion_frames[i].as_ref().and_then(|prev| {
         crate::domain::motion::detect_motion(
@@ -649,6 +659,10 @@ fn detect_camera_motion(app: &mut App, i: usize) {
         return;
     };
     if result.motion_active && !app.motion_active[i] {
+        log::info!(
+            "Motion on camera {i}: {:.1}% of the frame",
+            result.motion_level * 100.0
+        );
         push_event(
             app,
             i,

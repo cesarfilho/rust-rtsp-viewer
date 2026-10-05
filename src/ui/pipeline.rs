@@ -31,6 +31,15 @@ const DECODER_NAME: &str = "video_decoder";
 /// latency`, `uridecodebin`/`queue2`), not a hand-tuned cache here.
 const POSTDEC_QUEUE: &str = "queue name=postdec_queue leaky=downstream";
 
+/// Size of the reduced detection frame. Fixed (not aspect-preserving): zones
+/// are normalised 0..1 and the detector only compares frames with each other,
+/// so stretching is harmless and the cost per camera is constant.
+const DETECT_WIDTH: i32 = 320;
+const DETECT_HEIGHT: i32 = 180;
+/// Detection frames per second. The detector samples at ~2 Hz (see
+/// `update::detect_camera_motion`), so more would be dropped unread.
+const DETECT_FPS: i32 = 2;
+
 /// Give the configured decoder element an explicit name so we can attach
 /// probes to it, unless the user already named it themselves.
 fn named_decoder(decoder: &str) -> String {
@@ -91,6 +100,77 @@ fn insert_tee(pipeline: &gst::Pipeline) -> Result<(), String> {
         .link(&appsink_elem)
         .map_err(|e| format!("display_queue → appsink link failed: {e}"))?;
 
+    Ok(())
+}
+
+/// Attach the reduced detection branch to the `tee`:
+///
+/// `tee → queue(leaky) → videorate(2 fps) → videoscale(320 px) → RGBA → appsink`
+///
+/// `videorate` comes *before* `videoscale` so only [`DETECT_FPS`] frames a
+/// second are resized, instead of every decoded frame. Motion detection reads
+/// this small frame instead of diffing full-resolution display frames. The
+/// branch lives for the whole pipeline (it is cheap); only the cameras that
+/// need it (`bridge.detect_enabled`) get it.
+fn insert_detect_branch(pipeline: &gst::Pipeline, bridge: &GStreamerBridge) -> Result<(), String> {
+    let tee = pipeline.by_name("tee").ok_or("tee not found")?;
+    let desc = format!(
+        "queue name=detect_queue leaky=downstream max-size-buffers=2 max-size-bytes=0 \
+         max-size-time=0 \
+         ! videorate name=detect_rate drop-only=true \
+         ! video/x-raw,framerate={DETECT_FPS}/1 \
+         ! videoscale \
+         ! video/x-raw,format=RGBA,width={DETECT_WIDTH},height={DETECT_HEIGHT} \
+         ! appsink name=detect_sink sync=false emit-signals=true max-buffers=1 drop=true"
+    );
+    let bin = gst::parse::bin_from_description(&desc, true)
+        .map_err(|e| format!("detect branch parse error: {e}"))?;
+    let appsink = bin
+        .by_name("detect_sink")
+        .ok_or("appsink 'detect_sink' not found")?
+        .dynamic_cast::<gst_app::AppSink>()
+        .map_err(|_| "detect_sink is not an appsink".to_string())?;
+
+    let slot = bridge.detect_frame.clone();
+    appsink.set_callbacks(
+        gst_app::AppSinkCallbacks::builder()
+            .new_sample(move |sink| {
+                let sample = sink.pull_sample().map_err(|_| gst::FlowError::Error)?;
+                let buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
+                let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
+                let caps = sample.caps().ok_or(gst::FlowError::Error)?;
+                let st = caps.structure(0).ok_or(gst::FlowError::Error)?;
+                let w = st.get::<i32>("width").unwrap_or(0) as u32;
+                let h = st.get::<i32>("height").unwrap_or(0) as u32;
+                // Same guard as the display sink: a frame that disagrees with
+                // its caps would make the detector index out of bounds.
+                if w == 0 || h == 0 || map.len() != w as usize * h as usize * 4 {
+                    return Ok(gst::FlowSuccess::Ok);
+                }
+                let rgba = Bytes::copy_from_slice(&map);
+                *slot.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(super::bridge::DetectFrame {
+                        rgba,
+                        width: w,
+                        height: h,
+                    });
+                Ok(gst::FlowSuccess::Ok)
+            })
+            .build(),
+    );
+
+    pipeline
+        .add(&bin)
+        .map_err(|e| format!("Failed to add detect branch: {e}"))?;
+    bin.sync_state_with_parent()
+        .map_err(|e| format!("Failed to sync detect branch: {e}"))?;
+    let tee_pad = tee
+        .request_pad_simple("src_%u")
+        .ok_or("tee refused a src pad for detection")?;
+    let sink_pad = bin.static_pad("sink").ok_or("detect branch has no sink")?;
+    tee_pad
+        .link(&sink_pad)
+        .map_err(|e| format!("tee → detect branch link failed: {e}"))?;
     Ok(())
 }
 
@@ -633,6 +713,9 @@ impl GStreamerBridge {
 
         setup_appsink(&pipeline, self)?;
         insert_tee(&pipeline)?;
+        if self.detect_enabled {
+            insert_detect_branch(&pipeline, self)?;
+        }
         install_decode_time_probes(&pipeline, &self.metrics);
 
         self.pipeline = Some(pipeline);
@@ -775,6 +858,9 @@ impl GStreamerBridge {
 
         setup_appsink(&pipeline, self)?;
         insert_tee(&pipeline)?;
+        if self.detect_enabled {
+            insert_detect_branch(&pipeline, self)?;
+        }
 
         self.pipeline = Some(pipeline);
         // Optimistically live: the reconnect watchdog's "not live" branch has a
@@ -814,6 +900,9 @@ impl GStreamerBridge {
 
         setup_appsink(&pipeline, self)?;
         insert_tee(&pipeline)?;
+        if self.detect_enabled {
+            insert_detect_branch(&pipeline, self)?;
+        }
         install_decode_time_probes(&pipeline, &self.metrics);
 
         self.pipeline = Some(pipeline);
@@ -899,6 +988,45 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(300));
         assert!(bridge.is_live(), "a flowing frame must reassert is_live");
         bridge.stop();
+    }
+
+    /// The detection branch delivers small RGBA frames, not full-resolution
+    /// ones, and stops delivering once the bridge is stopped.
+    #[test]
+    fn detect_branch_delivers_reduced_frames() {
+        let _ = gst::init();
+        let desc = "videotestsrc is-live=true \
+             ! video/x-raw,width=1280,height=720,framerate=30/1 \
+             ! videoconvert name=converter \
+             ! capsfilter name=filter caps=\"video/x-raw,format=RGBA\" \
+             ! appsink name=display_sink sync=false emit-signals=true max-buffers=2 drop=true";
+        let pipeline = gst::parse::launch(desc)
+            .unwrap()
+            .downcast::<gst::Pipeline>()
+            .unwrap();
+        let mut bridge = GStreamerBridge::new(1280, 720).unwrap();
+        setup_appsink(&pipeline, &mut bridge).unwrap();
+        insert_tee(&pipeline).unwrap();
+        insert_detect_branch(&pipeline, &bridge).unwrap();
+        bridge.pipeline = Some(pipeline);
+        bridge.start_playing().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+
+        let (rgba, w, h) = bridge
+            .capture_detect_frame()
+            .expect("the detection branch produced no frame");
+        assert_eq!(w, DETECT_WIDTH as u32);
+        assert_eq!(h, DETECT_HEIGHT as u32);
+        assert_eq!(rgba.len(), (w * h * 4) as usize);
+        // The display path keeps its full resolution.
+        let (_, dw, dh) = bridge.capture_frame().expect("no display frame");
+        assert_eq!((dw, dh), (1280, 720));
+
+        bridge.stop();
+        assert!(
+            bridge.capture_detect_frame().is_none(),
+            "stop() must drop the stale detection frame"
+        );
     }
 
     /// Play a file back through `decodebin` and report whether it reaches EOS

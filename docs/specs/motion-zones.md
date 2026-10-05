@@ -10,11 +10,14 @@ Detectar movimento por câmera, filtrar por zonas e emitir `EventType::Motion` n
 sem afetar o display nem a UI thread.
 
 ## Como está hoje
-- **Detecção**: `update::detect_camera_motion` amostra o último quadro **decodificado e em
-  resolução cheia** (`bridge.capture_frame()`) a ~2 Hz (a cada 5º tick de 100 ms) e compara com a
-  amostra anterior via `domain::motion::detect_motion` (RGBA, luma por diferença absoluta,
-  `sample_stride`). Registra `EventType::Motion` na **borda de subida**. Não há ramo de detecção
-  separado no pipeline (isso é a tarefa 1.2).
+- **Detecção**: `update::detect_camera_motion` amostra a ~2 Hz (a cada 5º tick de 100 ms) o quadro
+  do **ramo de detecção reduzido** (`pipeline::insert_detect_branch`:
+  `tee → queue leaky → videorate 2 fps → videoscale 320×180 → RGBA → detect_sink`, montado só
+  quando `[motion] enabled`) e compara com a amostra anterior via
+  `domain::motion::detect_motion` (RGBA, luma por diferença absoluta, `sample_stride`). Registra
+  `EventType::Motion` na **borda de subida**. O tamanho é fixo (esticado) de propósito: zonas são
+  normalizadas e os quadros só são comparados entre si. O `videorate` vem antes do `videoscale`
+  para só 2 quadros/s serem redimensionados.
 - **Config**: `[motion]` é **global** (`enabled`, `threshold`, `contour_area`, `sample_stride`),
   lido em `Config.motion` → `App.motion_config`. Não há sobrescrita por câmera.
 - **Zonas**: não ficam no `config.toml`. São desenhadas no editor (`ui::zone_editor`, aberto pelo
@@ -33,20 +36,20 @@ sem afetar o display nem a UI thread.
 | Rascunho | Realidade | Decisão |
 |---|---|---|
 | `[[cameras.zones]]` no TOML | `zones.toml` em `~/.local/state` por nome de câmera | **Manter** o arquivo de estado: zonas se desenham na UI, e misturar estado editado em runtime com o `config.toml` anotado à mão cria conflito. |
-| Ramo `detect_queue → videoscale → videorate → GRAY8` | Amostragem do quadro RGBA cheio | Pendente, tarefa **1.2**. |
+| Ramo `detect_queue → videoscale → videorate → GRAY8` | Ramo RGBA 320×180 a 2 fps (não GRAY8: `detect_motion` já recebe RGBA e 230 KB a 2 Hz é desprezível) | **Feito** (1.2). |
 | `detect_fps`, `detect_width`, `cooldown_secs`, `end_after_secs` | Não existem; cadência fixa de ~2 Hz, 1 evento por borda de subida | Só implementar se a medição (0.4) mostrar necessidade. |
 | `[motion]` por câmera | Só global | Aberto, sem demanda registrada. |
 
 ## Falta (M1)
-- **1.2** ramo de detecção reduzido (~320×180), para tirar o custo de comparar quadros cheios.
+- **1.2** ramo de detecção reduzido: **feito** (acima). Falta medir o custo de CPU com 16 câmeras (0.4).
 - **1.6** `lightning_threshold` (descartar mudança brusca do quadro inteiro: IR/cor, PTZ) e
   inércia/loitering. Não existem no código.
 - Validação de valores de `[motion]`: `into_config` faz `clamp` silencioso; `config_check` já
   avisa fora de faixa, então o clamp fica como rede de segurança.
 
 ## Regras
-- A comparação não pode rodar no callback do display; hoje roda na thread da UI a 2 Hz (barato o
-  bastante a 1 câmera, a medir com 16 — por isso 1.2).
+- A comparação não roda no callback do display; roda na thread da UI a 2 Hz sobre quadros de
+  320×180 (custo a medir com 16 câmeras em 0.4).
 - Frame anterior: só substituir depois de comparar (mesma lição do `sample_image_quality_rgba`).
 - **Nunca** segurar o guard do bridge durante reconexão (AGENTS.md).
 

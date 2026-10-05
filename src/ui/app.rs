@@ -239,6 +239,7 @@ pub fn new_app(
             }
         };
         bridge.recording_config = recording_config.clone();
+        bridge.detect_enabled = motion_config.enabled;
         let base_label = cam
             .label
             .clone()

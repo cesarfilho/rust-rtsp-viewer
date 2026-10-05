@@ -34,6 +34,16 @@ pub(crate) struct FrameState {
     pub raw_rgba: Bytes,
 }
 
+/// Latest frame of the reduced detection branch (see `pipeline::insert_detect_branch`).
+///
+/// A few hundred pixels wide, so comparing two of them costs a fraction of
+/// comparing full-resolution display frames.
+pub(crate) struct DetectFrame {
+    pub rgba: Bytes,
+    pub width: u32,
+    pub height: u32,
+}
+
 /// The live recording branch, present only while recording.
 ///
 /// Building the encoder chain on demand (rather than leaving it wired up
@@ -71,6 +81,11 @@ pub struct GStreamerBridge {
     pub(crate) decoder_scan_attempts: u32,
     pub(crate) start_time: Instant,
     pub recording_config: RecordingConfig,
+    /// Build the reduced detection branch when a pipeline starts. Off by
+    /// default: with motion detection disabled it would be wasted work.
+    pub detect_enabled: bool,
+    /// Most recent detection frame, `None` until the first one arrives.
+    pub(crate) detect_frame: Arc<Mutex<Option<DetectFrame>>>,
     pub(crate) recording: Option<RecordingBranch>,
     /// Bumped on every `start_recording` so each recording branch gets uniquely
     /// named elements. Without this, a reconnect that stops then immediately
@@ -136,6 +151,8 @@ impl GStreamerBridge {
             jb_scan_attempts: 0,
             start_time: now,
             recording_config: RecordingConfig::default(),
+            detect_enabled: false,
+            detect_frame: Arc::new(Mutex::new(None)),
             recording: None,
             recording_seq: 0,
             finalisers: Vec::new(),
@@ -539,6 +556,9 @@ impl GStreamerBridge {
         // A new attempt starts clean: a stale error would make the retry
         // logic treat a connecting pipeline as already failed.
         *self.error_message.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        // A detection frame from the old stream would be diffed against the
+        // new one (another size, another scene) and read as motion.
+        *self.detect_frame.lock().unwrap_or_else(|e| e.into_inner()) = None;
         // The next pipeline may be a different stream (sub ↔ main) with another
         // size / codec; the caps probe only fills fields that are still empty.
         if let Ok(mut si) = self.metrics.stream_info.lock() {
@@ -608,6 +628,13 @@ impl GStreamerBridge {
         } else {
             Some((state.raw_rgba.clone(), state.width, state.height))
         }
+    }
+
+    /// Most recent frame of the reduced detection branch (RGBA, ~320 px wide).
+    /// `None` when the branch is off or has not produced a frame yet.
+    pub fn capture_detect_frame(&self) -> Option<(Bytes, u32, u32)> {
+        let state = self.detect_frame.lock().unwrap_or_else(|e| e.into_inner());
+        state.as_ref().map(|f| (f.rgba.clone(), f.width, f.height))
     }
 
     pub fn update_fps(&self) -> f64 {
