@@ -278,12 +278,13 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    pub fn set_protected(&self, segment_id: i64, protected: bool) -> Result<(), StoreError> {
-        self.conn.execute(
+    /// `false` se o segmento não existe (já apagado pela retenção, por exemplo).
+    pub fn set_protected(&self, segment_id: i64, protected: bool) -> Result<bool, StoreError> {
+        let n = self.conn.execute(
             "UPDATE segments SET protected = ?2 WHERE id = ?1",
             params![segment_id, protected as i64],
         )?;
-        Ok(())
+        Ok(n > 0)
     }
 
     /// Soma dos tamanhos de todos os segmentos.

@@ -49,6 +49,8 @@ pub enum Request {
         from_ms: i64,
         to_ms: i64,
     },
+    /// Protege (ou solta) um segmento: a retenção nunca apaga um protegido.
+    SetProtected { segment_id: i64, protected: bool },
 }
 
 /// Resposta do daemon a um pedido.

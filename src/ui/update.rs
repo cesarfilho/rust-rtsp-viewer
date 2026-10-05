@@ -503,6 +503,7 @@ fn recordings_key(app: &mut App, key: iced::keyboard::Key<&str>) -> Task<Message
         Key::Character("i") => RecMsg::MarkIn,
         Key::Character("o") => RecMsg::MarkOut,
         Key::Character("e") => RecMsg::Export,
+        Key::Character("p") => RecMsg::ToggleProtect,
         Key::Character(",") => RecMsg::Rate(0.5),
         Key::Character(".") => RecMsg::Rate(2.0),
         Key::Character("-") => RecMsg::Zoom {
@@ -931,6 +932,13 @@ fn handle_reply(app: &mut App, token: u64, result: Result<crate::ipc::protocol::
     match (pending, failure) {
         (PendingRequest::History, _) => super::recordings::on_history(app, result),
         (PendingRequest::Export, _) => super::recordings::on_exported(app, result),
+        (
+            PendingRequest::Protect {
+                segment_id,
+                protected,
+            },
+            _,
+        ) => super::recordings::on_protected(app, segment_id, protected, result),
         (PendingRequest::ToggleRecording { .. }, None) => {
             if let Ok(Response::Recording { recording, .. }) = result {
                 toast(
@@ -2284,6 +2292,51 @@ mod tests {
             iced::keyboard::Modifiers::default(),
         );
         assert!(app.recordings.is_none());
+    }
+
+    #[test]
+    fn the_padlock_only_shows_after_the_daemon_confirms() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        let _ = update(&mut app, Message::Recordings(RecMsg::Open));
+        let token = *app.pending.keys().next().unwrap();
+        handle_reply(
+            &mut app,
+            token,
+            Ok(history_reply(vec![seg(7, 1_000, Some(2_000), "a.mkv")])),
+        );
+        // nada tocando: avisa e não pede nada
+        app.pending.clear();
+        let _ = update(&mut app, Message::Recordings(RecMsg::ToggleProtect));
+        assert!(app.pending.is_empty());
+        // a resposta de uma proteção pedida muda o segmento só se for Ok
+        handle_reply_for(
+            &mut app,
+            PendingRequest::Protect {
+                segment_id: 7,
+                protected: true,
+            },
+            Ok(Response::Error {
+                message: "no".into(),
+            }),
+        );
+        assert!(!app.recordings.as_ref().unwrap().segments[0].protected);
+        handle_reply_for(
+            &mut app,
+            PendingRequest::Protect {
+                segment_id: 7,
+                protected: true,
+            },
+            Ok(Response::Ok),
+        );
+        assert!(app.recordings.as_ref().unwrap().segments[0].protected);
+    }
+
+    fn handle_reply_for(app: &mut App, pending: PendingRequest, result: Result<Response, String>) {
+        let token = app.next_token;
+        app.next_token += 1;
+        app.pending.insert(token, pending);
+        handle_reply(app, token, result);
     }
 
     #[test]

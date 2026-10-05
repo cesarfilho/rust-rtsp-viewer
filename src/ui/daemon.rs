@@ -141,6 +141,8 @@ pub enum PendingRequest {
     History,
     /// Exportar um clipe.
     Export,
+    /// Proteger / soltar um segmento (a janela só aplica quando o daemon confirma).
+    Protect { segment_id: i64, protected: bool },
 }
 
 #[derive(Debug, Clone)]

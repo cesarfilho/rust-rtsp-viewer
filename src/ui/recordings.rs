@@ -48,6 +48,8 @@ pub enum RecMsg {
     MarkIn,
     MarkOut,
     Export,
+    /// Protege / solta o segmento que está tocando.
+    ToggleProtect,
     Live,
 }
 
@@ -183,6 +185,7 @@ pub fn update(app: &mut App, msg: RecMsg) -> Task<Message> {
         RecMsg::MarkIn => mark(app, true),
         RecMsg::MarkOut => mark(app, false),
         RecMsg::Export => export(app),
+        RecMsg::ToggleProtect => toggle_protect(app),
         RecMsg::Live => return update(app, RecMsg::Close),
     }
     Task::none()
@@ -261,6 +264,60 @@ pub fn on_history(app: &mut App, result: Result<Response, String>) {
         }
         Ok(Response::Error { message }) | Err(message) => v.error = Some(message),
         Ok(other) => v.error = Some(format!("resposta inesperada: {other:?}")),
+    }
+}
+
+fn toggle_protect(app: &mut App) {
+    let Some(p) = app.recordings.as_ref().and_then(|v| v.player.as_ref()) else {
+        super::update::toast(app, "Toque uma gravação para protegê-la");
+        return;
+    };
+    let (segment_id, protected) = (p.segment.id, !p.segment.protected);
+    super::update::send_to_daemon(
+        app,
+        Request::SetProtected {
+            segment_id,
+            protected,
+        },
+        PendingRequest::Protect {
+            segment_id,
+            protected,
+        },
+    );
+}
+
+/// A resposta de `SetProtected`: só agora a janela mostra o cadeado.
+pub fn on_protected(
+    app: &mut App,
+    segment_id: i64,
+    protected: bool,
+    result: Result<Response, String>,
+) {
+    match result {
+        Ok(Response::Ok) => {
+            if let Some(v) = app.recordings.as_mut() {
+                for s in v.segments.iter_mut().filter(|s| s.id == segment_id) {
+                    s.protected = protected;
+                }
+                if let Some(p) = v.player.as_mut()
+                    && p.segment.id == segment_id
+                {
+                    p.segment.protected = protected;
+                }
+            }
+            super::update::toast(
+                app,
+                if protected {
+                    "Trecho protegido: a retenção não o apaga"
+                } else {
+                    "Trecho solto: volta a valer a retenção"
+                },
+            );
+        }
+        Ok(Response::Error { message }) | Err(message) => {
+            super::update::toast(app, format!("Não consegui mudar a proteção: {message}"))
+        }
+        Ok(_) => {}
     }
 }
 
@@ -719,6 +776,12 @@ pub fn view(app: &App) -> Element<'_, Message> {
                 iced::widget::horizontal_space(),
                 pill_button(app, "Início  I", RecMsg::MarkIn, sel(v.mark_in.is_some())),
                 pill_button(app, "Fim  O", RecMsg::MarkOut, sel(v.mark_out.is_some())),
+                pill_button(
+                    app,
+                    if p.segment.protected { "Soltar  P" } else { "Proteger  P" },
+                    RecMsg::ToggleProtect,
+                    sel(p.segment.protected)
+                ),
                 pill_button(app, "Exportar  E", RecMsg::Export, Intent::Primary),
             ]
             .spacing(6)

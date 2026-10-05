@@ -243,6 +243,19 @@ pub fn apply(host: &mut Host<'_>, request: &Request) -> Response {
                 Err(e) => error(e),
             }
         }
+        Request::SetProtected {
+            segment_id,
+            protected,
+        } => {
+            let Some(store) = host.history else {
+                return error("o daemon está sem histórico (o banco não abriu)");
+            };
+            match store.set_protected(*segment_id, *protected) {
+                Ok(true) => Response::Ok,
+                Ok(false) => error(format!("o segmento {segment_id} não existe mais")),
+                Err(e) => error(format!("histórico: {e}")),
+            }
+        }
         Request::GetZones { camera } => {
             if let Err(e) = check(*camera) {
                 return e;
@@ -647,6 +660,44 @@ mod tests {
             assert!(message.contains(expect), "{message}");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn protecting_a_segment_goes_through_the_store_and_unknown_ids_are_an_error() {
+        let mut e = engine(1);
+        let mut z = ZonesFile::default();
+        let store = Store::open_in_memory().unwrap();
+        let id = store
+            .segment_opened("cam0", "/d/a.mkv", 1, "manual")
+            .unwrap();
+        store.segment_closed("/d/a.mkv", 2, 10).unwrap();
+        let mut host = Host {
+            engine: &mut e,
+            zones_file: &mut z,
+            persist: false,
+            history: Some(&store),
+            recordings: None,
+        };
+        let ask = |host: &mut Host<'_>, segment_id, protected| {
+            apply(
+                host,
+                &Request::SetProtected {
+                    segment_id,
+                    protected,
+                },
+            )
+        };
+        assert_eq!(ask(&mut host, id, true), Response::Ok);
+        assert!(
+            store.oldest_deletable(10, None).unwrap().is_empty(),
+            "protegido não é candidato"
+        );
+        assert_eq!(ask(&mut host, id, false), Response::Ok);
+        assert_eq!(store.oldest_deletable(10, None).unwrap().len(), 1);
+        let Response::Error { message } = ask(&mut host, 999, true) else {
+            panic!()
+        };
+        assert!(message.contains("não existe"), "{message}");
     }
 
     #[test]
