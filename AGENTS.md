@@ -73,7 +73,12 @@ Two crates (ADR 0010): **`crates/rrv-core`** is the video engine — `domain/`, 
 `crates/rrv-core/tests/no_ui_dependency.rs` stops anyone adding it to its `Cargo.toml`). The root
 crate `rust-rtsp-viewer` is the window (`src/ui/`, `src/bin/iced_viewer.rs`) and re-exports the
 core modules (`src/lib.rs`), so `crate::domain::…` and `rust_rtsp_viewer::config` still resolve.
-The headless `rrv-daemon` crate arrives with plan task 2.5.6. Paths below that start with
+**`crates/rrv-daemon`** is the headless executable (ADR 0010): it loads the same `config.toml`
+(`rrv_core::startup`), builds an `Engine` and calls `Engine::step` every `TICK_MS`; SIGTERM / SIGINT
+/ SIGHUP stop it through `Engine::shutdown`, which finalises recordings in progress (a process
+killed without that leaves an empty, unplayable file; `docker stop` sends SIGTERM). Events are
+logged for now; the outbound webhook (plan 2.5.11) plugs into `log_event`. `rrv-daemon --check`
+validates a config. Test cameras live in `rrv_core::testing` (feature `testing`). Paths below that start with
 `src/domain`, `src/infrastructure`, `src/engine` or `src/config*.rs` now live under
 `crates/rrv-core/src/`.
 

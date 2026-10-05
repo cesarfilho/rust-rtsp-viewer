@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/rrv-core"]
+members = [".", "crates/rrv-core", "crates/rrv-daemon"]
 
 [workspace.package]
 version = "0.8.0"

@@ -10,3 +10,7 @@ pub mod domain;
 pub mod engine;
 pub mod infrastructure;
 pub mod startup;
+
+/// Câmera simulada e utilitários dos testes (feature `testing`).
+#[cfg(feature = "testing")]
+pub mod testing;

@@ -8,6 +8,10 @@ repository.workspace = true
 publish = false # aplicativo, não vai para o crates.io
 description = "Motor de vídeo do rust-rtsp-viewer: captura, reconexão, gravação, movimento. Sem interface."
 
+[features]
+# Câmera HLS ao vivo simulada e utilitários dos testes (usada também pelo daemon).
+testing = []
+
 # Sem `iced` aqui, nunca: este crate é o que o daemon sem janela executa (ADR 0010).
 [dependencies]
 gstreamer = "0.25"
@@ -20,3 +24,8 @@ serde_ignored = "0.1.14"
 thiserror = "1"
 chrono = { version = "0.4", features = ["clock"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+toml = "0.8"
+# o crate se auto-referencia para ligar a feature `testing` nos próprios testes
+rrv-core = { path = ".", features = ["testing"] }
