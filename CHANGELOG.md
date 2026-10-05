@@ -6,6 +6,29 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 
 ## [Unreleased]
 
+## [0.7.2]
+
+### 🐛 Corrigido
+
+- **Câmera presa em "Reconectando" para sempre**: um stream que falhava logo depois
+  de iniciar (câmera offline no start, playlist HLS ainda não pronta) nunca era
+  retentado — o backoff só era armado dentro de `reconnect_camera`. Agora o retry é
+  agendado quando a câmera fica offline após o período de graça, e desarmado a cada
+  reconstrução (evita rebuild a cada tick).
+- **Credenciais vazavam no log** dos pipelines de áudio (`audio.rs`): a URL e o erro
+  do parser agora passam por `mask_credentials`.
+- **URLs sem escape nos pipelines de áudio**: `"`, `&`, `!` ou espaço quebravam o
+  `parse_launch`; agora usam `quote_launch_value` (movido para `infrastructure::launch`).
+- **Ajuda (`?`) com setas como quadrados vazios**: `←`/`→` usam a fonte embutida.
+- **Ajuda agora é modal para o teclado**: `Esc` a fecha e `f`/`s`/`r` não agem mais
+  por trás dela.
+
+### 🔧 Alterado
+
+- Planos de ferramentas locais (`.mimocode/`, `.opencode/`) saíram do versionamento.
+- `AGENTS.md`: removida a nota obsoleta sobre `cargo test --doc`; documentadas as
+  regras de retry, ajuda modal e `quote_launch_value`.
+
 ## [0.7.1]
 
 ### 🔧 Alterado
