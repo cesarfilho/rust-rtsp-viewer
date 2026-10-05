@@ -42,6 +42,13 @@ pub enum Request {
         from_ms: i64,
         to_ms: i64,
     },
+    /// Exporta um clipe (`.mp4`, sem reencode) de uma câmera e um intervalo (Unix ms) para
+    /// a pasta `exports/` das gravações.
+    ExportClip {
+        camera: String,
+        from_ms: i64,
+        to_ms: i64,
+    },
 }
 
 /// Resposta do daemon a um pedido.
@@ -68,6 +75,11 @@ pub enum Response {
         events: Vec<HistoryEvent>,
         /// `true` se o intervalo tinha mais que o limite por resposta.
         truncated: bool,
+    },
+    Exported {
+        /// Caminho do clipe relativo à pasta de gravações.
+        file: String,
+        bytes: u64,
     },
     Subscribed,
     Ok,
@@ -97,6 +109,10 @@ pub struct SegmentInfo {
     pub protected: bool,
     /// `motion` ou `manual`.
     pub mode: String,
+    /// Arquivo do segmento **relativo à pasta de gravações**: o cliente o junta à sua
+    /// própria pasta (a do host, quando o daemon roda em contêiner).
+    #[serde(default)]
+    pub file: String,
 }
 
 /// Um evento do histórico persistente.

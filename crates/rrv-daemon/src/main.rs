@@ -182,6 +182,7 @@ fn run(cli: &Cli) -> Result<(), String> {
             zones_file: &mut zones,
             persist: true,
             history: history.as_ref(),
+            recordings: Some(recording.dir.as_path()),
         });
         // A cada minuto (e na partida): apaga o que passou da idade ou do limite de disco.
         if tick.is_multiple_of(RETENTION_EVERY_TICKS)

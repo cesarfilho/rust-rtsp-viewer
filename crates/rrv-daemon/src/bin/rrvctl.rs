@@ -43,6 +43,17 @@ enum Command {
     Zones { camera: String },
     /// Acompanha os eventos (movimento, gravação, online/offline)
     Events,
+    /// Exporta um clipe (.mp4, sem reencode) para a pasta exports/ das gravações
+    Export {
+        /// Nome da câmera
+        camera: String,
+        /// Início, `AAAA-MM-DD HH:MM:SS` (hora local) ou `-30m` / `-2h` (atrás de agora)
+        #[arg(allow_hyphen_values = true)]
+        from: String,
+        /// Fim, no mesmo formato; padrão: agora
+        #[arg(allow_hyphen_values = true)]
+        to: Option<String>,
+    },
     /// Gravações e eventos das últimas horas (do histórico do daemon)
     History {
         /// Nome da câmera (padrão: todas)
@@ -62,6 +73,38 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
+}
+
+/// `-30m`, `-2h` (atrás de agora) ou `AAAA-MM-DD HH:MM:SS` (hora local) → Unix ms.
+fn parse_time(text: &str, now: i64) -> Result<i64, String> {
+    let t = text.trim();
+    if let Some(rest) = t.strip_prefix('-') {
+        let (num, unit) = rest.split_at(rest.len().saturating_sub(1));
+        let n: i64 = num
+            .parse()
+            .map_err(|_| format!("tempo inválido: {text:?}"))?;
+        let ms = match unit {
+            "s" => 1_000,
+            "m" => 60_000,
+            "h" => 3_600_000,
+            _ => return Err(format!("unidade inválida em {text:?} (use s, m ou h)")),
+        };
+        return Ok(now - n * ms);
+    }
+    use chrono::TimeZone;
+    let naive = chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S")
+        .map_err(|_| format!("tempo inválido: {text:?} (use AAAA-MM-DD HH:MM:SS ou -30m)"))?;
+    chrono::Local
+        .from_local_datetime(&naive)
+        .single()
+        .map(|d| d.timestamp_millis())
+        .ok_or_else(|| format!("horário ambíguo: {text:?}"))
 }
 
 /// `HH:MM:SS` local de um instante Unix em ms.
@@ -179,6 +222,26 @@ fn run(cli: &Cli) -> Result<(), String> {
             match c.request(&Request::GetZones { camera: i })? {
                 Response::Zones { zones, .. } => {
                     println!("{}", serde_json::to_string_pretty(&zones).unwrap());
+                    Ok(())
+                }
+                Response::Error { message } => Err(message),
+                other => Err(format!("resposta inesperada: {other:?}")),
+            }
+        }
+        Command::Export { camera, from, to } => {
+            let now = now_ms();
+            let from_ms = parse_time(from, now)?;
+            let to_ms = match to {
+                Some(t) => parse_time(t, now)?,
+                None => now,
+            };
+            match c.request(&Request::ExportClip {
+                camera: camera.clone(),
+                from_ms,
+                to_ms,
+            })? {
+                Response::Exported { file, bytes } => {
+                    println!("{file}  ({} KiB)", bytes / 1024);
                     Ok(())
                 }
                 Response::Error { message } => Err(message),

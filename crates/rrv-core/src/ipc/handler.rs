@@ -6,6 +6,7 @@ use crate::domain::camera_status::CameraStatus;
 use crate::domain::multi_stream::StreamQuality;
 use crate::domain::zones::{MotionZoneFile, ZoneConfig};
 use crate::engine::Engine;
+use crate::engine::clip::{ClipSource, export_clip};
 use crate::infrastructure::zone_state::{self, ZonesFile};
 
 use crate::infrastructure::store::Store;
@@ -20,7 +21,12 @@ pub struct Host<'a> {
     pub persist: bool,
     /// O histórico (`None`: o daemon está sem banco).
     pub history: Option<&'a Store>,
+    /// A pasta de gravações do daemon (para os nomes relativos e para `exports/`).
+    pub recordings: Option<&'a std::path::Path>,
 }
+
+/// Teto de um clipe exportado: o pedido roda no laço do daemon.
+const MAX_CLIP_MS: i64 = 30 * 60 * 1000;
 
 /// Teto de linhas por resposta de histórico (cada lista).
 const HISTORY_LIMIT: usize = 5000;
@@ -41,6 +47,15 @@ fn error(message: impl Into<String>) -> Response {
     Response::Error {
         message: message.into(),
     }
+}
+
+/// `path` relativo a `base` (ou só o nome do arquivo, se não estiver dentro dela).
+fn relative(base: Option<&std::path::Path>, path: &str) -> String {
+    let p = std::path::Path::new(path);
+    base.and_then(|b| p.strip_prefix(b).ok())
+        .or_else(|| p.file_name().map(std::path::Path::new))
+        .map(|r| r.to_string_lossy().to_string())
+        .unwrap_or_default()
 }
 
 /// Fotografia das câmeras.
@@ -149,6 +164,7 @@ pub fn apply(host: &mut Host<'_>, request: &Request) -> Response {
             for name in &names {
                 match store.segments_between(name, *from_ms, *to_ms) {
                     Ok(rows) => segments.extend(rows.into_iter().map(|s| SegmentInfo {
+                        file: relative(host.recordings, &s.path),
                         id: s.id,
                         camera: s.camera,
                         ts_start: s.ts_start,
@@ -184,6 +200,47 @@ pub fn apply(host: &mut Host<'_>, request: &Request) -> Response {
                 segments,
                 events,
                 truncated,
+            }
+        }
+        Request::ExportClip {
+            camera,
+            from_ms,
+            to_ms,
+        } => {
+            let (Some(store), Some(dir)) = (host.history, host.recordings) else {
+                return error("o daemon está sem histórico (o banco não abriu)");
+            };
+            if from_ms >= to_ms {
+                return error("intervalo vazio ou invertido");
+            }
+            if to_ms - from_ms > MAX_CLIP_MS {
+                return error("o clipe passa de 30 minutos; peça um intervalo menor");
+            }
+            let rows = match store.segments_between(camera, *from_ms, *to_ms) {
+                Ok(r) => r,
+                Err(e) => return error(format!("histórico: {e}")),
+            };
+            let sources: Vec<ClipSource> = rows
+                .iter()
+                .filter(|s| std::path::Path::new(&s.path).exists())
+                .map(|s| ClipSource {
+                    path: s.path.clone().into(),
+                    start_ms: s.ts_start,
+                })
+                .collect();
+            let stamp = chrono::DateTime::from_timestamp_millis(*from_ms)
+                .map(|t| t.format("%Y%m%d-%H%M%S").to_string())
+                .unwrap_or_else(|| from_ms.to_string());
+            let name = format!(
+                "exports/{}-{stamp}.mp4",
+                crate::infrastructure::recording_paths::safe_filename(camera)
+            );
+            match export_clip(&sources, *from_ms, *to_ms, &dir.join(&name)) {
+                Ok(info) => Response::Exported {
+                    file: name,
+                    bytes: info.bytes,
+                },
+                Err(e) => error(e),
             }
         }
         Request::GetZones { camera } => {
@@ -282,6 +339,7 @@ mod tests {
                 zones_file: zones,
                 persist: false,
                 history: None,
+                recordings: None,
             },
             r,
         )
@@ -440,6 +498,7 @@ mod tests {
                     zones_file: z,
                     persist: false,
                     history: Some(&store),
+                    recordings: None,
                 },
                 &Request::History {
                     camera: camera.map(String::from),
@@ -491,6 +550,7 @@ mod tests {
                 zones_file: &mut z,
                 persist: false,
                 history: Some(&store),
+                recordings: None,
             },
             &Request::History {
                 camera: None,
@@ -501,6 +561,92 @@ mod tests {
             panic!()
         };
         assert!(message.contains("invertido"), "{message}");
+    }
+
+    #[test]
+    fn export_writes_a_clip_and_history_names_files_relative_to_the_recordings_dir() {
+        use gstreamer as gst;
+        use gstreamer::prelude::*;
+        let _ = gst::init();
+        let dir = std::env::temp_dir().join(format!("rrv-ipc-export-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let seg = dir.join("cam1-000.mkv");
+        let p = gst::parse::launch(&format!(
+            "videotestsrc num-buffers=60 ! video/x-raw,format=I420,width=160,height=120,framerate=30/1 \
+             ! x264enc tune=zerolatency key-int-max=10 ! h264parse ! matroskamux ! filesink location={}",
+            seg.display()
+        ))
+        .unwrap();
+        p.set_state(gst::State::Playing).unwrap();
+        p.bus()
+            .unwrap()
+            .timed_pop_filtered(
+                gst::ClockTime::from_seconds(20),
+                &[gst::MessageType::Eos, gst::MessageType::Error],
+            )
+            .unwrap();
+        p.set_state(gst::State::Null).unwrap();
+
+        let mut e = engine(1);
+        let store = Store::open_in_memory().unwrap();
+        let path = seg.to_string_lossy().to_string();
+        store
+            .segment_opened("cam0", &path, 100_000, "manual")
+            .unwrap();
+        store.segment_closed(&path, 102_000, 1).unwrap();
+        let mut z = ZonesFile::default();
+        let mut host = Host {
+            engine: &mut e,
+            zones_file: &mut z,
+            persist: false,
+            history: Some(&store),
+            recordings: Some(&dir),
+        };
+
+        let Response::History { segments, .. } = apply(
+            &mut host,
+            &Request::History {
+                camera: Some("cam0".into()),
+                from_ms: 0,
+                to_ms: 200_000,
+            },
+        ) else {
+            panic!()
+        };
+        assert_eq!(segments[0].file, "cam1-000.mkv");
+
+        let Response::Exported { file, bytes } = apply(
+            &mut host,
+            &Request::ExportClip {
+                camera: "cam0".into(),
+                from_ms: 100_500,
+                to_ms: 101_500,
+            },
+        ) else {
+            panic!("esperava Exported")
+        };
+        assert!(
+            file.starts_with("exports/cam0-") && file.ends_with(".mp4"),
+            "{file}"
+        );
+        assert!(bytes > 0 && dir.join(&file).exists());
+
+        // pedidos ruins
+        for (from_ms, to_ms, expect) in [(5, 5, "vazio"), (0, 31 * 60 * 1000, "30 minutos")] {
+            let Response::Error { message } = apply(
+                &mut host,
+                &Request::ExportClip {
+                    camera: "cam0".into(),
+                    from_ms,
+                    to_ms,
+                },
+            ) else {
+                panic!()
+            };
+            assert!(message.contains(expect), "{message}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

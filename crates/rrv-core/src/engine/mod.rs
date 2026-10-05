@@ -6,6 +6,7 @@
 
 pub mod backoff;
 pub mod bridge;
+pub mod clip;
 pub mod pipeline;
 pub mod playback;
 

@@ -64,6 +64,7 @@ fn with_server<T: Send + 'static>(
             zones_file: &mut zones,
             persist: false,
             history: None,
+            recordings: None,
         });
         each_tick(&server);
         thread::sleep(Duration::from_millis(10));
