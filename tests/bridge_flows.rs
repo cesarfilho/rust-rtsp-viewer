@@ -13,6 +13,13 @@ use gstreamer::prelude::*;
 use rust_rtsp_viewer::config::CameraConfig;
 use rust_rtsp_viewer::ui::bridge::GStreamerBridge;
 
+/// Quanto gravar em cada segmento. Um arquivo é decodificado mais rápido que o
+/// tempo real e o `tee` entrega quadros em rajadas de ~1 s (limite da
+/// `display_queue`); uma gravação ligada no meio de uma pausa fica sem quadros
+/// até a rajada seguinte. Com fonte ao vivo isso não ocorre (os testes de
+/// `ui::pipeline` gravam 1,2 s sem falhar), então o app não é afetado.
+const RECORD_MS: u64 = 3000;
+
 /// Diretório temporário próprio do teste, removido ao sair do escopo.
 struct TempDir(PathBuf);
 
@@ -40,7 +47,7 @@ impl Drop for TempDir {
 fn make_clip(path: &Path, width: u32, height: u32) {
     gst::init().unwrap();
     let desc = format!(
-        "videotestsrc num-buffers=60 ! video/x-raw,width={width},height={height},framerate=30/1 \
+        "videotestsrc num-buffers=300 ! video/x-raw,width={width},height={height},framerate=30/1 \
          ! videoconvert ! x264enc tune=zerolatency key-int-max=15 ! h264parse \
          ! matroskamux ! filesink location=\"{}\"",
         path.display()
@@ -169,7 +176,7 @@ fn reconnecting_keeps_recording_into_a_fresh_segment() {
     assert!(wait_for(&bridge, 10, |b| frame_size(b).is_some()));
 
     bridge.start_recording().unwrap();
-    std::thread::sleep(Duration::from_millis(1500));
+    std::thread::sleep(Duration::from_millis(RECORD_MS));
 
     // O que `reconnect_camera` faz: lembrar, parar, refazer, retomar.
     let was_recording = bridge.is_recording();
@@ -179,7 +186,7 @@ fn reconnecting_keeps_recording_into_a_fresh_segment() {
     bridge.start_from_config(&camera(&clip)).unwrap();
     assert!(wait_for(&bridge, 10, |b| frame_size(b).is_some()));
     bridge.start_recording().unwrap();
-    std::thread::sleep(Duration::from_millis(1500));
+    std::thread::sleep(Duration::from_millis(RECORD_MS));
     bridge.stop();
 
     let mut segments: Vec<_> = std::fs::read_dir(&rec_dir)
