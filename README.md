@@ -398,7 +398,6 @@ src/
 ├── config.rs                   — Config + CameraConfig (deserialização TOML)
 ├── domain/                     — lógica pura, sem I/O
 │   ├── audio.rs                — AudioConfig, AudioState
-│   ├── bidirectional_audio.rs  — configuração de talk-back
 │   ├── codec.rs                — enum Codec (H264/H265/Mjpeg/…)
 │   ├── diagnostics.rs          — hints e severidade
 │   ├── groups.rs               — agrupamento de câmeras
@@ -410,8 +409,6 @@ src/
 │   ├── recording.rs            — RecordingConfig, RecordingState
 │   ├── redact.rs               — mascaramento de credenciais em logs
 │   ├── snapshot.rs             — SnapshotConfig, nomes de arquivo, burst
-│   ├── streaming.rs            — configuração de re-streaming
-│   ├── timelapse.rs            — configuração de timelapse
 │   ├── timeline.rs             — EventTimeline, TimelineEvent
 │   └── zones.rs                — zonas poligonais de detecção
 ├── infrastructure/             — GStreamer, I/O

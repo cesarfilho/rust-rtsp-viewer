@@ -137,7 +137,6 @@ keyring is plan 5.3.
 |------|-----------|
 | `audio.rs` | `AudioConfig`, `AudioState` |
 | `camera_status.rs` | `CameraStatus`, `StatusReading`, `BitrateReading` — what the engine reports per camera (re-exported by `ui::sidebar`) |
-| `bidirectional_audio.rs` | talk-back configuration |
 | `codec.rs` | `enum Codec` (H264/H265/Mjpeg/Vp8/…), `from_caps` |
 | `diagnostics.rs` | `Severity`, `Hint`, `diagnose`, `overall_severity` |
 | `groups.rs` | camera grouping — wired to `[[groups]]` + sidebar/grid filter |
@@ -149,8 +148,6 @@ keyring is plan 5.3.
 | `recording.rs` | `RecordingConfig`, `RecordingState`, `generate_filename` |
 | `redact.rs` | `mask_credentials` — strip passwords before logging |
 | `snapshot.rs` | `SnapshotConfig`, `generate_filename`, `BURST_INTERVAL_MS` |
-| `streaming.rs` | re-streaming configuration |
-| `timelapse.rs` | timelapse configuration |
 | `timeline.rs` | `EventTimeline`, `TimelineEvent`, `EventType` |
 | `view.rs` | `GridMode`, `ViewSettings`, pagination/carousel/order math |
 | `zones.rs` | `MotionZone`, `Point`, `ZoneConfig` |

@@ -30,11 +30,7 @@ contado nesta revisão (só os módulos que mudaram de situação foram contados
 
 | Módulo | Testes | O que existe | O que falta |
 |---|---|---|---|
-| `streaming.rs` | 7 | máquina de estados `evaluate_streaming` (pausa em cena estática, warmup, retomada por movimento) | `motion` já está ligado; falta chamar a avaliação no tick e ligar ao `bridge.stop()`/start, com snapshot estático enquanto pausado |
 | `ptz.rs` | 6 | `PtzCommand`, `PtzConfig`, presets | cliente ONVIF (não existe), UI de controle, atalhos |
-| `timelapse.rs` | 7 | velocidade, formato, nome de arquivo, estimativa | pipeline que gera o timelapse |
-| `hw_encoder.rs` | 9 | `HwEncoderBackend`, `detect_backend`, `build_encoder_string` | `start_recording` usa `x264enc` fixo; verificar se `detect_backend` sonda o GStreamer de fato |
-| `bidirectional_audio.rs` | 6 | config, `AudioEncoding`, `MicState` | captura do microfone e backchannel RTSP |
 
 Todos têm testes unitários, então o risco está na integração (threads, mutexes,
 pipeline), não no cálculo.
@@ -49,6 +45,5 @@ parte da API dentro deles também não é usada), mais `ui/bridge.rs` (2), `ui/p
 ## Observações
 - Fora de testes não há `unwrap()`/`expect()` nem `unsafe`; há 1 `TODO` no código.
 - `clap` continua sendo usado só para o caminho do config (argumento posicional).
-- Ordem de ligação sugerida para o que falta: `streaming` → `hw_encoder` (junto com a
-  decisão de GPU, ver `docs/roadmap.md`) → `ptz` (depende de ONVIF) → `timelapse` →
-  `bidirectional_audio`.
+- Dos módulos que não eram usados, sobrou `ptz` (a base do PTZ via ONVIF, plano 5.2). `streaming`, `timelapse`,
+  `bidirectional_audio` e `hw_encoder` foram removidos (voltam do histórico do git, se preciso).

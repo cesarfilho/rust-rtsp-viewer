@@ -60,7 +60,7 @@ A meta declarada é ML (ADR 0003), então M4 segue no plano, mas vale confirmar 
 - [ ] ONVIF: descoberta de câmeras e PTZ (`oxvif`); Profile T é a base de 2026.
 - [ ] Credenciais no keyring; validação de config com erro por campo e `--check`.
 - [ ] i18n, acessibilidade, empacotamento (Linux: Flatpak/AppImage; Windows/macOS: só zip/binário).
-- [ ] Áudio bidirecional, timelapse.
+- [x] ~~Áudio bidirecional, timelapse~~ — removidos (não eram usados).
 
 ## Dependências
 M0 → M1 → M2 → M3 → M4. M2 pode andar em paralelo a M3 no que não usa movimento. M5 é independente após M0.

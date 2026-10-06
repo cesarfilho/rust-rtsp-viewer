@@ -6,7 +6,6 @@
 //! GStreamer pipelines, file I/O) live in `crate::infrastructure`.
 
 pub mod audio;
-pub mod bidirectional_audio;
 pub mod camera_status;
 pub mod codec;
 pub mod diagnostics;
@@ -21,8 +20,6 @@ pub mod recording;
 pub mod redact;
 pub mod retention;
 pub mod snapshot;
-pub mod streaming;
-pub mod timelapse;
 pub mod timeline;
 pub mod timeline_view;
 pub mod view;
