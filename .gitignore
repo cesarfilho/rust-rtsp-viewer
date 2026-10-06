@@ -17,3 +17,6 @@ config.docker.toml
 recordings/
 state/
 secrets/
+
+# pesos de modelos (scripts/fetch-model.sh)
+/models/

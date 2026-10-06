@@ -1,4 +1,6 @@
 pub mod audio;
+#[cfg(feature = "detect")]
+pub mod detector;
 pub mod disk;
 pub mod launch;
 pub mod notify;

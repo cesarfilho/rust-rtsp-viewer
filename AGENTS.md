@@ -138,6 +138,7 @@ keyring is plan 5.3.
 | `audio.rs` | `AudioConfig`, `AudioState` |
 | `camera_status.rs` | `CameraStatus`, `StatusReading`, `BitrateReading` — what the engine reports per camera (re-exported by `ui::sidebar`) |
 | `codec.rs` | `enum Codec` (H264/H265/Mjpeg/Vp8/…), `from_caps` |
+| `detect.rs` | YOLO11 around the network, no runtime: `Letterbox`, `preprocess_rgba`, `decode`, `nms`, `postprocess`, `COCO_LABELS` |
 | `diagnostics.rs` | `Severity`, `Hint`, `diagnose`, `overall_severity` |
 | `groups.rs` | camera grouping — wired to `[[groups]]` + sidebar/grid filter |
 | `metrics.rs` | `Metrics` (atomic), `PacketStats`, `StreamInfo` |
@@ -156,6 +157,7 @@ keyring is plan 5.3.
 | File | Responsibility |
 |------|---------------|
 | `audio.rs` | `build_audio_pipeline_for_url`, `AudioLevelState` / `poll_level_bus` (VU meter) |
+| `detector.rs` | (feature `detect`) `Detector`: ONNX Runtime session for a YOLO11 `.onnx` (`Backend::Cpu`/`Cuda`). The runtime is loaded at run time from `ORT_DYLIB_PATH` (CPU or CUDA build of `libonnxruntime.so`); `scripts/fetch-model.sh` downloads the weight (SHA-256 pinned) and exports `models/yolo11n-{320,640}.onnx`. Tests skip without the model + `ORT_DYLIB_PATH`; `RRV_TEST_CUDA=1` runs them on CUDA (needs the cuDNN 9 / CUDA 13 libs on `LD_LIBRARY_PATH`) |
 | `notify.rs` | `notify-send` / `xdg-open` (best-effort, child reaped on a thread) |
 | `reconnect.rs` | `ReconnectState` (FPS watchdog + backoff decision) |
 | `recording_paths.rs` | directory creation helpers |
