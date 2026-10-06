@@ -1013,7 +1013,25 @@ impl GStreamerBridge {
             };
             watch_eos(&mux_pad);
             if let Some(a) = &audio_src {
+                // Ask the muxer first: linking a format it cannot take (G.711 in an mp4) fails
+                // later with a pipeline ERROR, and the engine would take the camera for dead
+                // and reconnect it every time a recording starts.
+                let audio_caps = a.property::<Option<gst::Caps>>("caps");
                 match (sink.request_pad_simple("audio_%u"), a.static_pad("src")) {
+                    (Some(apad), _)
+                        if audio_caps
+                            .as_ref()
+                            .is_some_and(|c| !apad.query_accept_caps(c)) =>
+                    {
+                        log::warn!(
+                            "recording without audio: the {} muxer does not take {}",
+                            container.extension(),
+                            audio_caps
+                                .as_ref()
+                                .map_or_else(String::new, |c| c.to_string())
+                        );
+                        sink.release_request_pad(&apad);
+                    }
                     (Some(apad), Some(asrc)) => match asrc.link(&apad) {
                         Ok(_) => {
                             watch_eos(&apad);
@@ -1857,8 +1875,13 @@ mod tests {
 
     /// The media kinds of a matroska file's tracks ("video/x-h264", "audio/mpeg", ...).
     fn file_track_kinds(path: &std::path::Path) -> Vec<String> {
+        let demux = if path.extension().is_some_and(|e| e == "mp4") {
+            "qtdemux"
+        } else {
+            "matroskademux"
+        };
         let desc = format!(
-            "filesrc location={} ! matroskademux name=d",
+            "filesrc location={} ! {demux} name=d",
             quote_launch_value(&path.to_string_lossy())
         );
         let p = gst::parse::launch(&desc)
@@ -1880,22 +1903,23 @@ mod tests {
         guard.clone()
     }
 
-    /// Plan 3.1: with `record_audio`, the camera's audio track goes in the same file as
-    /// the video, from the same instant (the pre-roll history covers both).
-    #[test]
-    fn a_recording_with_audio_has_both_tracks_and_the_pre_roll() {
+    /// Records ~1.5 s (plus a 2 s pre-roll) from a synthetic camera whose audio comes from
+    /// `audio_chain` (an encoder + parser ending in the caps the camera would send), into a
+    /// `container` file, and returns the file's track kinds and duration.
+    fn record_with_audio(
+        tag: &str,
+        audio_chain: &str,
+        container: Container,
+    ) -> (Vec<String>, u64, bool, Option<String>) {
         let _ = gst::init();
-        if gst::ElementFactory::find("avenc_aac").is_none() {
-            eprintln!("avenc_aac missing: skipping");
-            return;
-        }
-        let dir = std::env::temp_dir().join(format!("rrv-rec-audio-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("rrv-rec-audio-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
         // x264enc shifts its timestamps by 1000 hours (so DTS never goes negative); a real
         // camera gives audio and video one time base, so the synthetic audio is shifted
         // to match (a pad probe on the audio sink).
-        let desc = "videotestsrc is-live=true \
+        let desc = format!(
+            "videotestsrc is-live=true \
              ! video/x-raw,format=I420,width=320,height=240,framerate=30/1 \
              ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=30 \
              ! h264parse \
@@ -1906,14 +1930,16 @@ mod tests {
              ! capsfilter name=filter caps=\"video/x-raw,format=RGBA\" \
              ! appsink name=display_sink sync=false emit-signals=true max-buffers=2 drop=true \
              audiotestsrc is-live=true samplesperbuffer=1024 \
-             ! audio/x-raw,rate=16000,channels=1 ! avenc_aac ! aacparse \
-             ! appsink name=audio_ring_sink sync=false async=false emit-signals=true";
-        let pipeline = gst::parse::launch(desc)
+             ! {audio_chain} \
+             ! appsink name=audio_ring_sink sync=false async=false emit-signals=true"
+        );
+        let pipeline = gst::parse::launch(&desc)
             .unwrap()
             .downcast::<gst::Pipeline>()
             .unwrap();
         let mut bridge = GStreamerBridge::new(320, 240).unwrap();
         bridge.recording_config.dir = dir.clone();
+        bridge.recording_config.container = container;
         bridge.preroll_secs = 2;
         bridge.record_audio = true;
         setup_appsink(&pipeline, &mut bridge).unwrap();
@@ -1942,37 +1968,121 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(3500));
 
         bridge.start_recording().expect("recording should start");
-        assert!(
-            pipeline.by_name("recording_audio_src_1").is_some(),
-            "the audio branch exists"
-        );
         std::thread::sleep(std::time::Duration::from_millis(1500));
         bridge.stop_recording_blocking().unwrap();
 
+        let ext = container.extension();
         let segments: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .flatten()
             .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|x| x == "mkv"))
+            .filter(|p| p.extension().is_some_and(|x| x == ext))
             .collect();
-        assert_eq!(segments.len(), 1, "{segments:?}");
+        assert_eq!(segments.len(), 1, "{tag}: {segments:?}");
         let kinds = file_track_kinds(&segments[0]);
+        let dur = file_duration_ms(&segments[0]);
+        let playable = file_is_playable(&segments[0]);
+        // An error on the pipeline bus would make the engine treat the camera as dead and
+        // reconnect it: an audio format the muxer refuses must never do that.
+        let bus_error = pipeline.bus().and_then(|b| {
+            b.pop_filtered(&[gst::MessageType::Error])
+                .map(|m| match m.view() {
+                    gst::MessageView::Error(e) => format!("{} ({:?})", e.error(), e.debug()),
+                    _ => "error".into(),
+                })
+        });
+        if std::env::var_os("RRV_KEEP_TEST_FILES").is_some() {
+            let _ = std::fs::copy(
+                &segments[0],
+                std::env::temp_dir().join(format!("rrv-audio-keep-{tag}.{ext}")),
+            );
+        }
+        bridge.stop();
+        let _ = std::fs::remove_dir_all(&dir);
+        (kinds, dur, playable, bus_error)
+    }
+
+    /// Plan 3.1: with `record_audio`, the camera's audio track goes in the same file as
+    /// the video, from the same instant (the pre-roll history covers both).
+    #[test]
+    fn a_recording_with_audio_has_both_tracks_and_the_pre_roll() {
+        let _ = gst::init();
+        if gst::ElementFactory::find("avenc_aac").is_none() {
+            eprintln!("avenc_aac missing: skipping");
+            return;
+        }
+        let (kinds, dur, _, bus_error) = record_with_audio(
+            "aac-mkv",
+            "audio/x-raw,rate=16000,channels=1 ! avenc_aac ! aacparse",
+            Container::Mkv,
+        );
+        assert_eq!(bus_error, None);
         assert!(kinds.iter().any(|k| k == "video/x-h264"), "{kinds:?}");
         assert!(
             kinds.iter().any(|k| k == "audio/mpeg"),
             "no audio track: {kinds:?}"
         );
-        let dur = file_duration_ms(&segments[0]);
-        if std::env::var_os("RRV_KEEP_TEST_FILES").is_some() {
-            let keep = std::env::temp_dir().join("rrv-audio-keep.mkv");
-            let _ = std::fs::copy(&segments[0], &keep);
-        }
         assert!(
             (3_000..=6_000).contains(&dur),
             "1.5 s + pre-roll, got {dur} ms"
         );
-        bridge.stop();
-        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The same recording in an mp4 container: video and AAC audio, playable.
+    #[test]
+    fn aac_audio_also_records_into_mp4() {
+        let (kinds, dur, playable, bus_error) = record_with_audio(
+            "aac-mp4",
+            "audio/x-raw,rate=16000,channels=1 ! avenc_aac ! aacparse",
+            Container::Mp4,
+        );
+        assert!(kinds.iter().any(|k| k == "video/x-h264"), "{kinds:?}");
+        assert_eq!(bus_error, None);
+        assert!(kinds.iter().any(|k| k == "audio/mpeg"), "{kinds:?}");
+        assert!(playable, "the mp4 does not play to EOS");
+        assert!((3_000..=6_000).contains(&dur), "got {dur} ms");
+    }
+
+    /// IP cameras often send G.711 (A-law in Europe/Brazil, µ-law in the Americas). The mkv
+    /// keeps that audio as it is. The mp4 muxer does not take G.711: the recording then has
+    /// video only (and says so in the log) but must stay playable and raise no pipeline error.
+    #[test]
+    fn g711_audio_records_into_mkv_and_degrades_cleanly_in_mp4() {
+        for (tag, enc, caps, container, audio_expected) in [
+            ("alaw-mkv", "alawenc", "audio/x-alaw", Container::Mkv, true),
+            (
+                "mulaw-mkv",
+                "mulawenc",
+                "audio/x-mulaw",
+                Container::Mkv,
+                true,
+            ),
+            ("alaw-mp4", "alawenc", "audio/x-alaw", Container::Mp4, false),
+            (
+                "mulaw-mp4",
+                "mulawenc",
+                "audio/x-mulaw",
+                Container::Mp4,
+                false,
+            ),
+        ] {
+            let chain = format!("audio/x-raw,rate=8000,channels=1 ! {enc}");
+            let (kinds, _, playable, bus_error) = record_with_audio(tag, &chain, container);
+            assert_eq!(
+                bus_error, None,
+                "{tag}: an audio format the muxer refuses broke the pipeline"
+            );
+            assert!(
+                kinds.iter().any(|k| k == "video/x-h264"),
+                "{tag}: {kinds:?}"
+            );
+            assert_eq!(
+                kinds.iter().any(|k| k == caps),
+                audio_expected,
+                "{tag}: audio track presence: {kinds:?}"
+            );
+            assert!(playable, "{tag}: does not play to EOS");
+        }
     }
 
     /// Without `record_audio` nothing about the recording changes: video only.

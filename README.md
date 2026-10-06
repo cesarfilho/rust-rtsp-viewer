@@ -385,7 +385,8 @@ Pela linha de comando: `rrvctl history [câmera] --hours 24` e `rrvctl export "P
 (sem reencode, ≈ 1 MB por câmera) e a gravação começa no keyframe anterior. Câmeras com "Smart Codec"/H.264+ esticam o GOP
 em cena parada (a Intelbras de teste mandava um keyframe a cada ~20 s): nelas o pré-roll vira o GOP todo (até 30 s);
 para um pré-roll curto, reduza o intervalo de quadro-I da câmera. Com `record_audio = true` a faixa de áudio da câmera
-também entra no arquivo (**desligado por padrão**: gravar a voz das pessoas é uma decisão sua).
+também entra no arquivo (**desligado por padrão**: gravar a voz das pessoas é uma decisão sua). AAC funciona em mkv e mp4; **G.711
+(A-law/µ-law, comum em câmeras IP) só no mkv** (o padrão): no mp4 a gravação sai só com vídeo e o log avisa.
 
 **Retenção.** O daemon apaga as gravações antigas (arquivo primeiro, depois o registro; nunca um trecho protegido ou
 em gravação) e avisa quando o disco chega a menos de 10% livre (log, webhook e a janela):
