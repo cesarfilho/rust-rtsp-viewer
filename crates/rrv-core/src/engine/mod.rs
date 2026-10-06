@@ -219,6 +219,7 @@ impl Engine {
             ) {
                 bridge.set_logger(Arc::new(logger));
             }
+            bridge.camera_label = label.clone();
             bridges.push(Arc::new(Mutex::new(bridge)));
             kept.push(cam.clone());
             names.push(label);

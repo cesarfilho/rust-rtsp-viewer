@@ -722,15 +722,25 @@ fn limit_decoder_threads(pipeline: &gst::Pipeline) {
 }
 
 /// Turn `rust-rtsp-viewer-2026-08-10-143022-000.mkv` into
-/// `rust-rtsp-viewer-2026-08-10-143022-%03d.mkv`, the pattern `splitmuxsink`
+/// `rust-rtsp-viewer-<camera>-2026-08-10-143022-%03d.mkv`, the pattern `splitmuxsink`
 /// expands with the fragment index.
-fn segment_location_pattern(now_unix: u64, container: Container) -> String {
+///
+/// The camera is part of the name on purpose: two cameras that start recording in the
+/// same second (motion in a room with several of them) would otherwise get the *same*
+/// file name and one would overwrite the other.
+fn segment_location_pattern(now_unix: u64, container: Container, camera: &str) -> String {
     let name = generate_filename(now_unix, 0, container);
     let suffix = format!("-000.{}", container.extension());
-    match name.strip_suffix(&suffix) {
-        Some(stem) => format!("{stem}-%03d.{}", container.extension()),
-        None => name,
-    }
+    let stem = match name.strip_suffix(&suffix) {
+        Some(stem) => stem.to_string(),
+        None => return name,
+    };
+    let camera = crate::infrastructure::recording_paths::safe_filename(camera);
+    let stem = match (camera.is_empty(), stem.strip_prefix("rust-rtsp-viewer-")) {
+        (false, Some(rest)) => format!("rust-rtsp-viewer-{camera}-{rest}"),
+        _ => stem,
+    };
+    format!("{stem}-%03d.{}", container.extension())
 }
 
 impl GStreamerBridge {
@@ -795,7 +805,7 @@ impl GStreamerBridge {
             .map_err(|e| format!("Failed to create recording dir: {e}"))?;
 
         let container = self.recording_config.container;
-        let pattern = segment_location_pattern(now_unix_secs(), container);
+        let pattern = segment_location_pattern(now_unix_secs(), container, &self.camera_label);
         let location = self.recording_config.dir.join(&pattern);
 
         let queue: gst::Element = match &ring_state {
@@ -1514,14 +1524,29 @@ mod tests {
 
     #[test]
     fn segment_pattern_has_a_fragment_placeholder() {
-        let p = segment_location_pattern(1_755_000_000, Container::Mkv);
+        let p = segment_location_pattern(1_755_000_000, Container::Mkv, "");
         assert!(p.ends_with("-%03d.mkv"), "got {p}");
         assert!(p.starts_with("rust-rtsp-viewer-"), "got {p}");
     }
 
+    /// Two cameras starting in the same second must not share a file name.
+    #[test]
+    fn the_segment_name_carries_the_camera() {
+        let a = segment_location_pattern(1_755_000_000, Container::Mkv, "Garagem");
+        let b = segment_location_pattern(1_755_000_000, Container::Mkv, "Portão da frente");
+        assert_ne!(a, b);
+        assert!(a.starts_with("rust-rtsp-viewer-garagem-"), "got {a}");
+        assert!(b.starts_with("rust-rtsp-viewer-port"), "got {b}");
+        assert!(!b.contains(' ') && !b.contains('/'), "safe for a path: {b}");
+        // a hostile name cannot escape the recordings directory: no path separator survives
+        let evil = segment_location_pattern(1_755_000_000, Container::Mkv, "../../etc/x");
+        assert!(!evil.contains('/') && !evil.contains('\\'), "got {evil}");
+        assert!(evil.starts_with("rust-rtsp-viewer-"), "got {evil}");
+    }
+
     #[test]
     fn segment_pattern_follows_the_container_extension() {
-        let p = segment_location_pattern(1_755_000_000, Container::Mp4);
+        let p = segment_location_pattern(1_755_000_000, Container::Mp4, "");
         assert!(p.ends_with("-%03d.mp4"), "got {p}");
     }
 

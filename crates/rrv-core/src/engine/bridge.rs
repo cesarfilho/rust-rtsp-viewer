@@ -119,6 +119,8 @@ pub struct GStreamerBridge {
     pub preroll_secs: u32,
     /// Put the camera's audio in recordings (`[recording] record_audio`).
     pub record_audio: bool,
+    /// The camera's (unique) display name; recorded files carry it in their name.
+    pub camera_label: String,
     /// The pre-roll ring of the running pipeline (RTSP copy path only).
     pub(crate) ring: Option<Arc<Mutex<RingState>>>,
     /// How much video came from the ring when the last recording started (ms): the
@@ -196,6 +198,7 @@ impl GStreamerBridge {
             recording_mode: "manual",
             preroll_secs: 0,
             record_audio: false,
+            camera_label: String::new(),
             ring: None,
             preroll_ms: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             store: None,
