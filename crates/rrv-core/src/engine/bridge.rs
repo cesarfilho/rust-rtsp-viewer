@@ -43,20 +43,30 @@ pub(crate) struct DetectFrame {
     pub height: u32,
 }
 
-/// The live recording branch, present only while recording.
-///
-/// Building the encoder chain on demand (rather than leaving it wired up
-/// permanently with the sink pointed at `/dev/null`) is what keeps an idle
-/// camera from burning a core on H.264 encoding it will never use.
-/// The pre-roll ring and, while a recording is on, the `appsrc` that feeds it.
+/// The pre-roll ring and, while a recording is on, the `appsrc`s that feed it: one for
+/// the video (GOP ring) and, when the camera has audio and `record_audio` is on, one
+/// for the audio, aligned to start where the video history starts.
 pub(crate) struct RingState {
     pub(crate) ring: crate::domain::preroll::GopRing<gst::Sample>,
     /// Set while a recording is running: every sample is forwarded to it.
     pub(crate) sink: Option<gstreamer_app::AppSrc>,
     /// The recording just started: the ring's history has not been delivered yet.
     pub(crate) fresh: bool,
+    pub(crate) audio: crate::domain::preroll::AudioRing<gst::Sample>,
+    /// Caps of the audio the camera sends (set by the first audio sample).
+    pub(crate) audio_caps: Option<gst::Caps>,
+    pub(crate) audio_sink: Option<gstreamer_app::AppSrc>,
+    pub(crate) audio_fresh: bool,
+    /// Where the video history starts (ms): the audio history starts there too. Set by the
+    /// video side when it delivers the history; the audio waits for it.
+    pub(crate) history_from: Option<i64>,
 }
 
+/// The live recording branch, present only while recording.
+///
+/// Building the encoder chain on demand (rather than leaving it wired up
+/// permanently with the sink pointed at `/dev/null`) is what keeps an idle
+/// camera from burning a core on H.264 encoding it will never use.
 pub(crate) struct RecordingBranch {
     /// The pre-roll ring that feeds this branch (instead of a `tee` pad), if any.
     pub(crate) ring: Option<Arc<Mutex<RingState>>>,
@@ -107,6 +117,8 @@ pub struct GStreamerBridge {
     pub recording_mode: &'static str,
     /// Seconds of pre-roll to keep (0 = no ring). Set before the pipeline starts.
     pub preroll_secs: u32,
+    /// Put the camera's audio in recordings (`[recording] record_audio`).
+    pub record_audio: bool,
     /// The pre-roll ring of the running pipeline (RTSP copy path only).
     pub(crate) ring: Option<Arc<Mutex<RingState>>>,
     /// How much video came from the ring when the last recording started (ms): the
@@ -183,6 +195,7 @@ impl GStreamerBridge {
             headless: false,
             recording_mode: "manual",
             preroll_secs: 0,
+            record_audio: false,
             ring: None,
             preroll_ms: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             store: None,

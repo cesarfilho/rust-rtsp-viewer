@@ -126,6 +126,9 @@ pub struct RecordingConfig {
     /// from a ring of the camera's own encoded stream (RTSP H.264/H.265 only).
     /// 0 turns it off. Range: 0 ..= 30. Rounded up to whole GOPs.
     pub motion_pre_roll_secs: u32,
+    /// Put the camera's audio track in the recording (RTSP, AAC/G.711...). Off by
+    /// default: recording people's voices is a decision, not a side effect.
+    pub record_audio: bool,
 }
 
 impl Default for RecordingConfig {
@@ -138,6 +141,7 @@ impl Default for RecordingConfig {
             on_motion: false,
             motion_post_roll_secs: DEFAULT_MOTION_POST_ROLL_SECS,
             motion_pre_roll_secs: DEFAULT_MOTION_PRE_ROLL_SECS,
+            record_audio: false,
         }
     }
 }

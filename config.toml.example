@@ -52,9 +52,16 @@
 #                                       # mkv sobrevive a queda de energia; mp4 não
 # on_motion = false                     # grava sozinho enquanto há movimento
 # motion_post_roll_secs = 15            # segue gravando N s após o último movimento (3–3600)
+# record_audio = false                  # inclui o áudio da câmera na gravação (RTSP com faixa de áudio).
+#                                       # Desligado por padrão: gravar a voz das pessoas é uma decisão sua (e, em
+#                                       # alguns lugares, tem regras legais). Precisa do daemon/janela que grava.
 # motion_pre_roll_secs = 5              # inclui N s ANTES do movimento (0–30; 0 desliga). Só câmeras RTSP
 #                                       # H.264/H.265; guarda ~N s de vídeo codificado na memória por câmera
-#                                       # (≈ bitrate × N s) e começa no keyframe anterior, então pode ser um GOP a mais
+#                                       # (≈ bitrate × N s) e começa no keyframe anterior, então pode ser um GOP a mais.
+#                                       # Câmeras com "Smart Codec"/H.264+ esticam o GOP em cena parada (a Intelbras de
+#                                       # teste mandava 1 keyframe a cada ~20 s): o pré-roll vira o GOP todo, até 30 s;
+#                                       # passando disso o ring recomeça no próximo keyframe. Para um pré-roll curto,
+#                                       # reduza o intervalo de quadro-I da câmera.
 #                                       # as zonas de movimento se desenham pelo menu da câmera
 
 # ── Notificações de desktop (movimento e câmera offline) ─────────────────

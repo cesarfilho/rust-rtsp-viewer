@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -58,9 +58,13 @@ const ENCODED_TEE: &str = "enc_tee";
 /// recording can take the camera's own H.264/H.265 and write it without
 /// decoding and re-encoding it (plan 3.1). Only for the default `decodebin`: a
 /// custom `decoder` chain (e.g. one that starts with `rtph264depay`) expects RTP.
-fn encoded_tap(decoder: &str) -> String {
+fn encoded_tap(decoder: &str, explicit_pads: bool) -> String {
     if decoder.trim() == "decodebin" {
-        format!("! parsebin name=parser ! tee name={ENCODED_TEE} ! queue name=enc_dec_queue")
+        // With `explicit_pads` the `rtspsrc → parsebin` link is left out of the string:
+        // `connect_rtsp_pads` makes it, choosing the *video* pad and leaving the audio
+        // for its own branch (the launch syntax would link whichever pad came first).
+        let link = if explicit_pads { "" } else { "! " };
+        format!("{link}parsebin name=parser ! tee name={ENCODED_TEE} ! queue name=enc_dec_queue")
     } else {
         String::new()
     }
@@ -202,6 +206,147 @@ fn insert_detect_branch(pipeline: &gst::Pipeline, bridge: &GStreamerBridge) -> R
 /// [`GopRing`](crate::domain::preroll::GopRing); a recording that starts drains it first, so
 /// the file begins before the motion that triggered it (plan 3.6). The sink is
 /// `async=false` like every branch sink that is not the display.
+/// A fresh ring. The audio window is the pre-roll plus the longest GOP the video ring keeps,
+/// so the audio history always reaches back as far as the video's.
+fn new_ring_state(preroll_secs: u32) -> super::bridge::RingState {
+    super::bridge::RingState {
+        ring: crate::domain::preroll::GopRing::new(preroll_secs as i64 * 1000),
+        sink: None,
+        fresh: false,
+        audio: crate::domain::preroll::AudioRing::new(
+            preroll_secs as i64 * 1000 + crate::domain::preroll::MAX_GOP_SPAN_MS + 2_000,
+        ),
+        audio_caps: None,
+        audio_sink: None,
+        audio_fresh: false,
+        history_from: None,
+    }
+}
+
+/// Make `appsink` (the camera's parsed audio) feed the audio ring and, while a recording
+/// runs, its audio `appsrc`.
+fn attach_audio_sink(appsink: &gst_app::AppSink, state: Arc<Mutex<super::bridge::RingState>>) {
+    appsink.set_callbacks(
+        gst_app::AppSinkCallbacks::builder()
+            .new_sample(move |sink| {
+                let sample = sink.pull_sample().map_err(|_| gst::FlowError::Error)?;
+                let Some(buf) = sample.buffer() else {
+                    return Ok(gst::FlowSuccess::Ok);
+                };
+                let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
+                let pts = buf
+                    .pts()
+                    .or(buf.dts())
+                    .map(|t| t.mseconds() as i64)
+                    .or(st.audio.newest_pts_ms())
+                    .unwrap_or(0);
+                if st.audio_caps.is_none() {
+                    st.audio_caps = sample.caps().map(|c| c.to_owned());
+                }
+                st.audio.push(pts, sample.clone());
+                if let Some(src) = st.audio_sink.clone() {
+                    if st.audio_fresh {
+                        // Wait until the video side has said where its history starts,
+                        // so both tracks begin together.
+                        if let Some(from) = st.history_from {
+                            st.audio_fresh = false;
+                            for s in st.audio.since(from) {
+                                let _ = src.push_sample(&s);
+                            }
+                        }
+                    } else {
+                        let _ = src.push_sample(&sample);
+                    }
+                }
+                Ok(gst::FlowSuccess::Ok)
+            })
+            .build(),
+    );
+}
+
+/// Link the `rtspsrc` pads by hand: the video pad to the parser (the encoded tap) and the
+/// audio pad to its own `parsebin → appsink(audio_ring_sink)`, which feeds the audio ring.
+/// Call before the pipeline starts; pads appear while it connects.
+fn connect_rtsp_pads(
+    pipeline: &gst::Pipeline,
+    state: Arc<Mutex<super::bridge::RingState>>,
+) -> Result<(), String> {
+    let source = pipeline
+        .by_name("source")
+        .ok_or("rtspsrc 'source' not found")?;
+    let parser = pipeline
+        .by_name("parser")
+        .ok_or("parsebin 'parser' not found")?;
+    let weak = pipeline.downgrade();
+    let audio_done = Arc::new(AtomicBool::new(false));
+    source.connect_pad_added(move |_, pad| {
+        let Some(pipeline) = weak.upgrade() else {
+            return;
+        };
+        let caps = pad.current_caps().unwrap_or_else(|| pad.query_caps(None));
+        let media = caps
+            .structure(0)
+            .and_then(|s| s.get::<String>("media").ok())
+            .unwrap_or_default();
+        match media.as_str() {
+            "video" => {
+                if let Some(sink) = parser.static_pad("sink")
+                    && !sink.is_linked()
+                    && let Err(e) = pad.link(&sink)
+                {
+                    log::warn!("video pad → parser link failed: {e:?}");
+                }
+            }
+            "audio" if !audio_done.swap(true, Ordering::SeqCst) => {
+                if let Err(e) = build_audio_branch(&pipeline, pad, state.clone()) {
+                    log::warn!("audio branch not built (the recording will have no audio): {e}");
+                }
+            }
+            _ => {}
+        }
+    });
+    Ok(())
+}
+
+/// `audio pad → parsebin → appsink(audio_ring_sink)`.
+fn build_audio_branch(
+    pipeline: &gst::Pipeline,
+    pad: &gst::Pad,
+    state: Arc<Mutex<super::bridge::RingState>>,
+) -> Result<(), String> {
+    let parse = gst::ElementFactory::make("parsebin")
+        .name("audio_parser")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let sink = gst::ElementFactory::make("appsink")
+        .name("audio_ring_sink")
+        .property("sync", false)
+        .property("async", false)
+        .property("emit-signals", true)
+        .build()
+        .map_err(|e| e.to_string())?
+        .downcast::<gst_app::AppSink>()
+        .map_err(|_| "audio_ring_sink is not an appsink".to_string())?;
+    attach_audio_sink(&sink, state);
+    pipeline
+        .add_many([&parse, sink.upcast_ref()])
+        .map_err(|e| e.to_string())?;
+    let sink_el = sink.clone().upcast::<gst::Element>();
+    parse.connect_pad_added(move |_, p| {
+        if let Some(sp) = sink_el.static_pad("sink")
+            && !sp.is_linked()
+            && let Err(e) = p.link(&sp)
+        {
+            log::warn!("audio parser → sink link failed: {e:?}");
+        }
+    });
+    parse.sync_state_with_parent().map_err(|e| e.to_string())?;
+    sink.sync_state_with_parent().map_err(|e| e.to_string())?;
+    pad.link(&parse.static_pad("sink").ok_or("parsebin has no sink")?)
+        .map(|_| ())
+        .map_err(|e| format!("{e:?}"))
+}
+
 fn insert_ring_branch(
     pipeline: &gst::Pipeline,
     bridge: &mut GStreamerBridge,
@@ -220,11 +365,7 @@ fn insert_ring_branch(
         .dynamic_cast::<gst_app::AppSink>()
         .map_err(|_| "ring_sink is not an appsink".to_string())?;
 
-    let state = Arc::new(Mutex::new(super::bridge::RingState {
-        ring: crate::domain::preroll::GopRing::new(bridge.preroll_secs as i64 * 1000),
-        sink: None,
-        fresh: false,
-    }));
+    let state = Arc::new(Mutex::new(new_ring_state(bridge.preroll_secs)));
     let cb_state = state.clone();
     let preroll_ms = bridge.preroll_ms.clone();
     appsink.set_callbacks(
@@ -234,15 +375,24 @@ fn insert_ring_branch(
                 let Some(buf) = sample.buffer() else {
                     return Ok(gst::FlowSuccess::Ok);
                 };
-                let pts = buf.pts().map_or(0, |t| t.mseconds() as i64);
                 let key = !buf.flags().contains(gst::BufferFlags::DELTA_UNIT);
                 let mut st = cb_state.lock().unwrap_or_else(|e| e.into_inner());
+                // A buffer with no PTS (it happens at discontinuities) must not enter the
+                // ring as time 0: that would put it out of order and the ring would never
+                // trim. DTS, or else the previous instant, keeps the order.
+                let pts = buf
+                    .pts()
+                    .or(buf.dts())
+                    .map(|t| t.mseconds() as i64)
+                    .or(st.ring.newest_pts_ms())
+                    .unwrap_or(0);
                 st.ring.push(pts, key, sample.clone());
                 if let Some(src) = st.sink.clone() {
                     if st.fresh {
                         // The recording just started: the history (which ends with
                         // this very sample) goes in first, then live samples follow.
                         st.fresh = false;
+                        st.history_from = st.ring.oldest_pts_ms();
                         preroll_ms.store(st.ring.span_ms(), Ordering::Relaxed);
                         for s in st.ring.history() {
                             let _ = src.push_sample(&s);
@@ -622,6 +772,16 @@ impl GStreamerBridge {
             None
         };
         self.preroll_ms.store(0, Ordering::Relaxed);
+        if let Some(r) = &ring_state {
+            let st = r.lock().unwrap_or_else(|e| e.into_inner());
+            log::debug!(
+                "ring at start: video {:?}..{} ms, audio {:?} ({} samples)",
+                st.ring.oldest_pts_ms(),
+                st.ring.span_ms(),
+                st.audio.bounds(),
+                st.audio.len()
+            );
+        }
         let (tee_name, tee) = match parser_factory {
             Some(_) => (ENCODED_TEE, pipeline.by_name(ENCODED_TEE)),
             None => ("tee", pipeline.by_name("tee")),
@@ -752,8 +912,32 @@ impl GStreamerBridge {
             });
         }
 
+        // The audio track, when the camera has one and `record_audio` is on: an `appsrc`
+        // fed by the audio ring, in the same file as the video.
+        let audio_src: Option<gst::Element> = if self.record_audio {
+            ring_state.as_ref().and_then(|r| {
+                let caps = r
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .audio_caps
+                    .clone()?;
+                gst::ElementFactory::make("appsrc")
+                    .name(format!("recording_audio_src_{seq}"))
+                    .property("format", gst::Format::Time)
+                    .property("max-bytes", 0u64)
+                    .property("caps", caps)
+                    .build()
+                    .ok()
+            })
+        } else {
+            None
+        };
+
         let mut elements = vec![queue.clone()];
         elements.extend(chain.iter().cloned());
+        if let Some(a) = &audio_src {
+            elements.push(a.clone());
+        }
         elements.push(sink.clone());
         for el in &elements {
             pipeline
@@ -762,6 +946,7 @@ impl GStreamerBridge {
         }
 
         let tee_pad_slot = std::cell::RefCell::new(None::<gst::Pad>);
+        let audio_linked = std::cell::Cell::new(false);
         let attach = || -> Result<Arc<AtomicBool>, String> {
             let mut upstream = queue.clone();
             for el in &chain {
@@ -797,17 +982,42 @@ impl GStreamerBridge {
                 .link(&mux_pad)
                 .map_err(|e| format!("encoder → splitmuxsink link failed: {e}"))?;
 
-            // Watch for EOS so teardown knows when the file has been finalised.
+            // Watch for EOS so teardown knows when the file has been finalised: once on
+            // every track (video, and audio when there is one).
             let eos_seen = Arc::new(AtomicBool::new(false));
-            let flag = eos_seen.clone();
-            mux_pad.add_probe(gst::PadProbeType::EVENT_DOWNSTREAM, move |_pad, info| {
-                if let Some(gst::PadProbeData::Event(ref ev)) = info.data
-                    && ev.type_() == gst::EventType::Eos
-                {
-                    flag.store(true, Ordering::Relaxed);
+            let eos_count = Arc::new(AtomicUsize::new(0));
+            let eos_expected = Arc::new(AtomicUsize::new(1));
+            let watch_eos = |pad: &gst::Pad| {
+                let (flag, count, expected) =
+                    (eos_seen.clone(), eos_count.clone(), eos_expected.clone());
+                pad.add_probe(gst::PadProbeType::EVENT_DOWNSTREAM, move |_pad, info| {
+                    if let Some(gst::PadProbeData::Event(ref ev)) = info.data
+                        && ev.type_() == gst::EventType::Eos
+                        && count.fetch_add(1, Ordering::SeqCst) + 1
+                            >= expected.load(Ordering::SeqCst)
+                    {
+                        flag.store(true, Ordering::Relaxed);
+                    }
+                    gst::PadProbeReturn::Ok
+                });
+            };
+            watch_eos(&mux_pad);
+            if let Some(a) = &audio_src {
+                match (sink.request_pad_simple("audio_%u"), a.static_pad("src")) {
+                    (Some(apad), Some(asrc)) => match asrc.link(&apad) {
+                        Ok(_) => {
+                            watch_eos(&apad);
+                            eos_expected.store(2, Ordering::SeqCst);
+                            audio_linked.set(true);
+                        }
+                        Err(e) => {
+                            log::warn!("recording without audio (link failed: {e:?})");
+                            sink.release_request_pad(&apad);
+                        }
+                    },
+                    _ => log::warn!("recording without audio (the muxer has no audio pad)"),
                 }
-                gst::PadProbeReturn::Ok
-            });
+            }
 
             // Bring the branch up before data reaches it.
             for el in elements.iter().rev() {
@@ -825,6 +1035,14 @@ impl GStreamerBridge {
                 let mut st = r.lock().unwrap_or_else(|e| e.into_inner());
                 st.sink = Some(src);
                 st.fresh = true;
+                st.history_from = None;
+                if audio_linked.get()
+                    && let Some(a) = &audio_src
+                    && let Ok(asrc) = a.clone().downcast::<gst_app::AppSrc>()
+                {
+                    st.audio_sink = Some(asrc);
+                    st.audio_fresh = true;
+                }
             } else {
                 let tee_pad = tee
                     .request_pad_simple("src_%u")
@@ -902,9 +1120,15 @@ impl GStreamerBridge {
         // Fed by the pre-roll ring: take the appsrc out of the ring under its lock (no
         // sample is pushed after that) and end its stream.
         if let Some(ring) = &branch.ring {
-            let src = ring.lock().unwrap_or_else(|e| e.into_inner()).sink.take();
+            let (src, audio_src) = {
+                let mut st = ring.lock().unwrap_or_else(|e| e.into_inner());
+                (st.sink.take(), st.audio_sink.take())
+            };
             if let Some(src) = src {
                 let _ = src.end_of_stream();
+            }
+            if let Some(a) = audio_src {
+                let _ = a.end_of_stream();
             }
             return Ok(Some(branch));
         }
@@ -1001,6 +1225,8 @@ impl GStreamerBridge {
     ) -> Result<(), String> {
         self.stop();
 
+        // The audio recording needs the pads of the source handled one by one.
+        let explicit_pads = self.record_audio && decoder.trim() == "decodebin";
         let pipeline_str = format!(
             "rtspsrc name=source location={} latency={} protocols=tcp timeout=5000000000 udp-reconnect=true{} \
              {} \
@@ -1016,7 +1242,7 @@ impl GStreamerBridge {
             } else {
                 ""
             },
-            encoded_tap(decoder),
+            encoded_tap(decoder, explicit_pads),
             named_decoder(decoder),
             POSTDEC_QUEUE,
         );
@@ -1042,8 +1268,14 @@ impl GStreamerBridge {
             insert_detect_branch(&pipeline, self)?;
         }
         self.ring = None;
-        if self.preroll_secs > 0 {
+        if self.preroll_secs > 0 || explicit_pads {
             insert_ring_branch(&pipeline, self)?;
+        }
+        if explicit_pads {
+            match self.ring.clone() {
+                Some(state) => connect_rtsp_pads(&pipeline, state)?,
+                None => return Err("no encoded tap to record audio from".into()),
+            }
         }
         install_decode_time_probes(&pipeline, &self.metrics);
 
@@ -1594,6 +1826,168 @@ mod tests {
             bridge.preroll_ms.load(Ordering::Relaxed) >= 1_900,
             "the first segment's start must be moved back by the pre-roll"
         );
+        bridge.stop();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The media kinds of a matroska file's tracks ("video/x-h264", "audio/mpeg", ...).
+    fn file_track_kinds(path: &std::path::Path) -> Vec<String> {
+        let desc = format!(
+            "filesrc location={} ! matroskademux name=d",
+            quote_launch_value(&path.to_string_lossy())
+        );
+        let p = gst::parse::launch(&desc)
+            .unwrap()
+            .downcast::<gst::Pipeline>()
+            .unwrap();
+        let kinds = Arc::new(Mutex::new(Vec::<String>::new()));
+        let k = kinds.clone();
+        p.by_name("d").unwrap().connect_pad_added(move |_, pad| {
+            let caps = pad.current_caps().unwrap_or_else(|| pad.query_caps(None));
+            if let Some(s) = caps.structure(0) {
+                k.lock().unwrap().push(s.name().to_string());
+            }
+        });
+        p.set_state(gst::State::Paused).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        let _ = p.set_state(gst::State::Null);
+        let guard = kinds.lock().unwrap();
+        guard.clone()
+    }
+
+    /// Plan 3.1: with `record_audio`, the camera's audio track goes in the same file as
+    /// the video, from the same instant (the pre-roll history covers both).
+    #[test]
+    fn a_recording_with_audio_has_both_tracks_and_the_pre_roll() {
+        let _ = gst::init();
+        if gst::ElementFactory::find("avenc_aac").is_none() {
+            eprintln!("avenc_aac missing: skipping");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("rrv-rec-audio-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // x264enc shifts its timestamps by 1000 hours (so DTS never goes negative); a real
+        // camera gives audio and video one time base, so the synthetic audio is shifted
+        // to match (a pad probe on the audio sink).
+        let desc = "videotestsrc is-live=true \
+             ! video/x-raw,format=I420,width=320,height=240,framerate=30/1 \
+             ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=30 \
+             ! h264parse \
+             ! tee name=enc_tee \
+             ! queue \
+             ! avdec_h264 \
+             ! videoconvert name=converter \
+             ! capsfilter name=filter caps=\"video/x-raw,format=RGBA\" \
+             ! appsink name=display_sink sync=false emit-signals=true max-buffers=2 drop=true \
+             audiotestsrc is-live=true samplesperbuffer=1024 \
+             ! audio/x-raw,rate=16000,channels=1 ! avenc_aac ! aacparse \
+             ! appsink name=audio_ring_sink sync=false async=false emit-signals=true";
+        let pipeline = gst::parse::launch(desc)
+            .unwrap()
+            .downcast::<gst::Pipeline>()
+            .unwrap();
+        let mut bridge = GStreamerBridge::new(320, 240).unwrap();
+        bridge.recording_config.dir = dir.clone();
+        bridge.preroll_secs = 2;
+        bridge.record_audio = true;
+        setup_appsink(&pipeline, &mut bridge).unwrap();
+        insert_tee(&pipeline).unwrap();
+        insert_ring_branch(&pipeline, &mut bridge).unwrap();
+        let audio_sink = pipeline
+            .by_name("audio_ring_sink")
+            .unwrap()
+            .downcast::<gst_app::AppSink>()
+            .unwrap();
+        audio_sink.static_pad("sink").unwrap().add_probe(
+            gst::PadProbeType::BUFFER,
+            |_pad, info| {
+                if let Some(gst::PadProbeData::Buffer(ref mut b)) = info.data {
+                    let buf = b.make_mut();
+                    if let Some(pts) = buf.pts() {
+                        buf.set_pts(pts + gst::ClockTime::from_seconds(3_600_000));
+                    }
+                }
+                gst::PadProbeReturn::Ok
+            },
+        );
+        attach_audio_sink(&audio_sink, bridge.ring.clone().unwrap());
+        bridge.pipeline = Some(pipeline.clone());
+        bridge.start_playing().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(3500));
+
+        bridge.start_recording().expect("recording should start");
+        assert!(
+            pipeline.by_name("recording_audio_src_1").is_some(),
+            "the audio branch exists"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        bridge.stop_recording_blocking().unwrap();
+
+        let segments: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "mkv"))
+            .collect();
+        assert_eq!(segments.len(), 1, "{segments:?}");
+        let kinds = file_track_kinds(&segments[0]);
+        assert!(kinds.iter().any(|k| k == "video/x-h264"), "{kinds:?}");
+        assert!(
+            kinds.iter().any(|k| k == "audio/mpeg"),
+            "no audio track: {kinds:?}"
+        );
+        let dur = file_duration_ms(&segments[0]);
+        if std::env::var_os("RRV_KEEP_TEST_FILES").is_some() {
+            let keep = std::env::temp_dir().join("rrv-audio-keep.mkv");
+            let _ = std::fs::copy(&segments[0], &keep);
+        }
+        assert!(
+            (3_000..=6_000).contains(&dur),
+            "1.5 s + pre-roll, got {dur} ms"
+        );
+        bridge.stop();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Without `record_audio` nothing about the recording changes: video only.
+    #[test]
+    fn a_recording_without_the_audio_option_stays_video_only() {
+        let _ = gst::init();
+        let dir = std::env::temp_dir().join(format!("rrv-rec-noaudio-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let desc = "videotestsrc is-live=true \
+             ! video/x-raw,format=I420,width=320,height=240,framerate=30/1 \
+             ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=30 \
+             ! h264parse ! tee name=enc_tee ! queue ! avdec_h264 \
+             ! videoconvert name=converter \
+             ! capsfilter name=filter caps=\"video/x-raw,format=RGBA\" \
+             ! appsink name=display_sink sync=false emit-signals=true max-buffers=2 drop=true";
+        let pipeline = gst::parse::launch(desc)
+            .unwrap()
+            .downcast::<gst::Pipeline>()
+            .unwrap();
+        let mut bridge = GStreamerBridge::new(320, 240).unwrap();
+        bridge.recording_config.dir = dir.clone();
+        bridge.preroll_secs = 1;
+        setup_appsink(&pipeline, &mut bridge).unwrap();
+        insert_tee(&pipeline).unwrap();
+        insert_ring_branch(&pipeline, &mut bridge).unwrap();
+        bridge.pipeline = Some(pipeline.clone());
+        bridge.start_playing().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2500));
+        bridge.start_recording().unwrap();
+        assert!(pipeline.by_name("recording_audio_src_1").is_none());
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        bridge.stop_recording_blocking().unwrap();
+        let f = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .next()
+            .unwrap()
+            .path();
+        let kinds = file_track_kinds(&f);
+        assert!(!kinds.iter().any(|k| k.starts_with("audio")), "{kinds:?}");
         bridge.stop();
         let _ = std::fs::remove_dir_all(&dir);
     }

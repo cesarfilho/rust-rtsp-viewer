@@ -63,6 +63,7 @@ pub struct ConfiguredBehaviour {
     pub notify_enabled: bool,
     /// Pre-roll seconds the config asked for (kept so leaving display-only restores it).
     pub preroll_secs: u32,
+    pub record_audio: bool,
 }
 
 /// How long a freshly (re)started pipeline shows `Connecting` instead of
@@ -189,6 +190,7 @@ impl Engine {
             };
             bridge.recording_config = recording.clone();
             bridge.detect_enabled = motion.enabled;
+            bridge.record_audio = recording.record_audio;
             bridge.preroll_secs = if recording.on_motion {
                 recording.motion_pre_roll_secs
             } else {
@@ -260,6 +262,7 @@ impl Engine {
                 } else {
                     0
                 },
+                record_audio: recording.record_audio,
             },
             names,
             events: Vec::new(),
@@ -944,6 +947,7 @@ impl Engine {
             b.detect_enabled = self.motion_config.enabled;
             // A window that only shows has no use for a ring of encoded video.
             b.preroll_secs = if display_only { 0 } else { c.preroll_secs };
+            b.record_audio = c.record_audio && !display_only;
         }
         for i in 0..self.bridges.len() {
             self.prev_motion_frames[i] = None;
@@ -1020,6 +1024,7 @@ mod tests {
                 motion_recording: false,
                 notify_enabled: false,
                 preroll_secs: 0,
+                record_audio: false,
             },
             names: (0..n).map(|i| format!("cam{i}")).collect(),
             events: Vec::new(),

@@ -226,6 +226,8 @@ pub struct RecordingConfigFile {
     pub motion_post_roll_secs: Option<u32>,
     /// Seconds of video to keep before the motion (0..=30; 0 = off). Default: 5.
     pub motion_pre_roll_secs: Option<u32>,
+    /// Record the camera's audio too (RTSP cameras that have an audio track). Default: false.
+    pub record_audio: Option<bool>,
 }
 
 /// Flat mirror of `domain::audio::AudioConfig`
@@ -264,6 +266,9 @@ impl RecordingConfigFile {
         }
         if let Some(p) = self.motion_post_roll_secs {
             config.motion_post_roll_secs = p.clamp(3, 3600);
+        }
+        if let Some(a) = self.record_audio {
+            config.record_audio = a;
         }
         if let Some(p) = self.motion_pre_roll_secs {
             config.motion_pre_roll_secs = p.min(30);
