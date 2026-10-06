@@ -1,3 +1,4 @@
+pub mod add_camera;
 pub mod cell_overlay;
 pub mod daemon;
 pub mod flex_layout;
@@ -71,6 +72,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
     }
     if let Some(m) = app.modal {
         layers = layers.push(daemon::modal(app, m));
+    }
+    if let Some(w) = &app.add_camera {
+        layers = layers.push(add_camera::view(app, w));
     }
     if !app.toasts.is_empty() {
         layers = layers.push(pinned(

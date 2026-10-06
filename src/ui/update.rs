@@ -142,6 +142,18 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
             app.theme = t;
             Task::none()
         }
+        Message::OpenAddCamera => {
+            let (wizard, effect) = super::add_camera::AddCamera::open();
+            app.add_camera = Some(wizard);
+            add_camera_effect(app, effect)
+        }
+        Message::AddCamera(msg) => {
+            let Some(wizard) = app.add_camera.as_mut() else {
+                return Task::none();
+            };
+            let effect = wizard.apply(msg);
+            add_camera_effect(app, effect)
+        }
         Message::LanguageChanged(lang) => {
             crate::i18n::set(lang);
             persist_view(app);
@@ -538,6 +550,16 @@ fn handle_key(
     if modifiers.command() {
         return match key.as_ref() {
             Key::Character("q") => update(app, Message::QuitRequested),
+            _ => Task::none(),
+        };
+    }
+
+    // O assistente "Adicionar câmera" tem campos de texto: só o Esc age fora deles.
+    if app.add_camera.is_some() {
+        return match key.as_ref() {
+            Key::Named(Named::Escape) => {
+                update(app, Message::AddCamera(super::add_camera::AddMsg::Close))
+            }
             _ => Task::none(),
         };
     }
@@ -1244,6 +1266,54 @@ fn advance_carousel(app: &mut App) {
 }
 
 /// Snapshot the persisted view state and write it out (best-effort).
+/// Corre `f` numa thread própria e entrega o resultado (`None` se a thread morreu).
+fn on_thread<T: Send + 'static>(
+    f: impl FnOnce() -> T + Send + 'static,
+) -> impl std::future::Future<Output = Option<T>> {
+    let (tx, rx) = iced::futures::channel::oneshot::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    async move { rx.await.ok() }
+}
+
+/// O que o assistente "Adicionar câmera" pede à janela depois de uma transição.
+fn add_camera_effect(app: &mut App, effect: super::add_camera::Effect) -> Task<Message> {
+    use super::add_camera::{AddMsg, Effect, Inspected};
+    match effect {
+        Effect::None => Task::none(),
+        Effect::Close => {
+            app.add_camera = None;
+            Task::none()
+        }
+        Effect::Copy(snippet) => {
+            toast(app, t("Trecho copiado"));
+            iced::clipboard::write(snippet)
+        }
+        Effect::Scan => Task::perform(
+            on_thread(|| crate::onvif::discover(std::time::Duration::from_secs(4))),
+            |found| Message::AddCamera(AddMsg::Scanned(found.unwrap_or_default())),
+        ),
+        Effect::Inspect(found, user, password) => Task::perform(
+            on_thread(move || {
+                let ins = crate::onvif::inspect(&found, &user, &password)?;
+                let secret = crate::onvif::secret_name_for(&found, &ins);
+                let stored = crate::secrets::keyring::store(&secret, &password).is_ok();
+                Ok::<_, String>(Inspected {
+                    snippet: crate::onvif::config_snippet(&found, &user, &ins),
+                    secret,
+                    stored,
+                })
+            }),
+            |r| {
+                Message::AddCamera(AddMsg::Inspected(
+                    r.unwrap_or_else(|| Err(t("A leitura foi interrompida").to_string())),
+                ))
+            },
+        ),
+    }
+}
+
 fn persist_view(app: &App) {
     let state = ViewStateFile {
         mode: Some(app.view.mode.as_str()),
@@ -1940,6 +2010,7 @@ mod tests {
         let cam: crate::config::CameraConfig =
             toml::from_str("url = \"rtsp://127.0.0.1:9/x\"\nname = \"Portão\"").unwrap();
         let dir = std::env::temp_dir().join(format!("rrv-ui-test-{}", std::process::id()));
+        // O português é o idioma dos testes (`new_app` aplica o do `view.toml` da pessoa).
         let (app, _task) = crate::ui::app::new_app(
             vec![cam],
             Default::default(),
@@ -1959,6 +2030,7 @@ mod tests {
                 socket: Some("/nonexistent/rrv.sock".into()),
             },
         );
+        crate::i18n::set(crate::i18n::Lang::Pt);
         app
     }
 
@@ -2955,5 +3027,84 @@ mod tests {
         assert_eq!(daemon_index(&mut app, "Portão"), Some(7));
         assert_eq!(daemon_index(&mut app, "Quintal"), None);
         let _ = Request::Status;
+    }
+
+    #[test]
+    fn the_add_camera_wizard_opens_walks_through_its_stages_and_closes_with_esc() {
+        use crate::ui::add_camera::{AddMsg, Stage};
+        let mut app = test_app();
+        assert!(app.add_camera.is_none());
+        let _ = update(&mut app, Message::OpenAddCamera);
+        assert!(matches!(
+            app.add_camera.as_ref().map(|w| &w.stage),
+            Some(Stage::Scanning)
+        ));
+        // a varredura devolve uma câmera; escolher abre o formulário
+        let found = crate::onvif::Found {
+            xaddr: "http://10.0.0.5/onvif/device_service".into(),
+            ip: "10.0.0.5".into(),
+            name: Some("IntelBras".into()),
+            hardware: None,
+        };
+        let _ = update(&mut app, Message::AddCamera(AddMsg::Scanned(vec![found])));
+        let _ = update(&mut app, Message::AddCamera(AddMsg::Pick(0)));
+        assert!(matches!(
+            app.add_camera.as_ref().map(|w| &w.stage),
+            Some(Stage::Credentials { .. })
+        ));
+        // com o assistente aberto os atalhos não agem (digitar `f` na senha não abre o spotlight)
+        let _ = handle_key(
+            &mut app,
+            iced::keyboard::Key::Character("f".into()),
+            iced::keyboard::Modifiers::default(),
+        );
+        assert!(app.focus.is_normal());
+        assert!(app.add_camera.is_some());
+        // Esc fecha
+        let _ = handle_key(
+            &mut app,
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+            iced::keyboard::Modifiers::default(),
+        );
+        assert!(app.add_camera.is_none());
+    }
+
+    #[test]
+    fn every_stage_of_the_add_camera_wizard_builds_a_view() {
+        use crate::ui::add_camera::{AddCamera, Inspected, Stage};
+        let app = test_app();
+        let found = crate::onvif::Found {
+            xaddr: "http://10.0.0.5/onvif/device_service".into(),
+            ip: "10.0.0.5".into(),
+            name: Some("IntelBras".into()),
+            hardware: Some("iMX-C-309V".into()),
+        };
+        let stages = [
+            Stage::Scanning,
+            Stage::Pick { found: Vec::new() },
+            Stage::Pick {
+                found: vec![found.clone()],
+            },
+            Stage::Credentials {
+                list: vec![found.clone()],
+                found: found.clone(),
+                user: "admin".into(),
+                password: "x".into(),
+                error: Some("erro".into()),
+            },
+            Stage::Inspecting {
+                found: found.clone(),
+                user: "admin".into(),
+            },
+            Stage::Done(Inspected {
+                snippet: "[[cameras]]\nname = \"x\"\n".into(),
+                secret: "cam_x_password".into(),
+                stored: false,
+            }),
+        ];
+        for stage in stages {
+            let w = AddCamera { stage };
+            let _ = crate::ui::view::add_camera::view(&app, &w);
+        }
     }
 }

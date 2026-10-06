@@ -325,6 +325,14 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
         ))
         .push(menu_row(
             theme,
+            "+",
+            t("Adicionar câmera…"),
+            None,
+            Message::OpenAddCamera,
+            false,
+        ))
+        .push(menu_row(
+            theme,
             "?",
             t("Ajuda"),
             Some("?"),

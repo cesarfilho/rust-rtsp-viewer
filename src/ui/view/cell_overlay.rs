@@ -403,6 +403,7 @@ mod tests {
 
     #[test]
     fn the_toggles_say_what_pressing_them_does_now() {
+        crate::i18n::set(crate::i18n::Lang::Pt);
         assert_eq!(CellAction::Record.tooltip(false), "Gravar  (r)");
         assert_eq!(CellAction::Record.tooltip(true), "Parar gravação  (r)");
         assert_eq!(CellAction::Audio.tooltip(false), "Ouvir áudio  (m)");

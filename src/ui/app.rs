@@ -51,6 +51,8 @@ pub struct App {
     pub next_token: u64,
     /// A confirmation waiting for the user (modal for the keyboard).
     pub modal: Option<super::daemon::Modal>,
+    /// O assistente "Adicionar câmera", quando aberto.
+    pub add_camera: Option<super::add_camera::AddCamera>,
     /// The video engine: cameras, pipelines, reconnect, motion, notification state.
     pub engine: crate::engine::Engine,
     pub videos: Vec<VideoWidget>,
@@ -322,6 +324,7 @@ pub fn new_app(
             pending: std::collections::HashMap::new(),
             next_token: 1,
             modal: None,
+            add_camera: None,
             engine,
             videos,
             theme,

@@ -118,6 +118,9 @@
 # ── Câmeras ───────────────────────────────────────────────────────────────
 # Pelo menos uma [[cameras]] é obrigatória. Todas são abertas em grade.
 
+# Idioma da interface: "pt-BR" (padrão) ou "en". Também se troca no menu ⋯ → Aparência (a escolha fica no view.toml).
+# language = "pt-BR"
+
 [[cameras]]
 url = "rtsp://admin:senha@192.168.1.100:554/cam/realmonitor?channel=1&subtype=0"
 name = "frente"           # alias curto (opcional)

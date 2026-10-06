@@ -1,6 +1,7 @@
 // The engine moved to `crate::engine`; these keep the old `ui::` paths working.
 pub use crate::engine::{bridge, pipeline};
 
+pub mod add_camera;
 pub(crate) mod app;
 pub mod daemon;
 pub mod detections_overlay;

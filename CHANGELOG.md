@@ -17,6 +17,7 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 - **Caixas dos objetos** no spotlight e no player de gravações, botão "Objeto:" na lista de eventos da vista Gravações.
 - **ONVIF** (só descoberta e cadastro): `rrvctl discover [--user U]` acha as câmeras (multicast + varredura unicast da sub-rede) e
   imprime o trecho do `config.toml` com o stream principal e o sub-stream; a senha vai como `${SEGREDO}`.
+- **Assistente "Adicionar câmera…"** no menu `⋯`: procura as câmeras ONVIF, pede usuário e senha, lê os streams, guarda a senha no chaveiro e dá o trecho do `config.toml` para copiar.
 - **Chaveiro do sistema** (Secret Service) como terceira origem de `${NOME}`: `rrvctl secret set|check|delete`,
   `rrvctl discover --store-secret`. A janela lê a senha da câmera do chaveiro, sem ela no `config.toml`.
 - **Idiomas**: pt-BR e inglês, trocados no menu `⋯` → Aparência (ou `language = "en"`); `tests/i18n_scan.rs` impede texto fixo.

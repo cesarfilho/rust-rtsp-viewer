@@ -509,4 +509,45 @@ pub const EN: &[(&str, &str)] = &[
     ),
     ("tentativa {} · próxima em {}s", "attempt {} · next in {}s"),
     ("tentativa {}", "attempt {}"),
+    // assistente "Adicionar câmera" (add_camera.rs, view/add_camera.rs)
+    (
+        "Informe o usuário e a senha",
+        "Enter the user and the password",
+    ),
+    (
+        "Senha guardada no chaveiro como `{}`.",
+        "Password stored in the keyring as `{}`.",
+    ),
+    (
+        "Não consegui guardar a senha no chaveiro. Guarde com: rrvctl secret set {}",
+        "Could not store the password in the keyring. Store it with: rrvctl secret set {}",
+    ),
+    ("Trecho copiado", "Snippet copied"),
+    ("A leitura foi interrompida", "The reading was interrupted"),
+    ("Adicionar câmera", "Add camera"),
+    ("Adicionar câmera…", "Add camera…"),
+    (
+        "Procurando câmeras ONVIF na rede…",
+        "Looking for ONVIF cameras on the network…",
+    ),
+    ("Fechar", "Close"),
+    (
+        "Nenhuma câmera ONVIF respondeu. O ONVIF está ligado na câmera? Ela está na mesma rede?",
+        "No ONVIF camera answered. Is ONVIF turned on in the camera? Is it on the same network?",
+    ),
+    ("Escolha uma câmera", "Choose a camera"),
+    ("Procurar de novo", "Search again"),
+    ("Usuário", "User"),
+    ("Senha", "Password"),
+    ("Voltar", "Back"),
+    ("Entrar e ler os streams", "Sign in and read the streams"),
+    (
+        "Lendo os streams da câmera…",
+        "Reading the camera's streams…",
+    ),
+    (
+        "Cole este trecho no seu config.toml e reinicie a janela:",
+        "Paste this snippet into your config.toml and restart the window:",
+    ),
+    ("Copiar trecho", "Copy snippet"),
 ];

@@ -20,6 +20,8 @@ const SKIP_LINE: &[&str] = &[
     "panic!",
     ".expect(",
     "i18n-ok",
+    "write!(f",
+    "f.write_str(",
 ];
 
 /// Palavras de interface em português, para pegar texto sem acento ("Gravar", "Selecione uma câmera").

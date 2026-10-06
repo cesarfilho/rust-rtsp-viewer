@@ -72,17 +72,6 @@ pub fn get() -> Lang {
     }
 }
 
-/// O idioma do ambiente (`LC_ALL`, `LC_MESSAGES`, `LANG`) quando nada foi escolhido: inglês se for
-/// `en*`, senão português (o idioma do projeto).
-pub fn from_environment() -> Lang {
-    ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .iter()
-        .filter_map(|k| std::env::var(k).ok())
-        .find(|v| !v.is_empty() && v != "C" && v != "POSIX")
-        .and_then(|v| Lang::parse(&v))
-        .unwrap_or_default()
-}
-
 fn catalog() -> &'static HashMap<&'static str, &'static str> {
     static MAP: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     MAP.get_or_init(|| EN.iter().copied().collect())

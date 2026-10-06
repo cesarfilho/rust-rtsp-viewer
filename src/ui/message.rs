@@ -23,6 +23,9 @@ pub enum Message {
     FrameUpdate,
     ThemeChanged(Theme),
     LanguageChanged(crate::i18n::Lang),
+    /// Abre o assistente "Adicionar câmera".
+    OpenAddCamera,
+    AddCamera(super::add_camera::AddMsg),
     Sidebar(sidebar::Message),
     LayoutModeChanged(LayoutMode),
     FlexMainSelected(usize),

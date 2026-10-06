@@ -23,7 +23,7 @@ pub struct Config {
     pub cameras: Option<Vec<CameraConfig>>,
     /// UI theme: "cosmic" (default), "dark", "light", "amoled" or "opencode".
     pub theme: Option<String>,
-    /// Interface language: `"pt-BR"` or `"en"`. Default: the system's (`LANG`), else Portuguese.
+    /// Interface language: `"pt-BR"` or `"en"`. Default: Portuguese (the system `LANG` is ignored).
     /// The choice made in the window's menu is saved in `view.toml` and wins.
     pub language: Option<String>,
     /// Per-camera log file directory. Default: `~/logs/rust-rtsp-viewer`.
