@@ -174,7 +174,7 @@ keyring is plan 5.3.
 | `bridge.rs` | (now `engine/bridge.rs`, re-exported as `ui::bridge`) `GStreamerBridge` — bus, metrics, frame state, recording lifecycle |
 | `pipeline.rs` | (now `engine/pipeline.rs`, re-exported as `ui::pipeline`) `start_rtsp`/`start_hls`/`start_file`, recording branch, probes |
 | `video_widget.rs` | `VideoWidget`: shows a bridge's video through `video_shader` (never `iced::widget::image`: a `Handle` per frame flickers on iced 0.14) |
-| `video_shader.rs` | wgpu `shader` widget: one RGBA texture per video, updated in place with `write_texture`, letterboxed, freed when the widget dies (`Weak` token). Tested off-screen on a real wgpu device (`WGPU_POWER_PREF=high` for the NVIDIA) |
+| `video_shader.rs` | wgpu `shader` widget: one texture set per video (RGBA, or NV12 as Y `R8` + UV `Rg8` converted to RGB in the fragment shader), updated in place with `write_texture`, letterboxed, freed when the widget dies (`Weak` token). Tested off-screen on a real wgpu device (`WGPU_POWER_PREF=high` for the NVIDIA) |
 | `zone_editor.rs` | zone editor canvas, drawn over the spotlight (`flex_layout::spotlight_view`) while `App.zone_edit` is `Some`; opened from the camera menu (`Message::EditZones`). Coordinates map onto the letterboxed video rect |
 | `icons.rs` | embedded DejaVu Sans (`icons::FONT`) for icon glyphs |
 | `theme.rs` | themes + `contrast_ratio` / `readable_on`; a test enforces WCAG targets per theme |
@@ -348,8 +348,7 @@ audio, snapshots/bursts, zone persistence, previews.
 The video engine — `domain/`, `infrastructure/`, `ui/bridge.rs`, `ui/pipeline.rs` — must not
 depend on `iced` or import UI modules, so it can move to a headless daemon. `tests/engine_isolation.rs`
 enforces it. Consequences to keep in mind:
-- `GStreamerBridge::read_frame()` returns shared RGBA `bytes::Bytes`, never an image handle;
-  `VideoWidget` builds the `Handle` only when the frame generation changes.
+- `GStreamerBridge::read_frame()` returns a `VideoFrame` (shared `bytes::Bytes` + `PixelFormat`: `Rgba`, or tightly packed `Nv12` — the window default; `RRV_DISPLAY_FORMAT=rgba` restores RGBA), never an image handle. `capture_frame()` (snapshots) converts NV12→RGBA on demand (`domain::yuv`); use `has_frame()` to only ask whether a frame exists.
 - The bridge reports health as a pure `StatusReading` (`sample_status`); the UI folds it into its
   row with `CameraInfo::apply` and formats the text.
 - Orchestration lives in `engine::Engine` (task 2.5.2); `ui/update.rs` keeps only view math, audio

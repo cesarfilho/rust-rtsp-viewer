@@ -6,18 +6,21 @@ use crate::domain::codec;
 use crate::domain::metrics::{MAX_PENDING_DECODES, Metrics};
 use crate::domain::recording::{Container, generate_filename};
 use crate::domain::redact::mask_credentials;
+use crate::domain::yuv::{YuvFormat, YuvMatrix};
 use crate::infrastructure::launch::quote_launch_value;
 use crate::infrastructure::recording_paths::ensure_recording_dir;
 use crate::infrastructure::store::StoreCmd;
 
 use super::bridge::{
-    EMA_ALPHA_X1000, GStreamerBridge, RecordingBranch, SAMPLE_EVERY_N, ema_update, now_unix_secs,
-    sample_image_quality_rgba,
+    EMA_ALPHA_X1000, GStreamerBridge, PixelFormat, RecordingBranch, SAMPLE_EVERY_N, ema_update,
+    now_unix_secs, sample_image_quality_nv12, sample_image_quality_rgba,
 };
 
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
+use gstreamer_video as gst_video;
+use gstreamer_video::prelude::*;
 
 use bytes::Bytes;
 
@@ -476,6 +479,80 @@ fn install_decode_time_probes(pipeline: &gst::Pipeline, metrics: &Arc<Metrics>) 
     }
 }
 
+/// `RRV_DISPLAY_FORMAT=rgba` keeps the old CPU-converted RGBA path (escape hatch for
+/// a driver or decoder that misbehaves with NV12); anything else shows NV12.
+fn display_format_is_nv12() -> bool {
+    !std::env::var("RRV_DISPLAY_FORMAT").is_ok_and(|v| v.eq_ignore_ascii_case("rgba"))
+}
+
+/// Copies a display sample into shared bytes, in the format its caps announce.
+/// `None` (frame dropped) for a size the caps and the buffer disagree on.
+fn read_pixels(
+    sample: &gst::Sample,
+    buffer: &gst::BufferRef,
+    caps: &gst::CapsRef,
+    w: u32,
+    h: u32,
+) -> Option<(Bytes, PixelFormat)> {
+    let _ = sample;
+    let format = caps.structure(0)?.get::<&str>("format").unwrap_or("RGBA");
+    if format == "NV12" {
+        return read_nv12(buffer, caps, w, h);
+    }
+    let map = buffer.map_readable().ok()?;
+    // A frame whose byte count disagrees with its caps would render garbage
+    // and make the snapshot encoder panic. Drop it instead.
+    let expected = w as usize * h as usize * 4;
+    if w == 0 || h == 0 || map.len() != expected {
+        log::debug!(
+            "Dropping malformed frame: {}x{} with {} bytes (expected {})",
+            w,
+            h,
+            map.len(),
+            expected
+        );
+        return None;
+    }
+    // Reference-counted, so the texture upload and the snapshot share one allocation.
+    Some((Bytes::copy_from_slice(&map), PixelFormat::Rgba))
+}
+
+/// Repacks an NV12 buffer tightly (decoders pad rows) and reads its colorimetry.
+fn read_nv12(
+    buffer: &gst::BufferRef,
+    caps: &gst::CapsRef,
+    w: u32,
+    h: u32,
+) -> Option<(Bytes, PixelFormat)> {
+    let info = gst_video::VideoInfo::from_caps(caps).ok()?;
+    let frame = gst_video::VideoFrameRef::from_buffer_ref_readable(buffer, &info).ok()?;
+    let (wu, hu) = (w as usize, h as usize);
+    let cw = wu.div_ceil(2) * 2;
+    let ch = hu.div_ceil(2);
+    let mut out = Vec::with_capacity(wu * hu + cw * ch);
+
+    let (y, y_stride) = (frame.plane_data(0).ok()?, frame.plane_stride()[0] as usize);
+    let (uv, uv_stride) = (frame.plane_data(1).ok()?, frame.plane_stride()[1] as usize);
+    for row in 0..hu {
+        out.extend_from_slice(y.get(row * y_stride..row * y_stride + wu)?);
+    }
+    for row in 0..ch {
+        out.extend_from_slice(uv.get(row * uv_stride..row * uv_stride + cw)?);
+    }
+
+    let colorimetry = info.colorimetry();
+    let matrix = match colorimetry.matrix() {
+        gst_video::VideoColorMatrix::Bt709 => YuvMatrix::Bt709,
+        gst_video::VideoColorMatrix::Bt601 | gst_video::VideoColorMatrix::Fcc => YuvMatrix::Bt601,
+        _ => YuvMatrix::guess(h),
+    };
+    let full_range = colorimetry.range() == gst_video::VideoColorRange::Range0_255;
+    Some((
+        Bytes::from(out),
+        PixelFormat::Nv12(YuvFormat { matrix, full_range }),
+    ))
+}
+
 fn setup_appsink(pipeline: &gst::Pipeline, bridge: &mut GStreamerBridge) -> Result<(), String> {
     let appsink_elem = pipeline
         .by_name("display_sink")
@@ -493,6 +570,18 @@ fn setup_appsink(pipeline: &gst::Pipeline, bridge: &mut GStreamerBridge) -> Resu
         // No RGBA conversion for a picture nobody shows: the decoder's own
         // format flows on to the recording and detection branches.
         filter.set_property("caps", gst::Caps::new_empty_simple("video/x-raw"));
+    } else if !headless
+        && display_format_is_nv12()
+        && let Some(filter) = pipeline.by_name("filter")
+    {
+        // NV12 is 1.5 bytes a pixel against RGBA's 4, and a hardware decoder
+        // already produces it: the window converts to RGB on the GPU.
+        filter.set_property(
+            "caps",
+            gst::Caps::builder("video/x-raw")
+                .field("format", "NV12")
+                .build(),
+        );
     }
     // The same handler serves `new_sample` (playing) and `new_preroll` (the frame a
     // paused pipeline shows after a seek or a step), so scrubbing a recording works.
@@ -512,30 +601,14 @@ fn setup_appsink(pipeline: &gst::Pipeline, bridge: &mut GStreamerBridge) -> Resu
         let h = structure.get::<i32>("height").unwrap_or(0) as u32;
 
         // Headless: nobody looks at the picture, so the frame is not
-        // converted to RGBA nor copied; it only proves flow.
-        let bytes = if headless {
-            Bytes::new()
+        // converted nor copied; it only proves flow.
+        let (bytes, pixel_format) = if headless {
+            (Bytes::new(), PixelFormat::Rgba)
         } else {
-            let map = gst_buffer
-                .map_readable()
-                .map_err(|_| gst::FlowError::Error)?;
-            // A frame whose byte count disagrees with its caps would
-            // make `Handle::from_rgba` render garbage and the snapshot
-            // encoder panic. Drop it instead.
-            let expected = w as usize * h as usize * 4;
-            if w == 0 || h == 0 || map.len() != expected {
-                log::debug!(
-                    "Dropping malformed frame: {}x{} with {} bytes (expected {})",
-                    w,
-                    h,
-                    map.len(),
-                    expected
-                );
-                return Ok(gst::FlowSuccess::Ok);
+            match read_pixels(&sample, gst_buffer, caps, w, h) {
+                Some(frame) => frame,
+                None => return Ok(gst::FlowSuccess::Ok),
             }
-            // Reference-counted, so the handle and the snapshot buffer
-            // share one allocation instead of each taking a full copy.
-            Bytes::copy_from_slice(&map)
         };
 
         // Frames are flowing → the stream is live, whatever a stale
@@ -572,13 +645,21 @@ fn setup_appsink(pipeline: &gst::Pipeline, bridge: &mut GStreamerBridge) -> Resu
 
         let frame_count = metrics.frame_count.load(Ordering::Relaxed);
         if !headless && frame_count.is_multiple_of(SAMPLE_EVERY_N) {
-            sample_image_quality_rgba(&metrics, &bytes, w as usize, h as usize);
+            match pixel_format {
+                PixelFormat::Rgba => {
+                    sample_image_quality_rgba(&metrics, &bytes, w as usize, h as usize)
+                }
+                PixelFormat::Nv12(_) => {
+                    sample_image_quality_nv12(&metrics, &bytes, w as usize, h as usize)
+                }
+            }
         }
 
         let mut state = frame.lock().unwrap_or_else(|e| e.into_inner());
         state.width = w;
         state.height = h;
-        state.raw_rgba = bytes;
+        state.pixels = bytes;
+        state.format = pixel_format;
         state.generation = state.generation.wrapping_add(1);
         state.frame_count = state.frame_count.wrapping_add(1);
         Ok(gst::FlowSuccess::Ok)

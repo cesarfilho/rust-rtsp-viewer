@@ -340,8 +340,7 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
         let has_frame = app.engine.bridges[i]
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .capture_frame()
-            .is_some();
+            .has_frame();
         let thumb_pic: Element<'_, Message> =
             if has_frame || app.engine.active_stream.get(i).copied().unwrap_or(false) {
                 app.videos[i]

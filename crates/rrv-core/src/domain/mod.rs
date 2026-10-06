@@ -22,4 +22,5 @@ pub mod snapshot;
 pub mod timeline;
 pub mod timeline_view;
 pub mod view;
+pub mod yuv;
 pub mod zones;

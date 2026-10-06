@@ -16,6 +16,7 @@ testing = []
 [dependencies]
 gstreamer = "0.25"
 gstreamer-app = "0.25"
+gstreamer-video = "0.25"
 bytes = "1"
 log = "0.4"
 toml = "0.8"

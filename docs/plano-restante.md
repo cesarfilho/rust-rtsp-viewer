@@ -115,7 +115,7 @@ Medido (captura da janela 16× em sequência, brilho médio da área de vídeo, 
 a cada quadro há uma janela sem imagem. No 0.13 o envio era síncrono.
 Consequência: o vídeo no 0.14 precisa de um **widget `shader` próprio** (a textura é atualizada no lugar, sem `Handle` por
 quadro). Isso é exatamente a B5; então a ordem muda: **B5 primeiro, na master (iced 0.13, que também tem o widget `shader`)**,
-depois a B3. Quem testar a branch `iced-0.14` vê o piscar até lá. Mitigação descartada: reduzir o quadro para < 2 MiB só
+depois a B3. **Atualização:** o widget já foi portado para a branch `iced-0.14` (commit `b88b415`: 13 testes, 7 deles renderizando de verdade fora da tela na Intel e na GTX 1650; nenhum outro lugar desenha vídeo com `image`). A causa do piscar não se aplica mais, mas **falta a confirmação na tela** (precisa abrir uma janela). Mitigação descartada: reduzir o quadro para < 2 MiB só
 serviria para a grade (o spotlight e o player de gravações são 1080p).
 
 ## B2: o que olhar no iced 0.14 (≈ 5 min, você)
