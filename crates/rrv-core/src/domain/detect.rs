@@ -153,6 +153,180 @@ impl Detection {
     }
 }
 
+/// `[detect]` as written in the TOML.
+#[derive(Debug, serde::Deserialize, Clone, Default)]
+pub struct DetectFile {
+    /// Run object detection on the frames where motion is seen (needs `[motion] enabled`). Default: false.
+    pub enabled: Option<bool>,
+    /// Path of the ONNX model (`scripts/fetch-model.sh`). Default: `models/yolo11n-320.onnx`.
+    pub model: Option<String>,
+    /// `"cpu"`, `"cuda"` or `"auto"` (CUDA, falling back to the CPU). Default: `"auto"`.
+    pub backend: Option<String>,
+    /// Lowest score kept (0.05–0.99). Default: 0.25.
+    pub min_score: Option<f32>,
+    /// NMS overlap threshold (0.1–0.9). Default: 0.45.
+    pub iou: Option<f32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendChoice {
+    Cpu,
+    Cuda,
+    Auto,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DetectConfig {
+    pub enabled: bool,
+    pub model: std::path::PathBuf,
+    pub backend: BackendChoice,
+    pub min_score: f32,
+    pub iou: f32,
+}
+
+impl Default for DetectConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model: "models/yolo11n-320.onnx".into(),
+            backend: BackendChoice::Auto,
+            min_score: 0.25,
+            iou: 0.45,
+        }
+    }
+}
+
+impl DetectFile {
+    pub fn into_config(self) -> Result<DetectConfig, String> {
+        let d = DetectConfig::default();
+        let backend = match self
+            .backend
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            None | Some("auto") => BackendChoice::Auto,
+            Some("cpu") => BackendChoice::Cpu,
+            Some("cuda") => BackendChoice::Cuda,
+            Some(other) => return Err(format!("backend = \"{other}\": use cpu, cuda ou auto")),
+        };
+        let min_score = self.min_score.unwrap_or(d.min_score);
+        if !(0.05..=0.99).contains(&min_score) {
+            return Err(format!("min_score = {min_score} fora de 0.05–0.99"));
+        }
+        let iou = self.iou.unwrap_or(d.iou);
+        if !(0.1..=0.9).contains(&iou) {
+            return Err(format!("iou = {iou} fora de 0.1–0.9"));
+        }
+        Ok(DetectConfig {
+            enabled: self.enabled.unwrap_or(false),
+            model: self.model.map(Into::into).unwrap_or(d.model),
+            backend,
+            min_score,
+            iou,
+        })
+    }
+}
+
+/// A rectangle of the picture, normalised (`0..=1`, top-left origin).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Region {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+impl Region {
+    pub const FULL: Self = Self {
+        x: 0.0,
+        y: 0.0,
+        w: 1.0,
+        h: 1.0,
+    };
+
+    /// The smallest rectangle holding every vertex of the **active** zones, or `None` when no zone
+    /// restricts detection (then the whole frame is looked at).
+    pub fn of_zones(zones: &crate::domain::zones::ZoneConfig) -> Option<Self> {
+        let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+        for z in zones.zones.iter().filter(|z| z.is_active()) {
+            for v in &z.vertices {
+                x0 = x0.min(v.x);
+                y0 = y0.min(v.y);
+                x1 = x1.max(v.x);
+                y1 = y1.max(v.y);
+            }
+        }
+        if x0 > x1 || y0 > y1 {
+            return None;
+        }
+        let (x0, y0, x1, y1) = (
+            x0.clamp(0.0, 1.0) as f32,
+            y0.clamp(0.0, 1.0) as f32,
+            x1.clamp(0.0, 1.0) as f32,
+            y1.clamp(0.0, 1.0) as f32,
+        );
+        (x1 > x0 && y1 > y0).then_some(Self {
+            x: x0,
+            y: y0,
+            w: x1 - x0,
+            h: y1 - y0,
+        })
+    }
+
+    /// Cuts the region out of an RGBA picture. `None` for a size/bytes mismatch or a region that
+    /// leaves less than one pixel.
+    pub fn crop_rgba(&self, rgba: &[u8], width: u32, height: u32) -> Option<(Vec<u8>, u32, u32)> {
+        let (w, h) = (width as usize, height as usize);
+        if w == 0 || h == 0 || rgba.len() != w * h * 4 {
+            return None;
+        }
+        let x0 = ((self.x * w as f32).floor() as usize).min(w - 1);
+        let y0 = ((self.y * h as f32).floor() as usize).min(h - 1);
+        let x1 = (((self.x + self.w) * w as f32).ceil() as usize).clamp(x0 + 1, w);
+        let y1 = (((self.y + self.h) * h as f32).ceil() as usize).clamp(y0 + 1, h);
+        let (cw, ch) = (x1 - x0, y1 - y0);
+        let mut out = Vec::with_capacity(cw * ch * 4);
+        for row in y0..y1 {
+            out.extend_from_slice(&rgba[(row * w + x0) * 4..(row * w + x1) * 4]);
+        }
+        Some((out, cw as u32, ch as u32))
+    }
+
+    /// Where the crop actually starts, in the picture's own terms (the crop is cut on whole pixels).
+    pub fn snapped(&self, width: u32, height: u32) -> Self {
+        let (w, h) = (width as f32, height as f32);
+        let x0 = (self.x * w).floor().min(w - 1.0);
+        let y0 = (self.y * h).floor().min(h - 1.0);
+        let x1 = ((self.x + self.w) * w).ceil().clamp(x0 + 1.0, w);
+        let y1 = ((self.y + self.h) * h).ceil().clamp(y0 + 1.0, h);
+        Self {
+            x: x0 / w,
+            y: y0 / h,
+            w: (x1 - x0) / w,
+            h: (y1 - y0) / h,
+        }
+    }
+}
+
+impl Detection {
+    /// A box found inside a crop (normalised to the crop) → normalised to the whole picture.
+    pub fn from_crop(&self, region: &Region) -> Self {
+        Self {
+            x: region.x + self.x * region.w,
+            y: region.y + self.y * region.h,
+            w: self.w * region.w,
+            h: self.h * region.h,
+            ..self.clone()
+        }
+    }
+
+    /// The box centre, normalised — the point zones are tested against.
+    pub fn centre(&self) -> (f32, f32) {
+        (self.x + self.w / 2.0, self.y + self.h / 2.0)
+    }
+}
+
 /// RGBA picture → the `3×N×N` input tensor (CHW, RGB, 0–1), bilinear, letterboxed on grey.
 /// `None` when the byte count disagrees with the size.
 pub fn preprocess_rgba(
@@ -436,5 +610,115 @@ mod tests {
         let d = postprocess(&o, 80, &lb, 0.25, 0.45);
         assert_eq!(d.len(), 2);
         assert_eq!((d[0].label(), d[1].label()), ("person", "car"));
+    }
+
+    #[test]
+    fn the_region_of_zones_is_their_bounding_box_and_only_active_ones_count() {
+        use crate::domain::zones::{MotionZone, Point, ZoneConfig};
+        let tri = |x: f64, y: f64| {
+            MotionZone::new(
+                "z",
+                vec![
+                    Point { x, y },
+                    Point { x: x + 0.2, y },
+                    Point { x, y: y + 0.3 },
+                ],
+            )
+        };
+        let mut cfg = ZoneConfig {
+            zones: vec![tri(0.1, 0.2), tri(0.5, 0.4)],
+        };
+        let r = Region::of_zones(&cfg).unwrap();
+        assert!((r.x - 0.1).abs() < 1e-6 && (r.y - 0.2).abs() < 1e-6);
+        assert!(
+            (r.w - 0.6).abs() < 1e-6 && (r.h - 0.5).abs() < 1e-6,
+            "{r:?}"
+        );
+        cfg.zones[1].enabled = false;
+        let r = Region::of_zones(&cfg).unwrap();
+        assert!((r.w - 0.2).abs() < 1e-6, "zona desligada não conta: {r:?}");
+        cfg.zones[0].enabled = false;
+        assert!(
+            Region::of_zones(&cfg).is_none(),
+            "sem zona ativa: quadro todo"
+        );
+        assert!(Region::of_zones(&ZoneConfig::default()).is_none());
+    }
+
+    #[test]
+    fn cropping_takes_the_right_pixels() {
+        // 4×2: pixel (x, y) tem R = 10*y + x
+        let mut rgba = Vec::new();
+        for y in 0..2u8 {
+            for x in 0..4u8 {
+                rgba.extend_from_slice(&[10 * y + x, 0, 0, 255]);
+            }
+        }
+        let r = Region {
+            x: 0.5,
+            y: 0.0,
+            w: 0.5,
+            h: 1.0,
+        };
+        let (out, w, h) = r.crop_rgba(&rgba, 4, 2).unwrap();
+        assert_eq!((w, h), (2, 2));
+        let reds: Vec<u8> = out.chunks(4).map(|p| p[0]).collect();
+        assert_eq!(reds, vec![2, 3, 12, 13]);
+        assert!(r.crop_rgba(&rgba, 4, 3).is_none(), "bytes não batem");
+        assert_eq!(Region::FULL.crop_rgba(&rgba, 4, 2).unwrap().0, rgba);
+    }
+
+    #[test]
+    fn a_box_in_a_crop_maps_back_to_the_whole_picture() {
+        let region = Region {
+            x: 0.5,
+            y: 0.25,
+            w: 0.4,
+            h: 0.5,
+        };
+        let inner = det(0, 0.9, 0.5, 0.5, 0.5, 0.25);
+        let d = inner.from_crop(&region);
+        assert!((d.x - 0.7).abs() < 1e-6 && (d.y - 0.5).abs() < 1e-6);
+        assert!((d.w - 0.2).abs() < 1e-6 && (d.h - 0.125).abs() < 1e-6);
+        assert_eq!((d.class, d.score), (0, 0.9));
+        let (cx, cy) = d.centre();
+        assert!((cx - 0.8).abs() < 1e-6 && (cy - 0.5625).abs() < 1e-6);
+    }
+
+    #[test]
+    fn snapping_follows_the_whole_pixels_the_crop_uses() {
+        let r = Region {
+            x: 0.30,
+            y: 0.0,
+            w: 0.30,
+            h: 1.0,
+        };
+        // 10 px: de 3,0 a 6,0 -> 3..6
+        let s = r.snapped(10, 10);
+        assert!((s.x - 0.3).abs() < 1e-6 && (s.w - 0.3).abs() < 1e-6);
+        // 7 px: de 2,1 a 4,2 -> pixels 2..5
+        let s = r.snapped(7, 7);
+        assert!(
+            (s.x - 2.0 / 7.0).abs() < 1e-6 && (s.w - 3.0 / 7.0).abs() < 1e-6,
+            "{s:?}"
+        );
+    }
+
+    #[test]
+    fn detect_config_defaults_and_validation() {
+        let c = DetectFile::default().into_config().unwrap();
+        assert_eq!(c, DetectConfig::default());
+        assert!(!c.enabled);
+        let f = |toml: &str| toml::from_str::<DetectFile>(toml).unwrap().into_config();
+        assert_eq!(
+            f("enabled = true\nbackend = \"CUDA\"\nmin_score = 0.4")
+                .unwrap()
+                .backend,
+            BackendChoice::Cuda
+        );
+        assert!(f("backend = \"tpu\"").unwrap_err().contains("tpu"));
+        assert!(f("min_score = 0.0").is_err());
+        assert!(f("min_score = 1.5").is_err());
+        assert!(f("iou = 0.95").is_err());
     }
 }

@@ -120,6 +120,11 @@ fn run(cli: &Cli) -> Result<(), String> {
         .map(|r| r.into_config())
         .transpose()?
         .unwrap_or_default();
+    let detect = config
+        .detect
+        .map(|d| d.into_config())
+        .transpose()?
+        .unwrap_or_default();
     let logs = config.logs.unwrap_or_default();
     let view = config.view.unwrap_or_default();
     let mut zones = rrv_core::infrastructure::zone_state::load();
@@ -135,6 +140,7 @@ fn run(cli: &Cli) -> Result<(), String> {
         zones: &zones,
     });
     engine.set_headless();
+    start_detection(&mut engine, detect);
     let db = rrv_core::infrastructure::view_state::state_dir().join("history.db");
     match rrv_core::infrastructure::store::StoreHandle::spawn(db.clone()) {
         Ok(store) => {
@@ -341,4 +347,46 @@ fn check_health(path: &Path) -> Result<(), String> {
         return Err(format!("o laço do daemon parou há {age} s"));
     }
     Ok(())
+}
+
+/// Liga a detecção de objetos quando `[detect] enabled` e o binário tem a feature `detect`.
+/// Qualquer falha (modelo ausente, biblioteca não encontrada, CUDA indisponível sem recuo)
+/// desliga só a detecção: o vídeo vem antes.
+#[cfg(feature = "detect")]
+fn start_detection(engine: &mut Engine, cfg: rrv_core::domain::detect::DetectConfig) {
+    use rrv_core::domain::detect::BackendChoice;
+    use rrv_core::engine::inference::InferenceWorker;
+    use rrv_core::infrastructure::detector::{Backend, Detector};
+
+    if !cfg.enabled {
+        return;
+    }
+    let load = |backend| Detector::load(&cfg.model, backend);
+    let detector = match cfg.backend {
+        BackendChoice::Cpu => load(Backend::Cpu),
+        BackendChoice::Cuda => load(Backend::Cuda),
+        BackendChoice::Auto => load(Backend::Cuda).or_else(|e| {
+            log::info!("detecção: CUDA indisponível ({e}); usando a CPU");
+            load(Backend::Cpu)
+        }),
+    };
+    match detector {
+        Ok(d) => {
+            log::info!(
+                "detecção ligada: {} ({} px)",
+                cfg.model.display(),
+                d.input_size()
+            );
+            let d = d.with_thresholds(cfg.min_score, cfg.iou);
+            engine.set_inference(InferenceWorker::start(d, engine.camera_count().max(2)));
+        }
+        Err(e) => log::warn!("detecção desligada: {e}"),
+    }
+}
+
+#[cfg(not(feature = "detect"))]
+fn start_detection(_engine: &mut Engine, cfg: rrv_core::domain::detect::DetectConfig) {
+    if cfg.enabled {
+        log::warn!("[detect] enabled, mas este binário foi feito sem a feature `detect`");
+    }
 }

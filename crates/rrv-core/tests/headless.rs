@@ -180,6 +180,67 @@ fn the_headless_engine_records_on_motion_and_stops_after_the_post_roll() {
     assert!(is_playable(&files[0]), "{} não toca", files[0].display());
 }
 
+/// Um "modelo" que vê sempre uma pessoa no meio do quadro que recebe.
+struct SeesAPerson;
+
+impl rrv_core::engine::inference::Infer for SeesAPerson {
+    fn infer(
+        &mut self,
+        _rgba: &[u8],
+        _w: u32,
+        _h: u32,
+    ) -> Result<Vec<rrv_core::domain::detect::Detection>, String> {
+        Ok(vec![rrv_core::domain::detect::Detection {
+            class: 0,
+            score: 0.9,
+            x: 0.25,
+            y: 0.25,
+            w: 0.5,
+            h: 0.5,
+        }])
+    }
+}
+
+/// A detecção só roda onde há movimento (plano C3): com a bola se mexendo o modelo é chamado e a
+/// caixa chega ao motor; com a cena parada o contador de inferências deixa de subir.
+#[test]
+fn object_detection_runs_only_while_the_scene_moves() {
+    let tmp = TempDir::new("detect-trigger");
+    let cam = LiveCamera::start(&tmp.0);
+    let rec = tmp.path("rec");
+    let mut e = engine(&cam.url(), &rec, 3600);
+    e.set_inference(rrv_core::engine::inference::InferenceWorker::start(
+        SeesAPerson,
+        2,
+    ));
+    let inferred = |e: &Engine| e.inference.as_ref().unwrap().stats().inferred;
+
+    let mut events = Vec::new();
+    let seen = run(&mut e, 60, &mut events, |e, _| {
+        inferred(e) >= 2 && !e.detections[0].is_empty()
+    });
+    assert!(
+        seen,
+        "o modelo nunca foi chamado com a cena em movimento ({} inferências): {}",
+        inferred(&e),
+        describe(&e)
+    );
+    assert_eq!(e.detections[0][0].label(), "person");
+
+    // a cena para: depois de assentar, nenhuma inferência nova
+    cam.set_moving(false);
+    run(&mut e, 8, &mut events, |_, _| false);
+    let settled = inferred(&e);
+    run(&mut e, 8, &mut events, |_, _| false);
+    e.shutdown();
+    assert_eq!(
+        inferred(&e),
+        settled,
+        "o modelo continuou rodando com a cena parada"
+    );
+    assert!(e.detections[0].is_empty(), "caixas velhas sobraram");
+}
+
 /// O histórico (plano 3.2): a gravação por movimento deixa no banco um segmento
 /// fechado, com tamanho, e o evento de movimento ligado a ele.
 #[test]

@@ -166,6 +166,17 @@ label = "Rio Jardim Sofia"
 # format = "json"       # "json" (padrão: camera, event, detail, title, message, time_unix) ou "ntfy"
 # timeout_secs = 5      # 1–60
 
+# ── Detecção de objetos (só o daemon; precisa do build com a feature `detect`) ─
+# Roda um YOLO11 nos quadros em que há movimento (dentro das zonas) e guarda o
+# que viu (pessoa, carro...). Baixe o modelo com scripts/fetch-model.sh e aponte
+# ORT_DYLIB_PATH para a libonnxruntime.so (CPU ou CUDA).
+# [detect]
+# enabled = false
+# model = "models/yolo11n-320.onnx"   # 320 para CPU, 640 para GPU
+# backend = "auto"                    # "cpu", "cuda" ou "auto" (CUDA, senão CPU)
+# min_score = 0.25                    # 0.05–0.99
+# iou = 0.45                          # 0.1–0.9 (supressão de caixas sobrepostas)
+
 # ── Retenção das gravações (só o daemon) ─────────────────────────────────────
 # Roda a cada minuto. Apaga o arquivo e depois o registro; nunca toca em
 # segmento que está sendo gravado nem em trecho protegido.

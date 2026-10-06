@@ -204,6 +204,33 @@ pub fn validate(config: &Config) -> Vec<Issue> {
             ));
         }
     }
+    if let Some(d) = &config.detect {
+        match d.clone().into_config() {
+            Err(message) => issues.push(Issue::error("detect", message)),
+            Ok(c) if c.enabled => {
+                if !c.model.exists() {
+                    issues.push(Issue::warning(
+                        "detect.model",
+                        format!(
+                            "{} não existe (rode scripts/fetch-model.sh); a detecção ficará desligada",
+                            c.model.display()
+                        ),
+                    ));
+                }
+                if !config
+                    .motion
+                    .as_ref()
+                    .is_some_and(|m| m.enabled == Some(true))
+                {
+                    issues.push(Issue::warning(
+                        "detect.enabled",
+                        "a detecção só roda onde há movimento: ligue [motion] enabled".to_string(),
+                    ));
+                }
+            }
+            Ok(_) => {}
+        }
+    }
     if let Some(r) = &config.retention
         && let Err(message) = r.clone().into_config()
     {

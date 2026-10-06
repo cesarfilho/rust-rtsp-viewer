@@ -40,6 +40,8 @@ pub struct Config {
     /// `[motion]` — frame-difference detector tuning (`enabled`, `threshold`,
     /// `contour_area`, `sample_stride`).
     pub motion: Option<crate::domain::motion::MotionConfigFile>,
+    /// `[detect]` — object detection (YOLO) on the frames where motion is seen.
+    pub detect: Option<crate::domain::detect::DetectFile>,
     /// `[retention]` — how long the daemon keeps recordings (`motion_days`,
     /// `manual_days`, `max_disk_percent`).
     pub retention: Option<crate::domain::retention::RetentionFile>,

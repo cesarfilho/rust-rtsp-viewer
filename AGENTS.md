@@ -125,7 +125,9 @@ each segment (with Docker, set it to the host folder mounted as `/data`). The pl
 `submit` never blocks: one waiting frame per camera (a newer one replaces it) and at most `capacity`
 overall (oldest evicted); both count in `InferenceStats.dropped`. Results come back through
 `take_results` (bounded), each with `infer_ms` / `queued_ms`. Tested with a deliberately slow fake;
-`Detector` implements `Infer` under feature `detect`. Not wired to the engine yet (C3).
+`Detector` implements `Infer` under feature `detect`.
+
+**Trigger (C3)**: `Engine.inference` (`set_inference`) is fed from `detect_motion` **only while motion is active** on a camera (so the model/GPU idle on a still scene): the ~320 px detection frame is cropped to the bounding box of the camera's active zones (`domain::detect::Region::of_zones`/`crop_rgba`; whole frame when no zone), and `poll_inference` (each slow tick) maps boxes back with `Detection::from_crop` and drops those whose centre lies outside the zones, into `Engine.detections[camera]` (cleared when motion stops). `[detect]` (`enabled`, `model`, `backend` cpu/cuda/auto, `min_score`, `iou`; `config_check` validates) is wired only in `rrv-daemon` built with `--features detect` (`start_detection`; any failure disables just the detection). Events/labels/webhook per label are C4.
 
 ## Secrets (plan 2.5.8)
 

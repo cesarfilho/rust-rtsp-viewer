@@ -16,6 +16,10 @@ path = "src/main.rs"
 name = "rrvctl"
 path = "src/bin/rrvctl.rs"
 
+[features]
+# Detecção de objetos (YOLO via ONNX Runtime): cargo build --features detect
+detect = ["rrv-core/detect"]
+
 [dependencies]
 rrv-core = { path = "../rrv-core" }
 gstreamer = "0.25"

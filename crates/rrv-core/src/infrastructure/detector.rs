@@ -26,6 +26,8 @@ pub struct Detector {
     input_name: String,
     size: u32,
     classes: usize,
+    min_score: f32,
+    iou: f32,
 }
 
 fn err<E: std::fmt::Display>(what: &str) -> impl FnOnce(E) -> String + '_ {
@@ -74,7 +76,24 @@ impl Detector {
             session,
             size,
             classes,
+            min_score: 0.25,
+            iou: 0.45,
         })
+    }
+
+    /// Score and NMS thresholds used by the [`Infer`](crate::engine::inference::Infer) impl.
+    pub fn with_thresholds(mut self, min_score: f32, iou: f32) -> Self {
+        self.min_score = min_score;
+        self.iou = iou;
+        self
+    }
+
+    pub fn min_score(&self) -> f32 {
+        self.min_score
+    }
+
+    pub fn iou(&self) -> f32 {
+        self.iou
     }
 
     /// Side of the square the model expects.

@@ -17,7 +17,7 @@ use std::time::Instant;
 
 use bytes::Bytes;
 
-use crate::domain::detect::Detection;
+use crate::domain::detect::{Detection, Region};
 
 /// What runs the network. One call per frame, on the worker thread only.
 pub trait Infer: Send + 'static {
@@ -31,13 +31,18 @@ pub struct InferenceInput {
     pub rgba: Bytes,
     pub width: u32,
     pub height: u32,
+    /// Where in the camera's picture `rgba` was cut from (travels back with the result so the host
+    /// can map boxes to the whole picture); [`Region::FULL`] for an uncropped frame.
+    pub region: Region,
 }
 
 /// What came out of one frame.
 #[derive(Debug, Clone)]
 pub struct InferenceResult {
     pub camera: usize,
+    /// Boxes normalised to the *input* (the crop); see [`Detection::from_crop`].
     pub detections: Vec<Detection>,
+    pub region: Region,
     /// Time the network took.
     pub infer_ms: f32,
     /// Time the frame waited in the queue.
@@ -206,6 +211,7 @@ fn run(shared: &Shared, model: &mut impl Infer) {
         results.push_back(InferenceResult {
             camera: job.input.camera,
             detections,
+            region: job.input.region,
             infer_ms,
             queued_ms,
             error,
@@ -219,8 +225,7 @@ fn run(shared: &Shared, model: &mut impl Infer) {
 #[cfg(feature = "detect")]
 impl Infer for crate::infrastructure::detector::Detector {
     fn infer(&mut self, rgba: &[u8], width: u32, height: u32) -> Result<Vec<Detection>, String> {
-        // thresholds fixed here until the config (C4) carries them
-        self.detect_rgba(rgba, width, height, 0.25, 0.45)
+        self.detect_rgba(rgba, width, height, self.min_score(), self.iou())
     }
 }
 
@@ -258,6 +263,7 @@ mod tests {
             rgba: Bytes::from(vec![tag; 16]),
             width: 2,
             height: 2,
+            region: Region::FULL,
         }
     }
 

@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::{CameraConfig, LogsConfigFile};
 use crate::domain::camera_status::{CameraStatus, StatusReading};
+use crate::domain::detect::{Detection, Region};
 use crate::domain::motion::MotionConfig;
 use crate::domain::multi_stream::StreamQuality;
 use crate::domain::multi_stream::{MultiStreamConfig, desired_quality, stream_url_for_quality};
@@ -128,6 +129,10 @@ pub struct Engine {
     pub last_motion_at: Vec<Option<Instant>>,
     /// True for recordings the motion trigger started, so it never stops a manual one.
     pub auto_recording: Vec<bool>,
+    /// The detector thread, when object detection is on (`set_inference`).
+    pub inference: Option<inference::InferenceWorker>,
+    /// Objects seen in each camera's latest analysed frame (normalised to the whole picture).
+    pub detections: Vec<Vec<Detection>>,
     /// Motion zones per camera (empty = the whole frame counts).
     pub zones: Vec<ZoneConfig>,
     /// Desktop-notification policy.
@@ -278,6 +283,8 @@ impl Engine {
             motion_post_roll_secs: recording.motion_post_roll_secs,
             last_motion_at: vec![None; count],
             auto_recording: vec![false; count],
+            inference: None,
+            detections: vec![Vec::new(); count],
             zones: zone_configs,
             notify,
             notify_last: HashMap::new(),
@@ -594,6 +601,7 @@ impl Engine {
         {
             self.prev_motion_frames[i] = None;
             self.motion_active[i] = false;
+            self.detections[i].clear();
             return;
         }
         // The reduced detection branch (~320 px), not the full-resolution display
@@ -624,7 +632,7 @@ impl Engine {
                 zones,
             )
         });
-        self.prev_motion_frames[i] = Some(curr);
+        self.prev_motion_frames[i] = Some(curr.clone());
         let Some(result) = result else {
             return;
         };
@@ -649,6 +657,73 @@ impl Engine {
             );
         }
         self.motion_active[i] = result.motion_active;
+        if result.motion_active {
+            self.submit_for_inference(i, &curr, width, height);
+        } else {
+            // Nothing moves: whatever was seen is stale, and nothing is submitted, so the model
+            // (and the GPU) sits idle.
+            self.detections[i].clear();
+        }
+    }
+
+    /// Hands the detection frame of a camera with motion to the inference thread, cropped to the
+    /// bounding box of its active zones (the whole frame when none restricts it).
+    fn submit_for_inference(&self, i: usize, rgba: &bytes::Bytes, width: u32, height: u32) {
+        let Some(worker) = &self.inference else {
+            return;
+        };
+        let wanted = self.zones.get(i).and_then(Region::of_zones);
+        let (pixels, w, h, region) = match wanted {
+            Some(r) => match r.crop_rgba(rgba, width, height) {
+                Some((px, w, h)) => (bytes::Bytes::from(px), w, h, r.snapped(width, height)),
+                None => return,
+            },
+            None => (rgba.clone(), width, height, Region::FULL),
+        };
+        worker.submit(inference::InferenceInput {
+            camera: i,
+            rgba: pixels,
+            width: w,
+            height: h,
+            region,
+        });
+    }
+
+    /// Switches object detection on: motion frames are analysed by `worker`.
+    pub fn set_inference(&mut self, worker: inference::InferenceWorker) {
+        self.inference = Some(worker);
+    }
+
+    /// Collects what the inference thread finished: boxes are mapped from the crop back to the whole
+    /// picture and the ones whose centre falls outside the active zones are dropped.
+    pub fn poll_inference(&mut self) {
+        let Some(worker) = &self.inference else {
+            return;
+        };
+        for r in worker.take_results() {
+            let Some(slot) = self.detections.get_mut(r.camera) else {
+                continue;
+            };
+            if let Some(e) = &r.error {
+                log::warn!("detecção na câmera {}: {e}", r.camera);
+                continue;
+            }
+            let zones = self.zones.get(r.camera);
+            *slot = r
+                .detections
+                .iter()
+                .map(|d| d.from_crop(&r.region))
+                .filter(|d| {
+                    let (x, y) = d.centre();
+                    zones.is_none_or(|z| {
+                        z.is_motion_allowed(crate::domain::zones::Point {
+                            x: f64::from(x),
+                            y: f64::from(y),
+                        })
+                    })
+                })
+                .collect();
+        }
     }
 
     /// Start a recording when motion appears and stop it after the post-roll,
@@ -829,6 +904,7 @@ impl Engine {
 
     /// Motion detection and the motion-triggered recording, run at ~2 Hz.
     pub fn tick_motion(&mut self, i: usize) {
+        self.poll_inference();
         self.detect_motion(i);
         self.drive_motion_recording(i);
     }
@@ -1043,6 +1119,8 @@ mod tests {
             motion_post_roll_secs: 15,
             last_motion_at: vec![None; n],
             auto_recording: vec![false; n],
+            inference: None,
+            detections: vec![Vec::new(); n],
             zones: vec![ZoneConfig::default(); n],
             notify: NotifyConfig {
                 enabled: false,
@@ -1215,6 +1293,144 @@ mod tests {
         assert_eq!(events.len(), 1, "got {events:?}");
         assert_eq!(events[0].kind, EventType::Motion);
         assert!(e.motion_active[0]);
+    }
+
+    /// A model that answers with a box in the middle of whatever it is given and notes the sizes.
+    type Sizes = Arc<Mutex<Vec<(u32, u32)>>>;
+
+    struct Spy(Sizes);
+
+    impl inference::Infer for Spy {
+        fn infer(&mut self, _rgba: &[u8], w: u32, h: u32) -> Result<Vec<Detection>, String> {
+            self.0.lock().unwrap().push((w, h));
+            Ok(vec![Detection {
+                class: 0,
+                score: 0.9,
+                x: 0.25,
+                y: 0.25,
+                w: 0.5,
+                h: 0.5,
+            }])
+        }
+    }
+
+    fn spied_engine() -> (Engine, Sizes) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut e = live_motion_engine();
+        e.set_inference(inference::InferenceWorker::start(Spy(seen.clone()), 4));
+        (e, seen)
+    }
+
+    fn wait_for_results(e: &Engine, n: u64) {
+        let end = Instant::now() + Duration::from_secs(5);
+        while e.inference.as_ref().unwrap().stats().inferred < n && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn the_model_runs_only_while_something_moves() {
+        let (mut e, seen) = spied_engine();
+        // quatro amostras sem nada mexendo: o modelo não é chamado
+        for _ in 0..4 {
+            feed(&e, 0, frame(0));
+            e.detect_motion(0);
+            e.prev_motion_frames[0] = None; // força uma amostra nova a cada volta
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(e.inference.as_ref().unwrap().stats().inferred, 0);
+        assert!(seen.lock().unwrap().is_empty());
+
+        // movimento: o quadro vai para o modelo e a caixa volta ao motor
+        feed(&e, 0, frame(0));
+        e.detect_motion(0);
+        feed(&e, 0, frame(4));
+        e.detect_motion(0);
+        wait_for_results(&e, 1);
+        e.poll_inference();
+        assert_eq!(*seen.lock().unwrap(), vec![(20, 20)]);
+        assert_eq!(e.detections[0].len(), 1);
+        assert_eq!(e.detections[0][0].label(), "person");
+
+        // parou de mexer: as caixas velhas somem e nada novo é enviado
+        feed(&e, 0, frame(4));
+        e.prev_motion_frames[0] = Some(bytes::Bytes::from(frame(4)));
+        e.detect_motion(0);
+        assert!(e.detections[0].is_empty());
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn with_zones_the_model_sees_only_their_bounding_box() {
+        use crate::domain::zones::{MotionZone, Point};
+        let (mut e, seen) = spied_engine();
+        // zona na metade direita (x 0,5..1,0), quadro todo de altura
+        e.zones[0] = ZoneConfig {
+            zones: vec![MotionZone::new(
+                "dir",
+                vec![
+                    Point { x: 0.5, y: 0.0 },
+                    Point { x: 1.0, y: 0.0 },
+                    Point { x: 1.0, y: 1.0 },
+                    Point { x: 0.5, y: 1.0 },
+                ],
+            )],
+        };
+        feed(&e, 0, frame(0));
+        e.detect_motion(0);
+        // o movimento tem de cair dentro da zona: pinta tudo menos o início das linhas
+        let mut moving = frame(0);
+        for row in 0..8 {
+            for col in 10..20 {
+                moving[(row * 20 + col) * 4..(row * 20 + col) * 4 + 3].copy_from_slice(&[255; 3]);
+            }
+        }
+        feed(&e, 0, moving);
+        e.detect_motion(0);
+        wait_for_results(&e, 1);
+        e.poll_inference();
+        assert_eq!(*seen.lock().unwrap(), vec![(10, 20)], "só a metade direita");
+        // a caixa do modelo (centro do recorte) volta como centro de (0,75, 0,5) no quadro todo
+        let d = &e.detections[0][0];
+        assert!(
+            (d.x - 0.625).abs() < 1e-5 && (d.w - 0.25).abs() < 1e-5,
+            "{d:?}"
+        );
+        assert!((d.centre().0 - 0.75).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_box_whose_centre_is_outside_the_zones_is_dropped() {
+        use crate::domain::zones::{MotionZone, Point};
+        let (mut e, _seen) = spied_engine();
+        // zona em L: o recorte (o retângulo que a envolve) é o quadro todo, mas o centro (0,5, 0,5)
+        // do que o modelo devolve cai no canto vazio
+        e.zones[0] = ZoneConfig {
+            zones: vec![MotionZone::new(
+                "L",
+                vec![
+                    Point { x: 0.0, y: 0.0 },
+                    Point { x: 1.0, y: 0.0 },
+                    Point { x: 1.0, y: 0.3 },
+                    Point { x: 0.3, y: 0.3 },
+                    Point { x: 0.3, y: 1.0 },
+                    Point { x: 0.0, y: 1.0 },
+                ],
+            )],
+        };
+        feed(&e, 0, frame(0));
+        e.detect_motion(0);
+        feed(&e, 0, frame(4)); // movimento nas 4 primeiras linhas, dentro da zona
+        e.detect_motion(0);
+        wait_for_results(&e, 1);
+        e.poll_inference();
+        assert_eq!(
+            e.inference.as_ref().unwrap().stats().inferred,
+            1,
+            "o modelo rodou"
+        );
+        assert!(e.detections[0].is_empty(), "{:?}", e.detections[0]);
     }
 
     #[test]
