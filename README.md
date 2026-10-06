@@ -375,7 +375,9 @@ cada evento. Na janela, a tecla **`t`** (ou `⋯` → Gravações) abre a vista 
 - a vista se atualiza sozinha a cada 5 s e acompanha o vivo.
 
 **A janela lê os vídeos da sua própria `[recording] dir`.** Com Docker, aponte-a para a pasta do host que o
-`compose.yaml` monta em `/data` (por padrão `./recordings`); senão a janela avisa onde procurou e não acha o arquivo.
+`compose.yaml` monta em `/data` (por padrão `./recordings`). Se a pasta configurada não tiver os arquivos que o daemon
+listou, a janela procura em `$RRV_RECORDINGS`, `./recordings`, `~/Videos` e `~/Vídeos` (conferindo pelo nome de uma gravação
+real) e avisa onde achou; se não achar em nenhuma, diz onde procurou.
 
 Pela linha de comando: `rrvctl history [câmera] --hours 24` e `rrvctl export "Portão" -30m` (ou `"2026-10-05 19:00:00"
 "2026-10-05 19:05:00"`).

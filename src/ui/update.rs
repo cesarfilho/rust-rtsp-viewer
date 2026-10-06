@@ -2844,6 +2844,40 @@ mod tests {
     }
 
     #[test]
+    fn the_window_finds_the_daemons_recordings_when_its_own_folder_is_wrong() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        let base = std::env::temp_dir().join(format!("rrv-ui-find-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (wrong, host) = (base.join("wrong"), base.join("host"));
+        std::fs::create_dir_all(&wrong).unwrap();
+        std::fs::create_dir_all(&host).unwrap();
+        std::fs::write(host.join("a.mkv"), b"x").unwrap();
+        // a pasta do compose, achada pela variável que o compose usa
+        // SAFETY: only this test touches RRV_RECORDINGS in this process.
+        unsafe { std::env::set_var("RRV_RECORDINGS", &host) };
+        app.recordings_dir = wrong.clone();
+        let _ = update(&mut app, Message::Recordings(RecMsg::Open));
+        let token = *app.pending.keys().next().unwrap();
+        handle_reply(
+            &mut app,
+            token,
+            Ok(history_reply(vec![seg(1, 1_000, Some(2_000), "a.mkv")])),
+        );
+        unsafe { std::env::remove_var("RRV_RECORDINGS") };
+        assert_eq!(
+            app.recordings_dir, host,
+            "a janela passou a ler a pasta certa"
+        );
+        assert!(
+            app.toasts
+                .iter()
+                .any(|t| t.message.contains("encontradas em"))
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn closing_without_local_recordings_does_not_ask() {
         let mut app = test_app();
         let _ = update(&mut app, Message::QuitRequested);

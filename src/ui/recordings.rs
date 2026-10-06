@@ -321,12 +321,41 @@ fn request_history(app: &mut App) {
     );
 }
 
+/// Where the daemon's recordings may be on this machine besides `[recording] dir`: the folder the
+/// compose file mounts (`RRV_RECORDINGS`, default `./recordings`) and the usual video folders.
+fn candidate_dirs() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if let Some(d) = std::env::var_os("RRV_RECORDINGS") {
+        v.push(PathBuf::from(d));
+    }
+    v.push(PathBuf::from("recordings"));
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        v.push(home.join("Videos"));
+        v.push(home.join("Vídeos"));
+    }
+    v
+}
+
+/// The first of `current` and `candidates` that has the recorded file `file` in it. The check is by
+/// the name of a real recording the daemon listed, so a folder that merely exists does not count.
+pub(crate) fn dir_holding(
+    file: &str,
+    current: &std::path::Path,
+    candidates: &[PathBuf],
+) -> Option<PathBuf> {
+    std::iter::once(current)
+        .chain(candidates.iter().map(PathBuf::as_path))
+        .find(|d| d.join(file).is_file())
+        .map(PathBuf::from)
+}
+
 /// A resposta de `History`.
 pub fn on_history(app: &mut App, result: Result<Response, String>) {
     let Some(v) = app.recordings.as_mut() else {
         return;
     };
     v.loading = false;
+    let mut found_in: Option<PathBuf> = None;
     match result {
         Ok(Response::History {
             segments,
@@ -334,6 +363,22 @@ pub fn on_history(app: &mut App, result: Result<Response, String>) {
             truncated,
         }) => {
             v.segments = segments;
+            // The folder in the window's config may not be where the daemon's recordings are (Docker
+            // mounts them somewhere on the host): look for one that has a file the daemon listed.
+            let sample = v
+                .segments
+                .iter()
+                .find(|s| s.ts_end.is_some())
+                .map(|s| s.file.clone());
+            if let Some(file) = sample
+                && !app.recordings_dir.join(&file).is_file()
+                && let Some(found) = dir_holding(&file, &app.recordings_dir, &candidate_dirs())
+                && found != app.recordings_dir
+            {
+                log::info!("recordings found in {}", found.display());
+                app.recordings_dir = found.clone();
+                found_in = Some(found);
+            }
             if let Some(p) = v.player.as_mut()
                 && let Some(fresh) = v.segments.iter().find(|s| s.id == p.segment.id)
             {
@@ -367,6 +412,12 @@ pub fn on_history(app: &mut App, result: Result<Response, String>) {
         }
         Ok(Response::Error { message }) | Err(message) => v.error = Some(message),
         Ok(other) => v.error = Some(format!("resposta inesperada: {other:?}")),
+    }
+    if let Some(dir) = found_in {
+        super::update::toast(
+            app,
+            format!("Gravações do daemon encontradas em {}", dir.display()),
+        );
     }
 }
 
@@ -1433,6 +1484,27 @@ mod tests {
             assert_ne!(event_label(k), "Evento", "{k}");
         }
         assert_eq!(event_label("algo_novo"), "Evento");
+    }
+
+    #[test]
+    fn the_recordings_folder_is_found_by_a_file_the_daemon_listed() {
+        let base = std::env::temp_dir().join(format!("rrv-find-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (wrong, host, other) = (base.join("wrong"), base.join("host"), base.join("other"));
+        for d in [&wrong, &host, &other] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(host.join("a.mkv"), b"x").unwrap();
+        let cands = [other.clone(), host.clone()];
+        // a pasta configurada não tem o arquivo: acha a candidata que tem
+        assert_eq!(dir_holding("a.mkv", &wrong, &cands), Some(host.clone()));
+        // se a configurada já tem, fica a configurada
+        assert_eq!(dir_holding("a.mkv", &host, &cands), Some(host.clone()));
+        // nenhuma tem: não inventa
+        assert_eq!(dir_holding("b.mkv", &wrong, &cands), None);
+        // uma pasta que só existe (sem o arquivo) não conta
+        assert_eq!(dir_holding("a.mkv", &wrong, &[other]), None);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
