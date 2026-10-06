@@ -23,9 +23,9 @@ de saída, tamanhos e decisões pendentes (o como e o quando). Estado real do c�
 |---|---|---|
 | D1 | ~~Posicionamento: video wall nativo ou NVR completo~~ → **decidido em 2026-10-05: NVR completo, com UX/UI muito bem definida** | (liberou M3 e M4) |
 | D2 | Câmeras reais: quantas, modelos, se aceitam 2 sessões RTSP, se têm sub-stream | 0.3, 0.4, 2.5 | **Respondida:** 1 Intelbras local, as demais são HLS públicas remotas.
-| D3 | Licença do modelo de detecção (YOLO da Ultralytics é AGPL; o projeto também é, confirmar) | 4.1 |
+| D3 | ~~Licença do modelo de detecção~~ → **decidido em 2026-10-05: usar o YOLO da Ultralytics** (AGPL, compatível com a AGPL-3.0 do projeto, ADR 0009); conferir a licença do peso exato ao baixá-lo | (liberou 4.1) |
 | D5 | Vídeo ao vivo no cliente: sessão própria (A), redistribuição pelo daemon (B, recomendada) ou memória compartilhada (C) — ADR 0010 | M2.5 (2.5.4), 2.5 |
-| D6 | Instalar `nvidia-container-toolkit` para o container usar a GTX 1650 (decodificação/YOLO em CUDA). Sem isso: VA-API na iGPU ou CPU | 2.5.10, M4 em GPU |
+| D6 | Instalar `nvidia-container-toolkit` para o container usar a GTX 1650 (decodificação/YOLO em CUDA). Sem isso: VA-API na iGPU ou CPU | 2.5.10, M4 em GPU | **2026-10-05:** o dono pediu que eu prepare o contêiner: `compose.nvidia.yaml` e `scripts/check-nvidia-host.sh` prontos; falta só o `sudo` do host (nvidia-container-toolkit) e o teste. A iGPU Intel já corta a CPU do daemon em ~47%.
 | D4 | Windows/macOS: manter só "compila" (ADR 0001) ou subir o nível | 5.6 |
 
 ## M0 — Fundação e medição (0.8.x)

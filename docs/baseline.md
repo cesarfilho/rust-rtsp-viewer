@@ -43,3 +43,8 @@ grandeza abaixo do decodificador (~70 MiB por câmera). O pré-roll não é prob
 as de CPU saíram confundidas por um build em paralelo: só o RSS vale.
 Limites conhecidos: o tap codificado liga o primeiro pad do `rtspsrc` (como o `decodebin` já fazia): uma
 câmera cujo SDP lista o áudio antes do vídeo não funcionaria; a faixa de áudio ainda não entra no arquivo.
+
+## GPU depois do daemon sem RGBA (2026-10-05)
+11 câmeras HLS no contêiner, 40 s de aquecimento e 40 s de amostra, em sequência: decodificação por CPU (`avdec_h264`)
+**88%** de CPU média (máx 125%, 625 MiB) × iGPU Intel por VA-API (`vah264dec`) **47%** (máx 70%, 709 MiB). Com o RGBA fora do
+caminho, a decodificação passou a dominar e a GPU a reduz quase pela metade. Detalhes em `docs/gpu-container.md`.

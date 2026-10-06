@@ -1,0 +1,26 @@
+# Decodificação por GPU NVIDIA (NVDEC) no contêiner (decisão D6, plano 2.5.10).
+#
+#   scripts/check-nvidia-host.sh                       # confere o host e diz o que falta instalar
+#   docker compose -f compose.yaml -f compose.nvidia.yaml up -d
+#   docker exec rrv rrvctl status                      # a coluna "decodificador" mostra nvh264dec (GPU)
+#
+# Requer o `nvidia-container-toolkit` no HOST (precisa de sudo; ver docs/gpu-container.md). A imagem já traz o
+# plugin `nvcodec` do GStreamer: o toolkit injeta no contêiner as bibliotecas do driver (libcuda, libnvcuvid)
+# quando a capacidade `video` é pedida, e só então o plugin registra `nvh264dec` / `nvh265dec`.
+#
+# Pode ser combinado com o VA-API (`-f compose.vaapi.yaml`), mas os dois disputam o mesmo `decodebin`: o
+# `GST_PLUGIN_FEATURE_RANK` abaixo põe o NVDEC na frente.
+services:
+  rrv:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
+      # No GStreamer 1.22 o rank do NVDEC depende da versão; acima do avdec_h264 (256) ele é sempre escolhido.
+      GST_PLUGIN_FEATURE_RANK: "nvh264dec:260,nvh265dec:260"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu, video, utility]

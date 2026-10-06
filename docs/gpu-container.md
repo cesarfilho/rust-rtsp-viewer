@@ -1,7 +1,20 @@
 # Decodificação por GPU no contêiner (plano 2.5.10)
 
-Medido em 2026-10-05. **Conclusão: funciona, mas hoje não economiza CPU.** O ganho depende do
-caminho NV12 + shader (tarefa 2.3).
+Medido em 2026-10-05. **Conclusão atual: a iGPU Intel (VA-API) reduz a CPU do daemon quase pela metade**
+(88% → 47% com 11 câmeras HLS, medido depois de o daemon deixar de converter para RGBA, `0fd1456`).
+A primeira medição (abaixo, "Medição inicial") dava empate (71% × 74%) porque a conversão RGBA de cada quadro
+dominava e escondia o ganho da decodificação. Para a *janela* (que ainda converte para RGBA) o ganho
+depende do caminho NV12 + shader (tarefa 2.3).
+
+## Medição atual (daemon sem RGBA, 11 câmeras HLS 720p/1080p H.264, contêiner)
+| | Decodificador | CPU média | CPU máx | RSS |
+|---|---|---|---|---|
+| CPU | `avdec_h264` | 88% | 125% | 625 MiB |
+| iGPU Intel (VA-API) | `vah264dec` | **47%** | 70% | 709 MiB |
+
+(100% = 1 núcleo; `scripts/baseline-docker.sh` com `RRV_DOCKER_ARGS="--device /dev/dri:/dev/dri --group-add <gid render>
+-e GST_PLUGIN_FEATURE_RANK=vah264dec:259,vah265dec:259"`. Os números absolutos variam entre rodadas por causa da rede das
+câmeras públicas; a comparação foi feita em sequência, na mesma configuração.)
 
 ## Como ligar
 ```bash
@@ -10,8 +23,27 @@ docker exec rrv rrvctl status   # coluna "decodificador": vah264dec (GPU) ou avd
 docker exec rrv vainfo          # diagnóstico do driver
 ```
 - `RRV_RENDER_GID` = o GID do grupo `render` **do host** (`getent group render | cut -d: -f3`).
-- Só iGPU Intel/AMD por VA-API. A NVIDIA exige o `nvidia-container-toolkit` no host (D6) e não é
-  coberta aqui.
+- Só iGPU Intel/AMD por VA-API. Para a NVIDIA, veja a seção abaixo (`compose.nvidia.yaml`).
+
+## GPU NVIDIA (D6): o que falta no host
+O driver do host está pronto (GTX 1650, 610.57), mas **o contêiner só enxerga a GPU com o `nvidia-container-toolkit`**,
+e instalá-lo precisa de `sudo` (não faço isso por você). A imagem já traz o plugin `nvcodec` do GStreamer; o toolkit
+injeta as bibliotecas do driver (`libcuda`, `libnvcuvid`) e então o plugin registra `nvh264dec`/`nvh265dec`.
+
+```bash
+scripts/check-nvidia-host.sh      # só lê; diz o que falta e o comando de cada passo
+# no Arch/Omarchy, o que costuma faltar (rode você, com sudo):
+sudo pacman -S nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+scripts/check-nvidia-host.sh      # agora deve terminar com "o contêiner enxerga a GPU"
+docker compose -f compose.yaml -f compose.nvidia.yaml up -d
+docker exec rrv rrvctl status     # decodificador: nvh264dec (GPU)
+```
+**Não testado:** o `compose.nvidia.yaml` valida (`docker compose config`), mas ninguém o rodou com o toolkit. Com a
+GPU de 4 GB o ganho esperado é parecido com o da iGPU Intel (a decodificação sai da CPU); a vantagem da NVIDIA seria a
+inferência de IA (M4), que depende do spike do `ort` com CUDA/cuDNN (0.6). Se a iGPU Intel já resolve a decodificação,
+a NVIDIA só vale a pena para a IA.
 
 ## O que descobri no caminho
 1. **O nó de renderização não é fixo.** Neste host a iGPU Intel é a `renderD129` e a NVIDIA é a
@@ -24,7 +56,7 @@ docker exec rrv vainfo          # diagnóstico do driver
    (corretamente), e custa muito mais. Câmeras reais enviam 4:2:0; uma fonte de teste precisa forçar
    `video/x-raw,format=I420` antes do `x264enc`.
 
-## Medição (4 câmeras 1080p30 H.264 4:2:0 ao vivo, contêiner do daemon, movimento desligado)
+## Medição inicial, antes de o daemon deixar o RGBA (4 câmeras 1080p30 H.264 4:2:0 ao vivo, contêiner do daemon, movimento desligado)
 | | Decodificador | CPU do contêiner |
 |---|---|---|
 | CPU | `avdec_h264` | 71% de um núcleo (~18% por câmera) |

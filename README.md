@@ -330,9 +330,10 @@ docker compose logs -f rrv
 - Fora do Docker: `cargo run -p rrv-daemon -- config.toml` (mesmos `--check` e `--health`).
 
 **GPU Intel (VA-API):** `docker compose -f compose.yaml -f compose.vaapi.yaml up -d`; o `rrvctl status` mostra
-`vah264dec (GPU)` ou `avdec_h264 (CPU)`. **Hoje ela não reduz a CPU** (medido: 71% × 74% de um núcleo
-para 4 câmeras 1080p30), porque o custo está na conversão RGBA, não no H.264; veja
-`docs/gpu-container.md`. A NVIDIA exige o `nvidia-container-toolkit`, e o aviso de movimento com a janela fechada é o `[webhook]` (abaixo); os eventos também vão para
+`vah264dec (GPU)` ou `avdec_h264 (CPU)`. **No daemon ela corta a CPU quase pela metade** (medido: 88% → 47% de um núcleo com
+11 câmeras HLS); para a janela o ganho espera o caminho NV12 (plano 2.3). Veja `docs/gpu-container.md`.
+**GPU NVIDIA:** `compose.nvidia.yaml`; precisa do `nvidia-container-toolkit` no host (`scripts/check-nvidia-host.sh` diz o que
+falta; ainda não testada). e o aviso de movimento com a janela fechada é o `[webhook]` (abaixo); os eventos também vão para
 `docker compose logs`. A imagem tem ~1 GB (plugins
 `bad`/`ugly`/`libav` do GStreamer).
 
