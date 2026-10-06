@@ -61,6 +61,16 @@ fn check_only(config_path: &str) -> Result<(), String> {
 fn run(config_path: &str, cli: &Cli) -> Result<(), String> {
     let (config, _) = rust_rtsp_viewer::startup::load_config(config_path, "rust-rtsp-viewer")?;
 
+    // O idioma: `language` do config; sem ele, o do sistema. (A escolha feita no menu, gravada no
+    // view.toml, é aplicada depois, em `new_app`.)
+    rust_rtsp_viewer::i18n::set(
+        config
+            .language
+            .as_deref()
+            .and_then(rust_rtsp_viewer::i18n::Lang::parse)
+            .unwrap_or_else(rust_rtsp_viewer::i18n::from_environment),
+    );
+
     let mut cameras = config.cameras.clone().unwrap_or_default();
     rust_rtsp_viewer::startup::merge_global_camera_defaults(&mut cameras, &config);
 

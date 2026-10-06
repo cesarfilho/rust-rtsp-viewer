@@ -28,6 +28,8 @@ pub struct ViewStateFile {
     /// `"grid"` or `"flex"`.
     pub layout: Option<String>,
     pub sidebar_visible: Option<bool>,
+    /// Interface language (`"pt-BR"` / `"en"`), chosen in the menu.
+    pub language: Option<String>,
 }
 
 /// `~/…` expansion limited to a leading `~/`, matching

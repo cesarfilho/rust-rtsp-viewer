@@ -141,6 +141,11 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
             app.theme = t;
             Task::none()
         }
+        Message::LanguageChanged(lang) => {
+            crate::i18n::set(lang);
+            persist_view(app);
+            Task::none()
+        }
         Message::Sidebar(msg) => update_sidebar(app, msg),
         Message::LayoutModeChanged(mode) => {
             app.layout_mode = mode;
@@ -1250,6 +1255,7 @@ fn persist_view(app: &App) {
             .to_string(),
         ),
         sidebar_visible: Some(app.sidebar.visible),
+        language: Some(crate::i18n::get().code().to_string()),
     };
     crate::infrastructure::view_state::save(&state);
 }

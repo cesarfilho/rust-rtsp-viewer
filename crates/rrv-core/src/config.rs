@@ -23,6 +23,9 @@ pub struct Config {
     pub cameras: Option<Vec<CameraConfig>>,
     /// UI theme: "cosmic" (default), "dark", "light", "amoled" or "opencode".
     pub theme: Option<String>,
+    /// Interface language: `"pt-BR"` or `"en"`. Default: the system's (`LANG`), else Portuguese.
+    /// The choice made in the window's menu is saved in `view.toml` and wins.
+    pub language: Option<String>,
     /// Per-camera log file directory. Default: `~/logs/rust-rtsp-viewer`.
     /// Each camera gets its own file: `<dir>/<safe_label>.log`.
     pub logs: Option<LogsConfigFile>,
