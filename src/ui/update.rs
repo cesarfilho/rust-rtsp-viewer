@@ -2516,6 +2516,122 @@ mod tests {
         assert_eq!(app.toasts.len(), toasts, "sem avisos a cada 5 s");
     }
 
+    /// A 3 s mkv made on the spot, to give the player something real to open.
+    fn tiny_mkv(path: &std::path::Path) {
+        use gstreamer as gst;
+        use gstreamer::prelude::*;
+        let _ = gst::init();
+        let p = gst::parse::launch(&format!(
+            "videotestsrc num-buffers=90 ! video/x-raw,format=I420,width=160,height=120,framerate=30/1 \
+             ! x264enc tune=zerolatency key-int-max=10 ! h264parse ! matroskamux ! filesink location={}",
+            path.display()
+        ))
+        .unwrap();
+        p.set_state(gst::State::Playing).unwrap();
+        p.bus()
+            .unwrap()
+            .timed_pop_filtered(
+                gst::ClockTime::from_seconds(20),
+                &[gst::MessageType::Eos, gst::MessageType::Error],
+            )
+            .unwrap();
+        p.set_state(gst::State::Null).unwrap();
+    }
+
+    #[test]
+    fn clicking_inside_the_playing_segment_seeks_instead_of_reopening_it() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        let dir = std::env::temp_dir().join(format!("rrv-ui-drag-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        tiny_mkv(&dir.join("a.mkv"));
+        app.recordings_dir = dir.clone();
+        let _ = update(&mut app, Message::Recordings(RecMsg::Open));
+        let token = *app.pending.keys().next().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let start = now - 120_000;
+        handle_reply(
+            &mut app,
+            token,
+            Ok(history_reply(vec![seg(
+                1,
+                start,
+                Some(start + 3_000),
+                "a.mkv",
+            )])),
+        );
+
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::Clicked {
+                lane: 0,
+                t_ms: start + 100,
+            }),
+        );
+        let first = app
+            .recordings
+            .as_ref()
+            .unwrap()
+            .player
+            .as_ref()
+            .expect("abriu")
+            .bridge
+            .clone();
+
+        // arrastar: vários cliques dentro do mesmo trecho nunca reabrem o arquivo
+        for dt in [1_000, 1_500, 2_000, 2_500] {
+            let _ = update(
+                &mut app,
+                Message::Recordings(RecMsg::Clicked {
+                    lane: 0,
+                    t_ms: start + dt,
+                }),
+            );
+            let p = app.recordings.as_ref().unwrap().player.as_ref().unwrap();
+            assert!(
+                std::sync::Arc::ptr_eq(&first, &p.bridge),
+                "reabriu o arquivo em +{dt} ms"
+            );
+        }
+        // e o seek vale: a posição chega perto do último ponto (ou fica pendente até a duração)
+        let mut position = 0;
+        for _ in 0..60 {
+            super::super::recordings::tick(&mut app);
+            position = app
+                .recordings
+                .as_ref()
+                .unwrap()
+                .player
+                .as_ref()
+                .unwrap()
+                .bridge
+                .lock()
+                .unwrap()
+                .playback_position_ms()
+                .unwrap_or(0);
+            if position >= 2_000 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(
+            position >= 2_000,
+            "posição depois de arrastar: {position} ms"
+        );
+        // nenhum aviso de "lacuna" por causa do arrastar
+        assert!(
+            !app.toasts
+                .iter()
+                .any(|t| t.message.contains("Sem gravação"))
+        );
+        let _ = update(&mut app, Message::Recordings(RecMsg::Close));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn closing_without_local_recordings_does_not_ask() {
         let mut app = test_app();

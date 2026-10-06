@@ -409,6 +409,22 @@ fn click(app: &mut App, lane: usize, t_ms: i64) {
         },
     };
     let segment = v.segments[pick].clone();
+    // The segment already playing (also when the pointer is over the gap just before it):
+    // just move inside it. This is what makes dragging the playhead cheap (a seek per
+    // mouse move instead of reopening the file, and no toast per move).
+    if let Some(p) = app.recordings.as_mut().and_then(|v| v.player.as_mut())
+        && p.camera == camera
+        && p.segment.id == segment.id
+    {
+        let offset = (at - segment.ts_start).max(0) as u64;
+        let b = p.bridge.lock().unwrap_or_else(|e| e.into_inner());
+        if b.playback_duration_ms().is_some() && b.seek_ms(offset).is_ok() {
+            p.pending_seek_ms = None;
+        } else {
+            p.pending_seek_ms = Some(offset);
+        }
+        return;
+    }
     if gap {
         super::update::toast(app, "Sem gravação aqui; indo para o próximo trecho");
     }
@@ -581,11 +597,12 @@ struct TimelineProgram<'a> {
 }
 
 impl canvas::Program<Message> for TimelineProgram<'_> {
-    type State = ();
+    /// `true` while the left button is held on the timeline (dragging the playhead).
+    type State = bool;
 
     fn draw(
         &self,
-        _state: &(),
+        _state: &bool,
         renderer: &Renderer,
         _theme: &iced::Theme,
         bounds: Rectangle,
@@ -695,47 +712,69 @@ impl canvas::Program<Message> for TimelineProgram<'_> {
 
     fn update(
         &self,
-        _state: &mut (),
+        dragging: &mut bool,
         event: canvas::Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> (canvas::event::Status, Option<Message>) {
+        use canvas::event::Status::{Captured, Ignored};
         let plot_w = (bounds.width - GUTTER).max(1.0);
-        let Some(pos) = cursor.position_in(bounds) else {
-            return (canvas::event::Status::Ignored, None);
+        let lanes = self.view.lanes.len();
+        // Where the pointer is on the plot, even a little outside it while dragging.
+        let at = |p: iced::Point| {
+            let frac = ((p.x - GUTTER) / plot_w).clamp(0.0, 1.0);
+            let lane = ((p.y / LANE_H).max(0.0) as usize).min(lanes.saturating_sub(1));
+            (lane, self.view.span.time_at(frac), frac)
         };
-        let frac = ((pos.x - GUTTER) / plot_w).clamp(0.0, 1.0);
+        let clicked = |lane, t_ms| Some(Message::Recordings(RecMsg::Clicked { lane, t_ms }));
         match event {
-            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
-                if pos.x >= GUTTER =>
-            {
-                let lane = (pos.y / LANE_H) as usize;
-                if lane < self.view.lanes.len() {
-                    let t_ms = self.view.span.time_at(frac);
-                    return (
-                        canvas::event::Status::Captured,
-                        Some(Message::Recordings(RecMsg::Clicked { lane, t_ms })),
-                    );
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                let Some(pos) = cursor.position_in(bounds) else {
+                    return (Ignored, None);
+                };
+                if pos.x < GUTTER || (pos.y / LANE_H) as usize >= lanes {
+                    return (Ignored, None);
                 }
-                (canvas::event::Status::Ignored, None)
+                *dragging = true;
+                let (lane, t_ms, _) = at(pos);
+                (Captured, clicked(lane, t_ms))
+            }
+            canvas::Event::Mouse(mouse::Event::CursorMoved { .. }) if *dragging => {
+                match cursor.position_from(bounds.position()) {
+                    Some(pos) => {
+                        let (lane, t_ms, _) = at(pos);
+                        (Captured, clicked(lane, t_ms))
+                    }
+                    None => (Ignored, None),
+                }
+            }
+            canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if *dragging =>
+            {
+                *dragging = false;
+                (Captured, None)
             }
             canvas::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                let Some(pos) = cursor.position_in(bounds) else {
+                    return (Ignored, None);
+                };
                 let y = match delta {
                     mouse::ScrollDelta::Lines { y, .. } | mouse::ScrollDelta::Pixels { y, .. } => y,
                 };
                 if y == 0.0 {
-                    return (canvas::event::Status::Ignored, None);
+                    return (Ignored, None);
                 }
+                let (_, _, frac) = at(pos);
                 let factor = if y > 0.0 { 0.8 } else { 1.25 };
                 (
-                    canvas::event::Status::Captured,
+                    Captured,
                     Some(Message::Recordings(RecMsg::Zoom {
                         factor,
                         anchor: frac,
                     })),
                 )
             }
-            _ => (canvas::event::Status::Ignored, None),
+            _ => (Ignored, None),
         }
     }
 }

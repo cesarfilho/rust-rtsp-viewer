@@ -365,7 +365,7 @@ cada evento. Na janela, a tecla **`t`** (ou `⋯` → Gravações) abre a vista 
 
 - uma **linha do tempo por câmera** (1 h / 6 h / 24 h / 7 d, roda do mouse aproxima, `‹ ›` desloca); azul =
   gravação, âmbar = com movimento, vermelho = gravando agora, um traço claro no topo = protegido;
-- **clicar** toca aquele instante (se cair numa lacuna, vai para o próximo trecho); o player tem tocar/pausar
+- **clicar** toca aquele instante e **arrastar** navega (se cair numa lacuna, vai para o próximo trecho); o player tem tocar/pausar
   (`Espaço`), ±10 s (`←` `→`), quadro a quadro, 0,5×–4×;
 - a **lista de eventos** ao lado (filtro "só movimento"); clicar num evento toca **5 s antes** dele;
 - **`I`** e **`O`** marcam início e fim, **`E`** exporta o clipe (`.mp4`, sem reencode) para `exports/` dentro da
