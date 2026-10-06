@@ -274,6 +274,52 @@ fn the_history_records_the_segment_and_links_the_motion_event() {
     assert!(ev.iter().any(|x| x.kind == "recording_stop"));
 }
 
+/// Ponta a ponta (plano C4): uma pessoa "vista" no quadro em movimento vira um evento `detection` no
+/// histórico, com rótulo, confiança e caixa, e um segundo evento do mesmo rótulo só depois do cooldown.
+#[test]
+fn a_detection_lands_in_the_history_with_label_score_and_box() {
+    use rrv_core::infrastructure::store::{Store, StoreHandle};
+
+    let tmp = TempDir::new("detect-history");
+    let cam = LiveCamera::start(&tmp.0);
+    let rec = tmp.path("rec");
+    let db = tmp.path("history.db");
+    let mut e = engine(&cam.url(), &rec, 3600);
+    e.set_store(StoreHandle::spawn(db.clone()).unwrap());
+    e.set_detect_policy(vec![0], 5);
+    e.set_inference(rrv_core::engine::inference::InferenceWorker::start(
+        SeesAPerson,
+        2,
+    ));
+
+    let mut events = Vec::new();
+    // 5 s é o cooldown mínimo: com a cena em movimento, em ~14 s há ao menos dois eventos
+    run(&mut e, 14, &mut events, |_, _| false);
+    e.shutdown();
+    drop(e);
+
+    let store = Store::open(&db).unwrap();
+    let found: Vec<_> = store
+        .events_between(Some("cam"), 0, i64::MAX)
+        .unwrap()
+        .into_iter()
+        .filter(|x| x.kind == "detection")
+        .collect();
+    assert!(!found.is_empty(), "nenhuma detecção no histórico");
+    let d = &found[0];
+    assert_eq!(d.label, "person");
+    assert_eq!(d.score.map(|s| (s * 100.0).round()), Some(90.0));
+    assert_eq!(d.bbox, Some([0.25, 0.25, 0.5, 0.5]));
+    let dets = kinds(&events)
+        .into_iter()
+        .filter(|k| *k == EventType::Detection)
+        .count();
+    assert_eq!(dets, found.len(), "o motor e o histórico concordam");
+    for pair in found.windows(2) {
+        assert!(pair[1].ts - pair[0].ts >= 4_900, "cooldown: {pair:?}");
+    }
+}
+
 /// O defeito do SIGTERM: parar com uma gravação em curso tem de deixar o
 /// arquivo finalizado, não vazio.
 #[test]

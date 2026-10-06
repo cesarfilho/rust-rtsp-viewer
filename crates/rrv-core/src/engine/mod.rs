@@ -133,6 +133,13 @@ pub struct Engine {
     pub inference: Option<inference::InferenceWorker>,
     /// Objects seen in each camera's latest analysed frame (normalised to the whole picture).
     pub detections: Vec<Vec<Detection>>,
+    /// Classes that raise events and are kept (`[detect] labels`); empty = all.
+    pub detect_labels: Vec<usize>,
+    /// Minimum seconds between two events of one class on one camera.
+    pub detect_cooldown_secs: u64,
+    /// When each `(camera, class)` last raised an event, and last notified.
+    pub detect_last: HashMap<(usize, usize), Instant>,
+    pub detect_notify_last: HashMap<(usize, usize), Instant>,
     /// Motion zones per camera (empty = the whole frame counts).
     pub zones: Vec<ZoneConfig>,
     /// Desktop-notification policy.
@@ -285,6 +292,10 @@ impl Engine {
             auto_recording: vec![false; count],
             inference: None,
             detections: vec![Vec::new(); count],
+            detect_labels: Vec::new(),
+            detect_cooldown_secs: 30,
+            detect_last: HashMap::new(),
+            detect_notify_last: HashMap::new(),
             zones: zone_configs,
             notify,
             notify_last: HashMap::new(),
@@ -513,6 +524,8 @@ impl Engine {
                 kind: kind.slug().to_string(),
                 label: detail.clone().unwrap_or_default(),
                 score: None,
+                bbox: None,
+                zone: None,
             });
         }
         let notification = self.notification_for(camera, kind, detail.as_deref());
@@ -694,25 +707,34 @@ impl Engine {
         self.inference = Some(worker);
     }
 
+    /// Which classes raise events (`ids`, empty = all) and how often per camera and class.
+    pub fn set_detect_policy(&mut self, labels: Vec<usize>, cooldown_secs: u64) {
+        self.detect_labels = labels;
+        self.detect_cooldown_secs = cooldown_secs;
+    }
+
     /// Collects what the inference thread finished: boxes are mapped from the crop back to the whole
-    /// picture and the ones whose centre falls outside the active zones are dropped.
+    /// picture, the ones whose centre falls outside the active zones or whose class is not wanted
+    /// are dropped, and what is left raises `Detection` events (rate-limited per camera and class).
     pub fn poll_inference(&mut self) {
-        let Some(worker) = &self.inference else {
-            return;
+        let results = match &self.inference {
+            Some(w) => w.take_results(),
+            None => return,
         };
-        for r in worker.take_results() {
-            let Some(slot) = self.detections.get_mut(r.camera) else {
+        for r in results {
+            if r.camera >= self.detections.len() {
                 continue;
-            };
+            }
             if let Some(e) = &r.error {
                 log::warn!("detecção na câmera {}: {e}", r.camera);
                 continue;
             }
             let zones = self.zones.get(r.camera);
-            *slot = r
+            let kept: Vec<Detection> = r
                 .detections
                 .iter()
                 .map(|d| d.from_crop(&r.region))
+                .filter(|d| self.detect_labels.is_empty() || self.detect_labels.contains(&d.class))
                 .filter(|d| {
                     let (x, y) = d.centre();
                     zones.is_none_or(|z| {
@@ -723,7 +745,108 @@ impl Engine {
                     })
                 })
                 .collect();
+            self.detections[r.camera] = kept.clone();
+            self.raise_detection_events(r.camera, &kept);
         }
+    }
+
+    /// One event per class (its best box) unless that class already raised one on this camera
+    /// within the cooldown.
+    fn raise_detection_events(&mut self, camera: usize, found: &[Detection]) {
+        let mut best: Vec<&Detection> = Vec::new();
+        for d in found {
+            match best.iter_mut().find(|b| b.class == d.class) {
+                Some(b) if b.score >= d.score => {}
+                Some(b) => *b = d,
+                None => best.push(d),
+            }
+        }
+        for d in best {
+            let key = (camera, d.class);
+            let recent = self
+                .detect_last
+                .get(&key)
+                .is_some_and(|t| t.elapsed().as_secs() < self.detect_cooldown_secs);
+            if recent {
+                continue;
+            }
+            let _ = self.detect_last.insert(key, Instant::now());
+            self.emit_detection(camera, d);
+        }
+    }
+
+    fn emit_detection(&mut self, camera: usize, d: &Detection) {
+        if self.display_only {
+            return;
+        }
+        let (cx, cy) = d.centre();
+        let zone = self
+            .zones
+            .get(camera)
+            .and_then(|z| {
+                z.zone_at(crate::domain::zones::Point {
+                    x: f64::from(cx),
+                    y: f64::from(cy),
+                })
+            })
+            .map(str::to_string);
+        let name = self
+            .names
+            .get(camera)
+            .cloned()
+            .unwrap_or_else(|| format!("Câmera {}", camera + 1));
+        if let Some(store) = &self.store {
+            store.send(StoreCmd::Event {
+                camera: name.clone(),
+                ts: now_ms(),
+                kind: EventType::Detection.slug().to_string(),
+                label: d.label().to_string(),
+                score: Some(f64::from(d.score)),
+                bbox: Some([d.x, d.y, d.w, d.h]),
+                zone: zone.clone(),
+            });
+        }
+        let percent = (d.score * 100.0).round();
+        let detail = match &zone {
+            Some(z) => format!("{} {percent}% · {z}", d.label()),
+            None => format!("{} {percent}%", d.label()),
+        };
+        let notification = self.detection_notification(camera, d, &name, percent, zone.as_deref());
+        self.events.push(EngineEvent {
+            camera,
+            kind: EventType::Detection,
+            detail: Some(detail),
+            notification,
+        });
+    }
+
+    /// Same cooldown as the event itself, but also bounded by `[notifications] cooldown_secs`.
+    fn detection_notification(
+        &mut self,
+        camera: usize,
+        d: &Detection,
+        name: &str,
+        percent: f32,
+        zone: Option<&str>,
+    ) -> Option<(String, String)> {
+        if !self.notify.enabled {
+            return None;
+        }
+        let key = (camera, d.class);
+        let since = self
+            .detect_notify_last
+            .get(&key)
+            .map(|t| t.elapsed().as_secs());
+        if !crate::domain::notify::cooldown_elapsed(since, self.notify.cooldown_secs) {
+            return None;
+        }
+        let _ = self.detect_notify_last.insert(key, Instant::now());
+        Some(crate::domain::notify::detection_message(
+            d.label(),
+            name,
+            percent,
+            zone,
+        ))
     }
 
     /// Start a recording when motion appears and stop it after the post-roll,
@@ -1121,6 +1244,10 @@ mod tests {
             auto_recording: vec![false; n],
             inference: None,
             detections: vec![Vec::new(); n],
+            detect_labels: Vec::new(),
+            detect_cooldown_secs: 30,
+            detect_last: HashMap::new(),
+            detect_notify_last: HashMap::new(),
             zones: vec![ZoneConfig::default(); n],
             notify: NotifyConfig {
                 enabled: false,
@@ -1431,6 +1558,136 @@ mod tests {
             "o modelo rodou"
         );
         assert!(e.detections[0].is_empty(), "{:?}", e.detections[0]);
+    }
+
+    fn det(class: usize, score: f32, x: f32) -> Detection {
+        Detection {
+            class,
+            score,
+            x,
+            y: 0.4,
+            w: 0.1,
+            h: 0.2,
+        }
+    }
+
+    /// Feeds `poll_inference` as if the thread had analysed a frame of camera 0.
+    fn analysed(e: &mut Engine, found: Vec<Detection>) {
+        e.raise_detection_events(0, &found);
+        e.detections[0] = found;
+    }
+
+    #[test]
+    fn a_detection_raises_one_event_per_class_per_cooldown() {
+        let (mut e, _) = spied_engine();
+        e.detect_cooldown_secs = 30;
+        // pessoa (duas caixas: vale a de maior score) e carro, no mesmo quadro
+        analysed(
+            &mut e,
+            vec![det(0, 0.6, 0.1), det(0, 0.9, 0.5), det(2, 0.7, 0.8)],
+        );
+        let ev = e.take_events();
+        assert_eq!(ev.len(), 2, "{ev:?}");
+        assert!(ev.iter().all(|x| x.kind == EventType::Detection));
+        let person = ev
+            .iter()
+            .find(|x| x.detail.as_deref().unwrap().starts_with("person"))
+            .unwrap();
+        assert_eq!(person.detail.as_deref(), Some("person 90%"));
+        // de novo logo em seguida: dentro do cooldown, nada
+        analysed(&mut e, vec![det(0, 0.9, 0.5), det(2, 0.7, 0.8)]);
+        assert!(e.take_events().is_empty());
+        // vencido o cooldown só da pessoa: só ela volta
+        let _ = e
+            .detect_last
+            .insert((0, 0), Instant::now() - Duration::from_secs(31));
+        analysed(&mut e, vec![det(0, 0.9, 0.5), det(2, 0.7, 0.8)]);
+        let ev = e.take_events();
+        assert_eq!(ev.len(), 1);
+        assert!(ev[0].detail.as_deref().unwrap().starts_with("person"));
+    }
+
+    #[test]
+    fn the_notification_names_the_object_and_has_its_own_cooldown_per_class() {
+        let (mut e, _) = spied_engine();
+        e.notify.enabled = true;
+        e.notify.cooldown_secs = 60;
+        e.detect_cooldown_secs = 5;
+        analysed(&mut e, vec![det(0, 0.9, 0.5), det(2, 0.7, 0.8)]);
+        let ev = e.take_events();
+        let titles: Vec<_> = ev
+            .iter()
+            .filter_map(|x| x.notification.as_ref().map(|n| n.0.clone()))
+            .collect();
+        assert!(
+            titles.contains(&"Detecção: pessoa".to_string()),
+            "{titles:?}"
+        );
+        assert!(
+            titles.contains(&"Detecção: carro".to_string()),
+            "{titles:?}"
+        );
+        // o evento volta (cooldown de 5 s vencido) mas o aviso, de 60 s, não
+        for k in [(0, 0), (0, 2)] {
+            let _ = e
+                .detect_last
+                .insert(k, Instant::now() - Duration::from_secs(6));
+        }
+        analysed(&mut e, vec![det(0, 0.9, 0.5)]);
+        let ev = e.take_events();
+        assert_eq!(ev.len(), 1);
+        assert!(
+            ev[0].notification.is_none(),
+            "o aviso respeita o cooldown próprio"
+        );
+    }
+
+    #[test]
+    fn only_the_wanted_labels_are_kept_and_the_zone_is_named() {
+        use crate::domain::zones::{MotionZone, Point};
+        // o modelo "vê" uma pessoa (classe 0) no meio; só carro é desejado: nada fica
+        let (mut e, _seen) = spied_engine();
+        e.set_detect_policy(vec![2], 30);
+        feed(&e, 0, frame(0));
+        e.detect_motion(0);
+        feed(&e, 0, frame(4));
+        e.detect_motion(0);
+        wait_for_results(&e, 1);
+        e.poll_inference();
+        assert!(e.detections[0].is_empty());
+        assert!(
+            e.take_events()
+                .iter()
+                .all(|x| x.kind != EventType::Detection)
+        );
+
+        // com a pessoa desejada e uma zona chamada: o evento traz o nome da zona
+        let (mut e, _seen) = spied_engine();
+        e.set_detect_policy(vec![0], 30);
+        e.zones[0] = ZoneConfig {
+            zones: vec![MotionZone::new(
+                "Portão",
+                vec![
+                    Point { x: 0.0, y: 0.0 },
+                    Point { x: 1.0, y: 0.0 },
+                    Point { x: 1.0, y: 1.0 },
+                    Point { x: 0.0, y: 1.0 },
+                ],
+            )],
+        };
+        feed(&e, 0, frame(0));
+        e.detect_motion(0);
+        feed(&e, 0, frame(4));
+        e.detect_motion(0);
+        wait_for_results(&e, 1);
+        e.poll_inference();
+        let ev: Vec<_> = e
+            .take_events()
+            .into_iter()
+            .filter(|x| x.kind == EventType::Detection)
+            .collect();
+        assert_eq!(ev.len(), 1, "{ev:?}");
+        assert_eq!(ev[0].detail.as_deref(), Some("person 90% · Portão"));
     }
 
     #[test]

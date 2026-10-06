@@ -127,6 +127,15 @@ pub struct HistoryEvent {
     pub kind: String,
     pub label: String,
     pub segment_id: Option<i64>,
+    /// Confiança (0–1) de uma detecção.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<f64>,
+    /// Caixa `[x, y, w, h]` normalizada ao quadro, nas detecções.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bbox: Option<[f32; 4]>,
+    /// Zona de movimento em que o objeto estava, nas detecções.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zone: Option<String>,
 }
 
 /// Uma câmera como o cliente a vê.

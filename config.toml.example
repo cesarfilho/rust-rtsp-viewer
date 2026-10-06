@@ -172,10 +172,15 @@ label = "Rio Jardim Sofia"
 # ORT_DYLIB_PATH para a libonnxruntime.so (CPU ou CUDA).
 # [detect]
 # enabled = false
-# model = "models/yolo11n-320.onnx"   # 320 para CPU, 640 para GPU
+# model = "models/yolo11n-640.onnx"   # 640 acha objetos grandes e pequenos; o 320 perde os grandes
+#                                     # no quadro reduzido de 320 px (docs/spike-0.6-ort.md)
 # backend = "auto"                    # "cpu", "cuda" ou "auto" (CUDA, senão CPU)
 # min_score = 0.25                    # 0.05–0.99
 # iou = 0.45                          # 0.1–0.9 (supressão de caixas sobrepostas)
+# labels = ["person", "car"]          # só estas classes (nomes COCO em inglês); vazio = todas
+# cooldown_secs = 30                  # 5–3600: um evento por câmera e classe a cada 30 s
+# (cada detecção vira um evento "detection" no histórico: rótulo, confiança, caixa e zona;
+#  `rrvctl history --label person` filtra; avisos e webhook seguem [notifications]/[webhook])
 
 # ── Retenção das gravações (só o daemon) ─────────────────────────────────────
 # Roda a cada minuto. Apaga o arquivo e depois o registro; nunca toca em

@@ -290,6 +290,8 @@ fn announce_disk(
             kind: "disk_low".into(),
             label: detail,
             score: None,
+            bbox: None,
+            zone: None,
         });
     }
 }
@@ -378,6 +380,7 @@ fn start_detection(engine: &mut Engine, cfg: rrv_core::domain::detect::DetectCon
                 d.input_size()
             );
             let d = d.with_thresholds(cfg.min_score, cfg.iou);
+            engine.set_detect_policy(cfg.labels.clone(), cfg.cooldown_secs);
             engine.set_inference(InferenceWorker::start(d, engine.camera_count().max(2)));
         }
         Err(e) => log::warn!("detecção desligada: {e}"),

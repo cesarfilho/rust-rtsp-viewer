@@ -188,6 +188,9 @@ pub fn apply(host: &mut Host<'_>, request: &Request) -> Response {
                         kind: e.kind,
                         label: e.label,
                         segment_id: e.segment_id,
+                        score: e.score,
+                        bbox: e.bbox,
+                        zone: e.zone,
                     })
                     .collect::<Vec<_>>(),
                 Err(e) => return error(format!("histórico: {e}")),
@@ -540,6 +543,55 @@ mod tests {
         };
         assert_eq!(segments.len(), 2, "sem nome: todas as câmeras");
         assert!(segments[0].ts_start <= segments[1].ts_start, "em ordem");
+    }
+
+    #[test]
+    fn history_carries_the_label_score_box_and_zone_of_a_detection() {
+        let mut e = engine(1);
+        let mut z = ZonesFile::default();
+        let store = Store::open_in_memory().unwrap();
+        store
+            .insert_event_full(
+                "cam0",
+                1_500,
+                "detection",
+                "person",
+                Some(0.9),
+                Some([0.1, 0.2, 0.3, 0.4]),
+                Some("Portão"),
+            )
+            .unwrap();
+        let Response::History { events, .. } = apply(
+            &mut Host {
+                engine: &mut e,
+                zones_file: &mut z,
+                persist: false,
+                history: Some(&store),
+                recordings: None,
+            },
+            &Request::History {
+                camera: None,
+                from_ms: 0,
+                to_ms: 10_000,
+            },
+        ) else {
+            panic!("esperava History");
+        };
+        assert_eq!(events[0].kind, "detection");
+        assert_eq!(events[0].label, "person");
+        assert_eq!(events[0].score, Some(0.9));
+        assert_eq!(events[0].bbox, Some([0.1, 0.2, 0.3, 0.4]));
+        assert_eq!(events[0].zone.as_deref(), Some("Portão"));
+        // um cliente antigo, sem esses campos, ainda lê a linha: o JSON sem eles é aceito
+        let old = r#"{"id":1,"camera":"c","ts":5,"kind":"motion","label":"","segment_id":null}"#;
+        let parsed: HistoryEvent = serde_json::from_str(old).unwrap();
+        assert_eq!(
+            (parsed.score, parsed.bbox, parsed.zone.clone()),
+            (None, None, None)
+        );
+        // e um evento comum não carrega os campos novos na rede
+        let json = serde_json::to_string(&parsed).unwrap();
+        assert!(!json.contains("bbox") && !json.contains("zone"), "{json}");
     }
 
     #[test]

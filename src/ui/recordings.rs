@@ -1463,6 +1463,9 @@ mod tests {
             kind: kind.into(),
             label: String::new(),
             segment_id: None,
+            score: None,
+            bbox: None,
+            zone: None,
         }
     }
 

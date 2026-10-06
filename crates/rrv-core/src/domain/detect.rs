@@ -90,6 +90,32 @@ pub const COCO_LABELS: [&str; 80] = [
     "toothbrush",
 ];
 
+/// The class id of an English COCO name (case-insensitive).
+pub fn class_id(name: &str) -> Option<usize> {
+    COCO_LABELS
+        .iter()
+        .position(|l| l.eq_ignore_ascii_case(name.trim()))
+}
+
+/// What the person reads in a notification for the common classes; the English name otherwise.
+pub fn label_pt(label: &str) -> &str {
+    match label {
+        "person" => "pessoa",
+        "bicycle" => "bicicleta",
+        "car" => "carro",
+        "motorcycle" => "moto",
+        "bus" => "ônibus",
+        "truck" => "caminhão",
+        "bird" => "pássaro",
+        "cat" => "gato",
+        "dog" => "cachorro",
+        "backpack" => "mochila",
+        "handbag" => "bolsa",
+        "suitcase" => "mala",
+        other => other,
+    }
+}
+
 /// Grey the model was trained to see around a letterboxed picture.
 const PAD_VALUE: f32 = 114.0 / 255.0;
 
@@ -158,7 +184,7 @@ impl Detection {
 pub struct DetectFile {
     /// Run object detection on the frames where motion is seen (needs `[motion] enabled`). Default: false.
     pub enabled: Option<bool>,
-    /// Path of the ONNX model (`scripts/fetch-model.sh`). Default: `models/yolo11n-320.onnx`.
+    /// Path of the ONNX model (`scripts/fetch-model.sh`). Default: `models/yolo11n-640.onnx`.
     pub model: Option<String>,
     /// `"cpu"`, `"cuda"` or `"auto"` (CUDA, falling back to the CPU). Default: `"auto"`.
     pub backend: Option<String>,
@@ -166,6 +192,10 @@ pub struct DetectFile {
     pub min_score: Option<f32>,
     /// NMS overlap threshold (0.1–0.9). Default: 0.45.
     pub iou: Option<f32>,
+    /// Which COCO classes raise events, e.g. `["person", "car"]` (English names). Default: all.
+    pub labels: Option<Vec<String>>,
+    /// Minimum seconds between two events of one class on one camera (5–3600). Default: 30.
+    pub cooldown_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,16 +212,21 @@ pub struct DetectConfig {
     pub backend: BackendChoice,
     pub min_score: f32,
     pub iou: f32,
+    /// Class ids that raise events; empty = every class.
+    pub labels: Vec<usize>,
+    pub cooldown_secs: u64,
 }
 
 impl Default for DetectConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            model: "models/yolo11n-320.onnx".into(),
+            model: "models/yolo11n-640.onnx".into(),
             backend: BackendChoice::Auto,
             min_score: 0.25,
             iou: 0.45,
+            labels: Vec::new(),
+            cooldown_secs: 30,
         }
     }
 }
@@ -218,7 +253,22 @@ impl DetectFile {
         if !(0.1..=0.9).contains(&iou) {
             return Err(format!("iou = {iou} fora de 0.1–0.9"));
         }
+        let mut labels = Vec::new();
+        for name in self.labels.iter().flatten() {
+            let id = class_id(name).ok_or_else(|| {
+                format!("labels: \"{name}\" não é uma classe COCO (exemplos: person, car, dog)")
+            })?;
+            if !labels.contains(&id) {
+                labels.push(id);
+            }
+        }
+        let cooldown_secs = self.cooldown_secs.unwrap_or(d.cooldown_secs);
+        if !(5..=3600).contains(&cooldown_secs) {
+            return Err(format!("cooldown_secs = {cooldown_secs} fora de 5–3600"));
+        }
         Ok(DetectConfig {
+            labels,
+            cooldown_secs,
             enabled: self.enabled.unwrap_or(false),
             model: self.model.map(Into::into).unwrap_or(d.model),
             backend,
@@ -720,5 +770,19 @@ mod tests {
         assert!(f("min_score = 0.0").is_err());
         assert!(f("min_score = 1.5").is_err());
         assert!(f("iou = 0.95").is_err());
+    }
+
+    #[test]
+    fn labels_resolve_to_class_ids_and_unknown_ones_are_rejected() {
+        assert_eq!(class_id("person"), Some(0));
+        assert_eq!(class_id(" Car "), Some(2));
+        assert_eq!(class_id("unicorn"), None);
+        let f = |t: &str| toml::from_str::<DetectFile>(t).unwrap().into_config();
+        let c = f("labels = [\"person\", \"car\", \"PERSON\"]\ncooldown_secs = 10").unwrap();
+        assert_eq!((c.labels, c.cooldown_secs), (vec![0, 2], 10));
+        assert!(f("labels = [\"unicorn\"]").unwrap_err().contains("unicorn"));
+        assert!(f("cooldown_secs = 1").is_err());
+        assert_eq!(label_pt("person"), "pessoa");
+        assert_eq!(label_pt("kite"), "kite");
     }
 }

@@ -61,6 +61,9 @@ enum Command {
         /// Quantas horas olhar para trás
         #[arg(long, default_value_t = 24)]
         hours: u32,
+        /// Só os eventos com este rótulo (ex.: `person`, `car`); as gravações não são filtradas
+        #[arg(long)]
+        label: Option<String>,
     },
 }
 
@@ -248,7 +251,11 @@ fn run(cli: &Cli) -> Result<(), String> {
                 other => Err(format!("resposta inesperada: {other:?}")),
             }
         }
-        Command::History { camera, hours } => {
+        Command::History {
+            camera,
+            hours,
+            label,
+        } => {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_millis() as i64);
@@ -260,9 +267,12 @@ fn run(cli: &Cli) -> Result<(), String> {
             match c.request(&req)? {
                 Response::History {
                     segments,
-                    events,
+                    mut events,
                     truncated,
                 } => {
+                    if let Some(l) = label {
+                        events.retain(|e| e.label.eq_ignore_ascii_case(l));
+                    }
                     if cli.json {
                         println!(
                             "{}",
@@ -287,7 +297,16 @@ fn run(cli: &Cli) -> Result<(), String> {
                     }
                     println!("# eventos ({})", events.len());
                     for e in &events {
-                        println!("{}  {:<16} {}", clock(e.ts), e.camera, e.kind);
+                        let what = match (e.label.as_str(), e.score) {
+                            ("", _) => String::new(),
+                            (l, Some(s)) => format!("  {l} {:.0}%", s * 100.0),
+                            (l, None) => format!("  {l}"),
+                        };
+                        let zone = e
+                            .zone
+                            .as_deref()
+                            .map_or(String::new(), |z| format!("  [{z}]"));
+                        println!("{}  {:<16} {}{what}{zone}", clock(e.ts), e.camera, e.kind);
                     }
                     if truncated {
                         println!("(resposta cortada no limite; reduza --hours)");

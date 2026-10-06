@@ -36,3 +36,23 @@ python -c "from ultralytics import YOLO; m=YOLO('yolo11n.pt'); [m.export(format=
 ```
 
 Licença: o peso e o código da Ultralytics são AGPL-3.0, compatível com a licença deste projeto; reconferir no download (C1).
+
+## Addendum — o modelo real dentro do motor (C4, 2026-10-06)
+
+`crates/rrv-core/tests/detect_real.rs`: câmera HLS ao vivo com a foto `bus.jpg` (1280×720 com barras, um relógio no
+canto que "mexe"), motor completo, `Detector` real, histórico em SQLite. Build release, mesma máquina.
+
+| Modelo / backend | Achou | Última inferência (pré + rede + pós) |
+|---|---|---|
+| 640, CUDA (GTX 1650) | 3 pessoas (86/85/73%), ônibus (72%), "cachorro" (43%, falso positivo) | 33 ms |
+| 640, CPU | idem (ônibus 70%) | 256 ms na primeira, ~160 ms em média |
+| **320, CPU** | 3 pessoas, **sem o ônibus** | 28 ms |
+
+- A primeira inferência em CUDA leva ~2,5 s (carga do contexto): a média móvel do worker fica inflada por ela.
+- O ramo de detecção entrega quadros de **320×180**; um objeto grande como o ônibus fica com ~135 px de largura e o
+  modelo de entrada 320 o perde. **Use o modelo 640 mesmo com o quadro pequeno** (ele é ampliado) ou, depois, aumente o
+  ramo de detecção quando a detecção de objetos estiver ligada.
+- Com a cena parada o contador de inferências não sobe (CPU e CUDA).
+- VRAM da GTX 1650 com o contexto CUDA e o modelo 640: ~200 MiB (de 42 para ~243 MiB).
+- Armadilha do teste: com x264 de taxa variável cada keyframe refaz a imagem e uma cena "parada" parece em movimento a
+  cada segundo; a câmera de teste usa quantizador constante.
