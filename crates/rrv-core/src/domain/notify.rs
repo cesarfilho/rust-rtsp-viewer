@@ -1,6 +1,7 @@
 //! Desktop-notification policy (pure): which events notify and how often.
 
 use crate::domain::timeline::EventType;
+use crate::i18n::t;
 
 pub const DEFAULT_COOLDOWN_SECS: u64 = 60;
 pub const MIN_COOLDOWN_SECS: u64 = 5;
@@ -29,8 +30,8 @@ pub fn message_for(
     detail: Option<&str>,
 ) -> Option<(String, String)> {
     let (title, body) = match kind {
-        EventType::Motion => ("Movimento detectado", detail.unwrap_or("")),
-        EventType::Offline => ("Câmera offline", "Sem sinal de vídeo"),
+        EventType::Motion => (t("Movimento detectado"), detail.unwrap_or("")),
+        EventType::Offline => (t("Câmera offline"), t("Sem sinal de vídeo")),
         _ => return None,
     };
     let body = if body.is_empty() {
@@ -48,7 +49,7 @@ pub fn detection_message(
     percent: f32,
     zone: Option<&str>,
 ) -> (String, String) {
-    let title = format!("Detecção: {}", crate::domain::detect::label_pt(label));
+    let title = crate::i18n::tf("Detecção: {}", &[&crate::domain::detect::label_pt(label)]);
     let body = match zone {
         Some(z) => format!("{camera} · {percent}% · {z}"),
         None => format!("{camera} · {percent}%"),

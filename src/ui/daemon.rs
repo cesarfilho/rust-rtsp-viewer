@@ -4,6 +4,7 @@
 //! Puro: recebe os [`LinkEvent`]s da thread de conexão e decide modo, textos e
 //! avisos, sem desenhar nada. A janela só traduz isto em widgets.
 
+use crate::i18n::{plural, t, tf};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -91,33 +92,23 @@ impl Modal {
 
     pub fn title(&self) -> &'static str {
         match self {
-            Modal::UseLocalEngine => "Usar o motor local?",
-            Modal::Quit { .. } => "Sair e interromper as gravações?",
+            Modal::UseLocalEngine => t("Usar o motor local?"),
+            Modal::Quit { .. } => t("Sair e interromper as gravações?"),
         }
     }
 
     pub fn body(&self) -> String {
         match self {
-            Modal::UseLocalEngine => "Isto começa a gravar daqui. Se o daemon ainda estiver \
-                gravando, haverá gravações em dobro. Continuar?"
-                .into(),
-            Modal::Quit { recordings } => format!(
-                "Há {recordings} {} em curso. Sair {} interrompe. Para gravar com a janela \
-                 fechada, use o daemon.",
-                if *recordings == 1 {
-                    "gravação"
-                } else {
-                    "gravações"
-                },
-                if *recordings == 1 { "a" } else { "as" },
-            ),
+            Modal::UseLocalEngine => t("Isto começa a gravar daqui. Se o daemon ainda estiver gravando, haverá gravações em dobro. Continuar?").into(),
+            Modal::Quit { recordings: 1 } => t("Há 1 gravação em curso. Sair a interrompe. Para gravar com a janela fechada, use o daemon.").into(),
+            Modal::Quit { recordings } => tf("Há {} gravações em curso. Sair as interrompe. Para gravar com a janela fechada, use o daemon.", &[recordings]),
         }
     }
 
     pub fn confirm_label(&self) -> &'static str {
         match self {
-            Modal::UseLocalEngine => "Usar motor local",
-            Modal::Quit { .. } => "Sair mesmo assim",
+            Modal::UseLocalEngine => t("Usar motor local"),
+            Modal::Quit { .. } => t("Sair mesmo assim"),
         }
     }
 }
@@ -213,7 +204,7 @@ impl DaemonState {
                 self.retry_in = None;
                 self.lost_since = None;
                 if was_lost {
-                    Effect::Toast("Daemon reconectado".into())
+                    Effect::Toast(t("Daemon reconectado").into())
                 } else {
                     Effect::None
                 }
@@ -253,12 +244,12 @@ impl DaemonState {
     /// Texto do chip na barra.
     pub fn chip_label(&self) -> &'static str {
         match self.mode {
-            Mode::Embedded => "Motor local",
-            Mode::Connecting => "Daemon · conectando…",
-            Mode::Connected => "Daemon · conectado",
-            Mode::Lost => "Daemon · sem resposta",
-            Mode::Incompatible => "Daemon · versão incompatível",
-            Mode::NoPermission => "Daemon · sem permissão",
+            Mode::Embedded => t("Motor local"),
+            Mode::Connecting => t("Daemon · conectando…"),
+            Mode::Connected => t("Daemon · conectado"),
+            Mode::Lost => t("Daemon · sem resposta"),
+            Mode::Incompatible => t("Daemon · versão incompatível"),
+            Mode::NoPermission => t("Daemon · sem permissão"),
         }
     }
 
@@ -299,39 +290,43 @@ impl DaemonState {
     pub fn summary(&self) -> String {
         match self.mode {
             Mode::Embedded => {
-                "Esta janela grava e detecta sozinha. Fechá-la interrompe as gravações.".into()
+                t("Esta janela grava e detecta sozinha. Fechá-la interrompe as gravações.").into()
             }
-            Mode::Connecting => "Conectando ao daemon…".into(),
+            Mode::Connecting => t("Conectando ao daemon…").into(),
             Mode::Connected => {
                 let n = self.cameras.len();
                 let rec = self.recording_count();
-                format!(
-                    "Conectado ao {} · {n} {} · {}",
-                    self.server,
-                    if n == 1 { "câmera" } else { "câmeras" },
-                    if rec == 0 {
-                        "nenhuma gravando".to_string()
-                    } else {
-                        format!("gravando {rec}")
-                    }
+                let recording = if rec == 0 {
+                    t("nenhuma gravando").to_string()
+                } else {
+                    tf("gravando {}", &[&rec])
+                };
+                tf(
+                    "Conectado ao {} · {} {} · {}",
+                    &[
+                        &self.server,
+                        &n,
+                        &plural(n, "câmera", "câmeras"),
+                        &recording,
+                    ],
                 )
             }
             Mode::Lost => {
                 let why = self.reason_suffix();
                 match self.retry_in {
-                    Some(d) => format!(
-                        "Sem resposta do daemon{why}. Nova tentativa em {} s.",
-                        d.as_secs().max(1)
+                    Some(d) => tf(
+                        "Sem resposta do daemon{}. Nova tentativa em {} s.",
+                        &[&why, &d.as_secs().max(1)],
                     ),
-                    None => format!("Sem resposta do daemon{why}."),
+                    None => tf("Sem resposta do daemon{}.", &[&why]),
                 }
             }
             Mode::Incompatible => self
                 .detail
                 .clone()
-                .unwrap_or_else(|| "A versão do daemon não combina com a da janela.".into()),
+                .unwrap_or_else(|| t("A versão do daemon não combina com a da janela.").into()),
             Mode::NoPermission => {
-                "Sem permissão para o socket do daemon (é de outro usuário?).".into()
+                t("Sem permissão para o socket do daemon (é de outro usuário?).").into()
             }
         }
     }
@@ -351,23 +346,20 @@ impl DaemonState {
         match self.mode {
             Mode::Lost => Some(Banner {
                 tone: Tone::Warning,
-                text: format!(
-                    "Sem resposta do daemon{}. As câmeras podem não estar gravando. \
-                     Tentando reconectar…",
-                    self.reason_suffix()
+                text: tf(
+                    "Sem resposta do daemon{}. As câmeras podem não estar gravando. Tentando reconectar…",
+                    &[&self.reason_suffix()],
                 ),
             }),
             Mode::Incompatible => Some(Banner {
                 tone: Tone::Error,
-                text: "A janela e o daemon falam versões diferentes do protocolo. \
-                       Atualize um dos dois."
-                    .into(),
+                text: t("A janela e o daemon falam versões diferentes do protocolo. Atualize um dos dois.").into(),
             }),
             Mode::NoPermission => Some(Banner {
                 tone: Tone::Error,
-                text: format!(
+                text: tf(
                     "Sem permissão para o socket do daemon ({}).",
-                    self.socket.display()
+                    &[&self.socket.display()],
                 ),
             }),
             _ => None,

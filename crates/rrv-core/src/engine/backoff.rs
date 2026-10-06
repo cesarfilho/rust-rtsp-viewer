@@ -99,12 +99,12 @@ impl BackoffState {
                     .as_secs_f32()
                     .ceil() as u64;
                 if secs == 0 {
-                    format!("tentativa {attempt} · reconectando agora")
+                    crate::i18n::tf("tentativa {} · reconectando agora", &[&attempt])
                 } else {
-                    format!("tentativa {attempt} · próxima em {secs}s")
+                    crate::i18n::tf("tentativa {} · próxima em {}s", &[&attempt, &secs])
                 }
             }
-            None => format!("tentativa {attempt}"),
+            None => crate::i18n::tf("tentativa {}", &[&attempt]),
         })
     }
 

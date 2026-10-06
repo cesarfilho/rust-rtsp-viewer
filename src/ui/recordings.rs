@@ -3,6 +3,7 @@
 //! arquivos são lidos da pasta de gravações **desta** janela (`[recording] dir`), que no
 //! Docker é a pasta do host montada no contêiner.
 
+use crate::i18n::{t, tf};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -289,20 +290,19 @@ pub(crate) fn unavailable_reason(daemon: &DaemonState) -> Option<String> {
     use super::daemon::Mode;
     match daemon.mode {
         Mode::Connected => None,
-        Mode::Embedded => Some(format!(
-            "A vista Gravações precisa do daemon, e esta janela está no motor local (o chip da barra diz \
-             \"Motor local\"). Abra a janela ligada ao daemon: RRV_SOCKET={} ou --daemon <socket>",
-            daemon.socket.display()
+        Mode::Embedded => Some(tf(
+            "A vista Gravações precisa do daemon, e esta janela está no motor local (o chip da barra diz \"Motor local\"). Abra a janela ligada ao daemon: RRV_SOCKET={} ou --daemon <socket>",
+            &[&daemon.socket.display()],
         )),
-        Mode::Connecting => Some("Conectando ao daemon… tente de novo em instantes".into()),
+        Mode::Connecting => Some(t("Conectando ao daemon… tente de novo em instantes").into()),
         Mode::Lost => Some(
-            "Sem contato com o daemon agora (veja o aviso sob a barra); a vista Gravações volta quando ele responder".into(),
+            t("Sem contato com o daemon agora (veja o aviso sob a barra); a vista Gravações volta quando ele responder").into(),
         ),
         Mode::Incompatible => Some(
-            "A janela e o daemon falam versões diferentes do protocolo; atualize um dos dois".into(),
+            t("A janela e o daemon falam versões diferentes do protocolo; atualize um dos dois").into(),
         ),
         Mode::NoPermission => Some(
-            "Sem permissão para o socket do daemon (é de outro usuário?); a vista Gravações precisa dele".into(),
+            t("Sem permissão para o socket do daemon (é de outro usuário?); a vista Gravações precisa dele").into(),
         ),
     }
 }
@@ -361,9 +361,11 @@ fn candidate_dirs() -> Vec<PathBuf> {
         v.push(PathBuf::from(d));
     }
     v.push(PathBuf::from("recordings"));
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        v.push(home.join("Videos"));
-        v.push(home.join("Vídeos"));
+    if let Some(home) = std::env::var_os("HOME") /* i18n-ok */
+        .map(PathBuf::from)
+    {
+        v.push(home.join("Videos")); // i18n-ok: nome de pasta
+        v.push(home.join("Vídeos")); // i18n-ok: nome de pasta
     }
     v
 }
@@ -448,14 +450,14 @@ pub fn on_history(app: &mut App, result: Result<Response, String>) {
     if let Some(dir) = found_in {
         super::update::toast(
             app,
-            format!("Gravações do daemon encontradas em {}", dir.display()),
+            tf("Gravações do daemon encontradas em {}", &[&dir.display()]),
         );
     }
 }
 
 fn toggle_protect(app: &mut App) {
     let Some(p) = app.recordings.as_ref().and_then(|v| v.player.as_ref()) else {
-        super::update::toast(app, "Toque uma gravação para protegê-la");
+        super::update::toast(app, t("Toque uma gravação para protegê-la"));
         return;
     };
     let (segment_id, protected) = (p.segment.id, !p.segment.protected);
@@ -494,14 +496,14 @@ pub fn on_protected(
             super::update::toast(
                 app,
                 if protected {
-                    "Trecho protegido: a retenção não o apaga"
+                    t("Trecho protegido: a retenção não o apaga")
                 } else {
-                    "Trecho solto: volta a valer a retenção"
+                    t("Trecho solto: volta a valer a retenção")
                 },
             );
         }
         Ok(Response::Error { message }) | Err(message) => {
-            super::update::toast(app, format!("Não consegui mudar a proteção: {message}"))
+            super::update::toast(app, tf("Não consegui mudar a proteção: {}", &[&message]))
         }
         Ok(_) => {}
     }
@@ -514,12 +516,12 @@ pub fn on_exported(app: &mut App, result: Result<Response, String>) {
             let path = app.recordings_dir.join(&file);
             super::update::toast_open_dir(
                 app,
-                format!("Clipe salvo: {file} ({} KiB)", bytes / 1024),
+                tf("Clipe salvo: {} ({} KiB)", &[&file, &(bytes / 1024)]),
                 path.parent().map(PathBuf::from),
             );
         }
         Ok(Response::Error { message }) | Err(message) => {
-            super::update::toast(app, format!("Não consegui exportar: {message}"))
+            super::update::toast(app, tf("Não consegui exportar: {}", &[&message]))
         }
         Ok(_) => {}
     }
@@ -542,7 +544,7 @@ fn click(app: &mut App, lane: usize, t_ms: i64) {
         None => match timeline_view::next_after(&only, t_ms) {
             Some(i) => (spans[i].0, only[i].start, true),
             None => {
-                super::update::toast(app, "Sem gravação neste instante");
+                super::update::toast(app, t("Sem gravação neste instante"));
                 return;
             }
         },
@@ -565,7 +567,7 @@ fn click(app: &mut App, lane: usize, t_ms: i64) {
         return;
     }
     if gap {
-        super::update::toast(app, "Sem gravação aqui; indo para o próximo trecho");
+        super::update::toast(app, t("Sem gravação aqui; indo para o próximo trecho"));
     }
     play(app, camera, segment, at);
 }
@@ -579,16 +581,16 @@ fn open_player(
 ) -> Result<Player, String> {
     let path = recordings_dir.join(&segment.file);
     if !path.exists() {
-        return Err(format!(
+        return Err(tf(
             "Arquivo não encontrado: {}. Ajuste [recording] dir da janela para a pasta de gravações do daemon",
-            path.display()
+            &[&path.display()],
         ));
     }
     let mut bridge =
-        GStreamerBridge::new(640, 360).map_err(|e| format!("Não consegui abrir o player: {e}"))?;
+        GStreamerBridge::new(640, 360).map_err(|e| tf("Não consegui abrir o player: {}", &[&e]))?;
     bridge
         .start_file(&path.to_string_lossy())
-        .map_err(|e| format!("Não consegui abrir a gravação: {e}"))?;
+        .map_err(|e| tf("Não consegui abrir a gravação: {}", &[&e]))?;
     let bridge = Arc::new(Mutex::new(bridge));
     let video = VideoWidget::new(bridge.clone());
     let offset = (at_ms - segment.ts_start).max(0) as u64;
@@ -669,7 +671,10 @@ fn toggle_compare(app: &mut App, camera: String) {
     if used >= MAX_CHANNELS {
         super::update::toast(
             app,
-            format!("No máximo {MAX_CHANNELS} câmeras lado a lado: tire uma antes"),
+            tf(
+                "No máximo {} câmeras lado a lado: tire uma antes",
+                &[&MAX_CHANNELS],
+            ),
         );
         return;
     }
@@ -780,7 +785,7 @@ fn sync_followers(app: &mut App) {
                 if let Some(p) = f.player.take() {
                     stop_player(p);
                 }
-                f.note = Some("Sem gravação neste instante".into());
+                f.note = Some(crate::i18n::t("Sem gravação neste instante").into());
                 f.retry_at = None;
             }
             timeline_view::FollowAction::Open { index, offset_ms } => {
@@ -841,7 +846,7 @@ fn mark(app: &mut App, is_in: bool) {
     let Some((_, t)) = v.playhead() else {
         super::update::toast(
             app,
-            "Toque uma gravação para marcar o início e o fim do clipe",
+            t("Toque uma gravação para marcar o início e o fim do clipe"),
         );
         return;
     };
@@ -862,7 +867,7 @@ fn export(app: &mut App) {
     let (Some(from), Some(to)) = (v.mark_in, v.mark_out) else {
         super::update::toast(
             app,
-            "Marque o início (I) e o fim (O) do clipe antes de exportar",
+            t("Marque o início (I) e o fim (O) do clipe antes de exportar"),
         );
         return;
     };
@@ -870,7 +875,7 @@ fn export(app: &mut App) {
         return;
     };
     if to <= from {
-        super::update::toast(app, "O fim do clipe precisa ser depois do início");
+        super::update::toast(app, t("O fim do clipe precisa ser depois do início"));
         return;
     }
     if super::update::send_to_daemon(
@@ -882,7 +887,7 @@ fn export(app: &mut App) {
         },
         PendingRequest::Export,
     ) {
-        super::update::toast(app, "Exportando o clipe…");
+        super::update::toast(app, t("Exportando o clipe…"));
     }
 }
 
@@ -1172,7 +1177,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
     let span_hours = (v.span.len() / 3_600_000).max(1);
     let header = row![
-        text("Gravações").size(15).color(text_color),
+        text(t("Gravações")).size(15).color(text_color),
         iced::widget::horizontal_space(),
         pill_button(app, "1 h", RecMsg::SetSpan(1), sel(span_hours == 1)),
         pill_button(app, "6 h", RecMsg::SetSpan(6), sel(span_hours == 6)),
@@ -1180,7 +1185,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
         pill_button(app, "7 d", RecMsg::SetSpan(168), sel(span_hours == 168)),
         pill_button(app, "‹", RecMsg::Pan(-0.5), Intent::Ghost),
         pill_button(app, "›", RecMsg::Pan(0.5), Intent::Ghost),
-        pill_button(app, "Fechar  Esc", RecMsg::Close, Intent::Ghost),
+        pill_button(app, t("Fechar  Esc"), RecMsg::Close, Intent::Ghost),
     ]
     .spacing(6)
     .align_y(iced::Alignment::Center);
@@ -1191,14 +1196,14 @@ pub fn view(app: &App) -> Element<'_, Message> {
         Some(p) => player_with_boxes(p, v),
         None => container(
             text(if v.loading {
-                "Carregando…".to_string()
+                t("Carregando…").to_string()
             } else if let Some(e) = &v.error {
-                format!("Não consegui carregar o histórico: {e}")
+                tf("Não consegui carregar o histórico: {}", &[e])
             } else if v.segments.is_empty() {
-                "Nada gravado neste período. Ative a gravação por movimento ou a manual (r)."
+                t("Nada gravado neste período. Ative a gravação por movimento ou a manual (r).")
                     .to_string()
             } else {
-                "Clique na linha do tempo para ver a gravação".to_string()
+                t("Clique na linha do tempo para ver a gravação").to_string()
             })
             .size(13)
             .color(dim),
@@ -1232,13 +1237,13 @@ pub fn view(app: &App) -> Element<'_, Message> {
             row![
                 pill_button(
                     app,
-                    if p.paused { "Tocar" } else { "Pausar" },
+                    if p.paused { t("Tocar") } else { t("Pausar") },
                     RecMsg::PlayPause,
                     Intent::Primary
                 ),
                 pill_button(app, "−10 s", RecMsg::Skip(-SKIP_MS), Intent::Ghost),
                 pill_button(app, "+10 s", RecMsg::Skip(SKIP_MS), Intent::Ghost),
-                pill_button(app, "Quadro", RecMsg::Step, Intent::Ghost),
+                pill_button(app, t("Quadro"), RecMsg::Step, Intent::Ghost),
                 pill_button(app, "0,5×", RecMsg::Rate(0.5), sel(p.rate == 0.5)),
                 pill_button(app, "1×", RecMsg::Rate(1.0), sel(p.rate == 1.0)),
                 pill_button(app, "2×", RecMsg::Rate(2.0), sel(p.rate == 2.0)),
@@ -1253,23 +1258,23 @@ pub fn view(app: &App) -> Element<'_, Message> {
                 .size(12)
                 .color(dim),
                 iced::widget::horizontal_space(),
-                pill_button(app, "Início  I", RecMsg::MarkIn, sel(v.mark_in.is_some())),
-                pill_button(app, "Fim  O", RecMsg::MarkOut, sel(v.mark_out.is_some())),
+                pill_button(app, t("Início  I"), RecMsg::MarkIn, sel(v.mark_in.is_some())),
+                pill_button(app, t("Fim  O"), RecMsg::MarkOut, sel(v.mark_out.is_some())),
                 pill_button(
                     app,
-                    if p.segment.protected { "Soltar  P" } else { "Proteger  P" },
+                    if p.segment.protected { t("Soltar  P") } else { t("Proteger  P") },
                     RecMsg::ToggleProtect,
                     sel(p.segment.protected)
                 ),
-                pill_button(app, "Exportar  E", RecMsg::Export, Intent::Primary),
+                pill_button(app, t("Exportar  E"), RecMsg::Export, Intent::Primary),
             ]
             .spacing(6)
             .align_y(iced::Alignment::Center)
             .into()
         }
-        None => text(
+        None => text(t(
             "Clique para ver · roda do mouse aproxima · ‹ › desloca · Espaço toca/pausa · setas esquerda/direita pulam 10 s",
-        )
+        ))
         .size(11)
         .color(dim)
         .into(),
@@ -1338,9 +1343,13 @@ fn channels_stage<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Messag
         let body: Element<'a, Message> = match &f.player {
             Some(p) => p.video.view().map(|_| Message::FrameUpdate),
             None => container(
-                text(f.note.clone().unwrap_or_else(|| "Carregando…".to_string()))
-                    .size(12)
-                    .color(dim),
+                text(
+                    f.note
+                        .clone()
+                        .unwrap_or_else(|| t("Carregando…").to_string()),
+                )
+                .size(12)
+                .color(dim),
             )
             .center_x(Length::Fill)
             .center_y(Length::Fill)
@@ -1371,7 +1380,7 @@ fn compare_row<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message> 
         return iced::widget::Space::new(Length::Shrink, Length::Shrink).into();
     }
     let dim = Theme::color_from_hex(app.theme.colors().text_secondary);
-    let mut r = row![text("Comparar:").size(12).color(dim)]
+    let mut r = row![text(t("Comparar:")).size(12).color(dim)]
         .spacing(6)
         .align_y(iced::Alignment::Center);
     for name in others {
@@ -1389,15 +1398,15 @@ fn compare_row<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message> 
 /// O nome de um evento do histórico, em português.
 pub fn event_label(kind: &str) -> &'static str {
     match kind {
-        "motion" => "Movimento",
-        "recording_start" => "Gravação iniciada",
-        "recording_stop" => "Gravação parou",
-        "offline" => "Câmera offline",
-        "online" => "Câmera online",
-        "snapshot" => "Foto",
-        "disk_low" => "Disco quase cheio",
-        "detection" => "Objeto",
-        _ => "Evento",
+        "motion" => t("Movimento"),
+        "recording_start" => t("Gravação iniciada"),
+        "recording_stop" => t("Gravação parou"),
+        "offline" => t("Câmera offline"),
+        "online" => t("Câmera online"),
+        "snapshot" => t("Foto"),
+        "disk_low" => t("Disco quase cheio"),
+        "detection" => t("Objeto"),
+        _ => t("Evento"),
     }
 }
 
@@ -1493,7 +1502,7 @@ fn events_column<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message
     let shown = visible_events(&v.events, v.motion_only, v.label_filter.as_deref(), 200);
     let mut list = column![].spacing(2).width(Length::Fill);
     if shown.is_empty() {
-        list = list.push(text("Nenhum evento neste período").size(12).color(dim));
+        list = list.push(text(t("Nenhum evento neste período")).size(12).color(dim));
     }
     for e in shown {
         let playable = v.lanes.contains(&e.camera);
@@ -1516,7 +1525,7 @@ fn events_column<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message
         });
     }
     let mut header = row![
-        text("Eventos").size(13).color(text_color),
+        text(t("Eventos")).size(13).color(text_color),
         iced::widget::horizontal_space(),
     ]
     .spacing(4)
@@ -1524,19 +1533,19 @@ fn events_column<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message
     // o botão de objeto só existe quando o período tem alguma detecção
     if !detection_labels(&v.events).is_empty() {
         let name = v.label_filter.as_deref().map_or_else(
-            || "todos".to_string(),
+            || t("todos").to_string(),
             |l| crate::domain::detect::label_pt(l).to_string(),
         );
         header = header.push(pill_button(
             app,
-            format!("Objeto: {name}"),
+            tf("Objeto: {}", &[&name]),
             RecMsg::CycleLabel,
             sel(v.label_filter.is_some()),
         ));
     }
     header = header.push(pill_button(
         app,
-        "Só movimento",
+        t("Só movimento"),
         RecMsg::ToggleMotionOnly,
         sel(v.motion_only),
     ));

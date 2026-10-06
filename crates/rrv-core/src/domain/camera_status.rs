@@ -19,6 +19,8 @@ pub enum CameraStatus {
     Paused,
 }
 
+use crate::i18n::t;
+
 impl CameraStatus {
     pub fn label(&self) -> &'static str {
         match self {
@@ -26,7 +28,7 @@ impl CameraStatus {
             CameraStatus::Offline => "OFFLINE",
             CameraStatus::Reconnecting => "RECONNECTING",
             CameraStatus::Recording => "RECORDING",
-            CameraStatus::Disabled => "DESATIVADA",
+            CameraStatus::Disabled => t("DESATIVADA"),
             CameraStatus::Connecting => "CONNECTING",
             CameraStatus::Paused => "PAUSED",
         }
@@ -36,13 +38,13 @@ impl CameraStatus {
     /// shouting).
     pub fn label_pt(&self) -> &'static str {
         match self {
-            CameraStatus::Live => "Ao vivo",
-            CameraStatus::Offline => "Offline",
-            CameraStatus::Reconnecting => "Reconectando",
-            CameraStatus::Recording => "Gravando",
-            CameraStatus::Disabled => "Desativada",
-            CameraStatus::Connecting => "Conectando\u{2026}",
-            CameraStatus::Paused => "Pausada",
+            CameraStatus::Live => t("Ao vivo"),
+            CameraStatus::Offline => t("Offline"),
+            CameraStatus::Reconnecting => t("Reconectando"),
+            CameraStatus::Recording => t("Gravando"),
+            CameraStatus::Disabled => t("Desativada"),
+            CameraStatus::Connecting => t("Conectando\u{2026}"),
+            CameraStatus::Paused => t("Pausada"),
         }
     }
 }

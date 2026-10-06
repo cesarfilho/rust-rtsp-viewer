@@ -10,6 +10,7 @@
 //! every hint can be unit-tested in isolation.
 
 use crate::domain::metrics::Metrics;
+use crate::i18n::t;
 use log::{info, warn};
 
 /// Severity rank used to pick the worst hint for the "overall health" badge.
@@ -103,7 +104,7 @@ pub fn diagnose(m: &Metrics) -> Vec<Hint> {
             out.push(Hint {
                 metric: "Lat",
                 severity: Severity::Warning,
-                cause: "latência alta — considere reduzir --cache",
+                cause: t("latência alta — considere reduzir --cache"),
             });
         }
     }
@@ -125,7 +126,7 @@ pub fn diagnose(m: &Metrics) -> Vec<Hint> {
             out.push(Hint {
                 metric: "Jit",
                 severity: Severity::Warning,
-                cause: "variação de banda — ver CPU/rede",
+                cause: t("variação de banda — ver CPU/rede"),
             });
         }
     }
@@ -145,7 +146,7 @@ pub fn diagnose(m: &Metrics) -> Vec<Hint> {
             out.push(Hint {
                 metric: "Loss",
                 severity: Severity::Warning,
-                cause: "perda de pacotes — verificar interferência",
+                cause: t("perda de pacotes — verificar interferência"),
             });
         }
     }
@@ -170,7 +171,7 @@ pub fn diagnose(m: &Metrics) -> Vec<Hint> {
         out.push(Hint {
             metric: "Rc",
             severity: Severity::Critical,
-            cause: "múltiplas reconexões — RTSP ou rede instável",
+            cause: t("múltiplas reconexões — RTSP ou rede instável"),
         });
     } else if rec > 0 {
         out.push(Hint {
@@ -191,7 +192,7 @@ pub fn diagnose(m: &Metrics) -> Vec<Hint> {
         out.push(Hint {
             metric: "Stale",
             severity: Severity::Warning,
-            cause: "cena parada > 5min — câmera travada ou cena realmente parada?",
+            cause: t("cena parada > 5min — câmera travada ou cena realmente parada?"),
         });
     }
 
@@ -342,23 +343,31 @@ fn tamper_covered_cause(luma: u8, static_secs: u64) -> &'static str {
         _ => "5min+",
     };
     match (intensity, dur) {
-        ("fully covered", "~30s") => "câmera coberta (luma ≤ 2/255) há ~30s — verificar obstrução",
+        ("fully covered", "~30s") => {
+            t("câmera coberta (luma ≤ 2/255) há ~30s — verificar obstrução")
+        }
         ("fully covered", "~1min") => {
-            "câmera coberta (luma ≤ 2/255) há ~1min — verificar obstrução"
+            t("câmera coberta (luma ≤ 2/255) há ~1min — verificar obstrução")
         }
         ("fully covered", "~2min") => {
-            "câmera coberta (luma ≤ 2/255) há ~2min — verificar obstrução"
+            t("câmera coberta (luma ≤ 2/255) há ~2min — verificar obstrução")
         }
         ("fully covered", "~3min") => {
-            "câmera coberta (luma ≤ 2/255) há ~3min — verificar obstrução"
+            t("câmera coberta (luma ≤ 2/255) há ~3min — verificar obstrução")
         }
-        ("fully covered", "5min+") => "câmera coberta (luma ≤ 2/255) há 5min+ — vandalismo?",
-        ("covered", "~30s") => "cena muito escura (luma ≤ 5/255) há ~30s — verificar cobertura",
-        ("covered", "~1min") => "cena muito escura (luma ≤ 5/255) há ~1min — verificar cobertura",
-        ("covered", "~2min") => "cena muito escura (luma ≤ 5/255) há ~2min — verificar cobertura",
-        ("covered", "~3min") => "cena muito escura (luma ≤ 5/255) há ~3min — verificar cobertura",
-        ("covered", "5min+") => "cena muito escura (luma ≤ 5/255) há 5min+ — vandalismo?",
-        _ => "luma muito baixa há muito tempo — verificar câmera",
+        ("fully covered", "5min+") => t("câmera coberta (luma ≤ 2/255) há 5min+ — vandalismo?"),
+        ("covered", "~30s") => t("cena muito escura (luma ≤ 5/255) há ~30s — verificar cobertura"),
+        ("covered", "~1min") => {
+            t("cena muito escura (luma ≤ 5/255) há ~1min — verificar cobertura")
+        }
+        ("covered", "~2min") => {
+            t("cena muito escura (luma ≤ 5/255) há ~2min — verificar cobertura")
+        }
+        ("covered", "~3min") => {
+            t("cena muito escura (luma ≤ 5/255) há ~3min — verificar cobertura")
+        }
+        ("covered", "5min+") => t("cena muito escura (luma ≤ 5/255) há 5min+ — vandalismo?"),
+        _ => t("luma muito baixa há muito tempo — verificar câmera"),
     }
 }
 
@@ -371,11 +380,11 @@ fn tamper_blinded_cause(_luma: u8, static_secs: u64) -> &'static str {
         _ => "5min+",
     };
     match dur {
-        "~30s" => "câmera ofuscada (luma ≥ 250/255) há ~30s — luz direta ou laser?",
-        "~1min" => "câmera ofuscada (luma ≥ 250/255) há ~1min — luz direta ou laser?",
-        "~2min" => "câmera ofuscada (luma ≥ 250/255) há ~2min — luz direta ou laser?",
-        "~3min" => "câmera ofuscada (luma ≥ 250/255) há ~3min — vandalismo?",
-        _ => "câmera ofuscada (luma ≥ 250/255) há 5min+ — vandalismo?",
+        "~30s" => t("câmera ofuscada (luma ≥ 250/255) há ~30s — luz direta ou laser?"),
+        "~1min" => t("câmera ofuscada (luma ≥ 250/255) há ~1min — luz direta ou laser?"),
+        "~2min" => t("câmera ofuscada (luma ≥ 250/255) há ~2min — luz direta ou laser?"),
+        "~3min" => t("câmera ofuscada (luma ≥ 250/255) há ~3min — vandalismo?"),
+        _ => t("câmera ofuscada (luma ≥ 250/255) há 5min+ — vandalismo?"),
     }
 }
 

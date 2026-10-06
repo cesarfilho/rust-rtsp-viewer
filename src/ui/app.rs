@@ -232,7 +232,7 @@ pub fn new_app(
             kind: if cam.url.starts_with("http") {
                 "HLS"
             } else {
-                "RTSP"
+                "RTSP" // i18n-ok: nome próprio
             }
             .into(),
             status: sidebar::CameraStatus::Connecting,

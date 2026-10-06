@@ -68,7 +68,7 @@ pub fn run(
         ..Default::default()
     };
 
-    iced::application("StreamView", update, view)
+    iced::application("StreamView", update, view) // i18n-ok: nome próprio
         .window(window)
         .font(icons::FONT_BYTES)
         .centered()

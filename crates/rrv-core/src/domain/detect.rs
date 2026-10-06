@@ -97,8 +97,12 @@ pub fn class_id(name: &str) -> Option<usize> {
         .position(|l| l.eq_ignore_ascii_case(name.trim()))
 }
 
-/// What the person reads in a notification for the common classes; the English name otherwise.
+/// What the person reads for a class: the Portuguese name for the common ones (while the interface is in
+/// Portuguese), otherwise the English COCO name.
 pub fn label_pt(label: &str) -> &str {
+    if crate::i18n::get() == crate::i18n::Lang::En {
+        return label;
+    }
     match label {
         "person" => "pessoa",
         "bicycle" => "bicicleta",

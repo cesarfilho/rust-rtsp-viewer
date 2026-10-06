@@ -1,31 +1,14 @@
 //! O que garante a tradução (plano D4): varre o código da interface.
 //!
 //! 1. Toda frase dentro de `t("…")`, `tf("…", …)` ou `plural(n, "…", "…")` existe no catálogo inglês.
-//! 2. Nos arquivos já convertidos (`CONVERTED`), não sobra texto em português fora dessas chamadas:
+//! 2. Em todo arquivo de `src/ui`, não sobra texto em português fora dessas chamadas:
 //!    uma frase com acento ou com palavra de interface conhecida, entre aspas, em código que não seja de
 //!    log, de teste ou marcado com `// i18n-ok`, falha o teste.
 //!
-//! A lista cresce até cobrir toda a pasta `src/ui`; o teste final (`every_ui_file_is_converted`) a
-//! compara com o que existe em disco.
 
 use std::path::{Path, PathBuf};
 
 use rust_rtsp_viewer::i18n;
-
-/// Arquivos de `src/ui` cujos textos já passam pelo catálogo.
-const CONVERTED: &[&str] = &[
-    "view/menu.rs",
-    "view/cell_overlay.rs",
-    "view/flex_layout.rs",
-    "view/overlays.rs",
-    "view/toolbar.rs",
-    "view/daemon.rs",
-    "sidebar/cameras.rs",
-    "sidebar/diagnostics.rs",
-    "sidebar/info.rs",
-    "sidebar/timeline.rs",
-    "sidebar/view.rs",
-];
 
 /// Linhas que são de log, depuração ou erro de programação: ficam em português para quem opera.
 const SKIP_LINE: &[&str] = &[
@@ -67,8 +50,27 @@ fn ui_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui")
 }
 
+/// Texto do núcleo que a janela mostra (estados, diagnóstico, avisos): também passa pelo catálogo.
+const CORE_FILES: &[&str] = &[
+    "crates/rrv-core/src/domain/camera_status.rs",
+    "crates/rrv-core/src/domain/diagnostics.rs",
+    "crates/rrv-core/src/domain/notify.rs",
+    "crates/rrv-core/src/engine/backoff.rs",
+];
+
+fn scanned_files() -> Vec<String> {
+    let mut v = all_ui_files();
+    v.extend(CORE_FILES.iter().map(|f| (*f).to_string()));
+    v
+}
+
 fn source(rel: &str) -> String {
-    let text = std::fs::read_to_string(ui_dir().join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"));
+    let path = if rel.starts_with("crates/") {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
+    } else {
+        ui_dir().join(rel)
+    };
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{rel}: {e}"));
     // o módulo de testes não é interface
     match text.find("#[cfg(test)]") {
         Some(i) => text[..i].to_string(),
@@ -242,7 +244,7 @@ fn translated_keys(rel: &str) -> Vec<(usize, String)> {
 #[test]
 fn every_translated_phrase_is_in_the_english_catalog() {
     let mut missing = Vec::new();
-    for rel in CONVERTED {
+    for rel in &scanned_files() {
         for (n, key) in translated_keys(rel) {
             // o código escreve `\u{…}` e `\"`; o catálogo, o caractere
             if i18n::english(&key).is_none() {
@@ -259,7 +261,10 @@ fn every_translated_phrase_is_in_the_english_catalog() {
 
 #[test]
 fn converted_files_have_no_loose_portuguese() {
-    let loose: Vec<String> = CONVERTED.iter().flat_map(|r| untranslated(r)).collect();
+    let loose: Vec<String> = all_ui_files()
+        .iter()
+        .flat_map(|r| untranslated(r))
+        .collect();
     assert!(
         loose.is_empty(),
         "texto fixo fora de t()/tf() (ou marque a linha com // i18n-ok):\n{}",
@@ -271,7 +276,7 @@ fn converted_files_have_no_loose_portuguese() {
 fn the_catalog_has_no_dead_entries_for_converted_files() {
     // uma entrada que nenhum arquivo usa é lixo (ou um erro de digitação na chave)
     let mut used = std::collections::HashSet::new();
-    for rel in all_ui_files() {
+    for rel in scanned_files() {
         for (_, key) in translated_keys(&rel) {
             used.insert(key);
         }
@@ -333,21 +338,4 @@ fn all_ui_files() -> Vec<String> {
         .collect();
     v.sort();
     v
-}
-
-/// Quando a conversão termina, `CONVERTED` cobre tudo (menos o que é de fato sem texto).
-#[test]
-fn progress_report() {
-    let all = all_ui_files();
-    let todo: Vec<&String> = all
-        .iter()
-        .filter(|f| !CONVERTED.contains(&f.as_str()))
-        .filter(|f| !untranslated(f).is_empty())
-        .collect();
-    eprintln!("arquivos de src/ui com texto ainda por converter: {todo:?}");
-    if std::env::var_os("I18N_DETAILS").is_some() {
-        for f in todo {
-            eprintln!("{}", untranslated(f).join("\n"));
-        }
-    }
 }

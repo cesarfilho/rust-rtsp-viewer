@@ -236,7 +236,7 @@ impl Theme {
     /// The corresponding `iced::Theme` for the application-level `.theme()` hook.
     pub fn to_iced(&self) -> iced::Theme {
         match self {
-            Theme::Light => iced::Theme::custom("RRV Light".to_string(), self.palette()),
+            Theme::Light => iced::Theme::custom("RRV Light".to_string(), self.palette()), // i18n-ok: nome próprio
             _ => iced::Theme::custom("RRV".to_string(), self.palette()),
         }
     }
@@ -255,11 +255,11 @@ impl Theme {
 impl fmt::Display for Theme {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Theme::Cosmic => write!(f, "Cosmic"),
-            Theme::Dark => write!(f, "Dark"),
-            Theme::Light => write!(f, "Light"),
-            Theme::Amoled => write!(f, "AMOLED"),
-            Theme::OpenCode => write!(f, "OpenCode"),
+            Theme::Cosmic => write!(f, "Cosmic"), // i18n-ok: nome próprio
+            Theme::Dark => write!(f, "Dark"),     // i18n-ok: nome próprio
+            Theme::Light => write!(f, "Light"),   // i18n-ok: nome próprio
+            Theme::Amoled => write!(f, "AMOLED"), // i18n-ok: nome próprio
+            Theme::OpenCode => write!(f, "OpenCode"), // i18n-ok: nome próprio
         }
     }
 }
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn cosmic_is_first_and_default_ready() {
         assert_eq!(Theme::all()[0], Theme::Cosmic);
-        assert_eq!(Theme::Cosmic.to_string(), "Cosmic");
+        assert_eq!(Theme::Cosmic.to_string(), "Cosmic"); // i18n-ok: nome próprio
     }
 
     #[test]
