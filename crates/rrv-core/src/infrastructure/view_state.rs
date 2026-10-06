@@ -149,6 +149,7 @@ mod tests {
             active_group: Some(1),
             layout: Some("grid".into()),
             sidebar_visible: Some(false),
+            language: Some("en".into()),
         };
         save_to(&p, &state);
         assert_eq!(load_from(&p), state);

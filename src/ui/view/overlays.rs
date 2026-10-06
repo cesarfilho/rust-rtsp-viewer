@@ -4,6 +4,7 @@ use super::super::app::App;
 use super::super::message::Message;
 use super::super::theme::Theme;
 use super::style;
+use crate::i18n::t;
 
 pub fn toast_overlay(app: &App) -> iced::widget::Container<'_, Message> {
     let colors = app.theme.colors();
@@ -83,31 +84,31 @@ pub fn help_overlay<'a>(app: &App, main_content: Element<'a, Message>) -> Elemen
     };
 
     let help_content = iced::widget::column![
-        iced::widget::text("Atalhos de teclado").color(primary).size(16),
+        iced::widget::text(t("Atalhos de teclado")).color(primary).size(16),
         iced::widget::horizontal_rule(1),
-        row("h", "Modo imersivo (esconde toda a interface)"),
-        row("f / Enter", "Spotlight da câmera selecionada"),
-        row("\u{2190} / \u{2192}", "Câmera anterior / próxima (no spotlight)"),
-        row("F11", "Tela cheia do SO + imersivo"),
-        row("Tab", "Alternar layout (grade / flex)"),
-        row("g", "Densidade da grade (Auto/2x2/3x3/4x4)"),
-        row("[ / ]  ·  PgUp / PgDn", "Página anterior / seguinte"),
-        row("c", "Ligar / desligar o carrossel de páginas"),
-        row("1 - 9", "Selecionar câmera"),
-        row("Space / k", "Alternar seleção"),
-        row("s / F12", "Snapshot"),
-        row("r", "Iniciar / parar gravação"),
-        row("m  ·  + / -", "Mudo  ·  volume"),
-        row("F2", "Mostrar / ocultar a sidebar"),
-        row("F3", "Alternar aba da sidebar"),
-        row("/", "Filtrar câmeras"),
-        row("t", "Gravações: linha do tempo e player"),
-        row("Enter / Backspace", "Zonas de movimento: concluir / desfazer"),
-        row("Esc", "Voltar: ajuda \u{2192} spotlight \u{2192} imersivo \u{2192} menu \u{2192} busca"),
-        row("?", "Mostrar / ocultar esta ajuda"),
-        row("Ctrl+Q", "Sair"),
+        row("h", t("Modo imersivo (esconde toda a interface)")),
+        row("f / Enter", t("Spotlight da câmera selecionada")),
+        row("\u{2190} / \u{2192}", t("Câmera anterior / próxima (no spotlight)")),
+        row("F11", t("Tela cheia do SO + imersivo")),
+        row("Tab", t("Alternar layout (grade / flex)")),
+        row("g", t("Densidade da grade (Auto/2x2/3x3/4x4)")),
+        row("[ / ]  ·  PgUp / PgDn", t("Página anterior / seguinte")),
+        row("c", t("Ligar / desligar o carrossel de páginas")),
+        row("1 - 9", t("Selecionar câmera")),
+        row("Space / k", t("Alternar seleção")),
+        row("s / F12", t("Snapshot")),
+        row("r", t("Iniciar / parar gravação")),
+        row("m  ·  + / -", t("Mudo  ·  volume")),
+        row("F2", t("Mostrar / ocultar a sidebar")),
+        row("F3", t("Alternar aba da sidebar")),
+        row("/", t("Filtrar câmeras")),
+        row("t", t("Gravações: linha do tempo e player")),
+        row("Enter / Backspace", t("Zonas de movimento: concluir / desfazer")),
+        row("Esc", t("Voltar: ajuda \u{2192} spotlight \u{2192} imersivo \u{2192} menu \u{2192} busca")),
+        row("?", t("Mostrar / ocultar esta ajuda")),
+        row("Ctrl+Q", t("Sair")),
         iced::widget::horizontal_rule(1),
-        iced::widget::text("Clique para selecionar \u{00B7} duplo-clique para spotlight \u{00B7} clique direito para ações")
+        iced::widget::text(t("Clique para selecionar \u{00B7} duplo-clique para spotlight \u{00B7} clique direito para ações"))
             .color(secondary)
             .size(11),
     ]

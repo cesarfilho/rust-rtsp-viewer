@@ -1,3 +1,4 @@
+use crate::i18n::t;
 use iced::widget::{column, horizontal_rule, row, rule, scrollable, text};
 use iced::{Element, Length};
 
@@ -61,7 +62,7 @@ pub(super) fn diagnostics_view(sidebar: &Sidebar, colors: ThemeColors) -> Elemen
             scrollable(diag_content).height(Length::Fill).into()
         } else {
             scrollable(
-                column![text("Câmera não encontrada").color(text_secondary)]
+                column![text(t("Câmera não encontrada")).color(text_secondary)]
                     .padding(iced::Padding::from([4, 8]))
                     .width(Length::Fill),
             )
@@ -70,7 +71,7 @@ pub(super) fn diagnostics_view(sidebar: &Sidebar, colors: ThemeColors) -> Elemen
         }
     } else {
         scrollable(
-            column![text("Selecione uma câmera").color(text_secondary)]
+            column![text(t("Selecione uma câmera")).color(text_secondary)]
                 .padding(iced::Padding::from([4, 8]))
                 .width(Length::Fill),
         )

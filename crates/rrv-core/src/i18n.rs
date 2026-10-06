@@ -134,16 +134,8 @@ pub fn plural(n: usize, pt_one: &'static str, pt_many: &'static str) -> &'static
 mod tests {
     use super::*;
 
-    /// Os testes mexem no idioma global: um de cada vez.
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    fn with(lang: Lang, f: impl FnOnce()) {
-        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let before = get();
-        set(lang);
-        f();
-        set(before);
-    }
+    // Nada aqui muda o idioma global: os testes que o trocam ficam em `tests/i18n.rs`, num binário
+    // próprio, para não atrapalhar os outros testes da biblioteca (que esperam o português).
 
     #[test]
     fn language_codes_parse_in_every_usual_form() {
@@ -161,37 +153,10 @@ mod tests {
     }
 
     #[test]
-    fn t_follows_the_active_language_and_falls_back_to_portuguese() {
-        with(Lang::En, || {
-            assert_eq!(t("Gravar"), "Record");
-            assert_eq!(
-                t("uma frase que ninguém traduziu"),
-                "uma frase que ninguém traduziu"
-            );
-        });
-        with(Lang::Pt, || assert_eq!(t("Gravar"), "Gravar"));
-    }
-
-    #[test]
-    fn placeholders_are_filled_in_order_and_the_translation_may_reorder_words() {
+    fn placeholders_are_filled_in_order() {
         assert_eq!(fill("{} de {}", &[&1, &"a"]), "1 de a");
         assert_eq!(fill("sem valores", &[&1]), "sem valores");
         assert_eq!(fill("{} e {}", &[&1]), "1 e {}");
-        with(Lang::En, || {
-            assert_eq!(tf("Câmera · {}", &[&"Portão"]), "Camera · Portão");
-        });
-    }
-
-    #[test]
-    fn plurals_pick_the_form_by_count() {
-        with(Lang::Pt, || {
-            assert_eq!(plural(1, "câmera", "câmeras"), "câmera");
-            assert_eq!(plural(0, "câmera", "câmeras"), "câmeras");
-            assert_eq!(plural(3, "câmera", "câmeras"), "câmeras");
-        });
-        with(Lang::En, || {
-            assert_eq!(plural(2, "câmera", "câmeras"), "cameras")
-        });
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //! chip da barra, o menu do chip, o banner de aviso e as confirmações. O estado
 //! e os textos vêm de `ui::daemon`; aqui só se desenha.
 
+use crate::i18n::t;
 use iced::widget::{button, column, container, row, text};
 use iced::{Element, Length};
 
@@ -94,7 +95,7 @@ pub fn menu(app: &App) -> Element<'_, Message> {
         col = col.push(menu_row(
             theme,
             "\u{21BB}",
-            "Reconectar agora",
+            t("Reconectar agora"),
             None,
             Message::DaemonReconnect,
             false,
@@ -102,7 +103,7 @@ pub fn menu(app: &App) -> Element<'_, Message> {
         col = col.push(menu_row(
             theme,
             "\u{25A3}",
-            "Usar o motor local…",
+            t("Usar o motor local…"),
             None,
             Message::AskUseLocalEngine,
             true,
@@ -111,7 +112,7 @@ pub fn menu(app: &App) -> Element<'_, Message> {
     col = col.push(menu_row(
         theme,
         "\u{25E7}",
-        "Copiar comando para iniciar o daemon",
+        t("Copiar comando para iniciar o daemon"),
         None,
         Message::CopyDaemonStartCommand,
         false,
@@ -119,7 +120,7 @@ pub fn menu(app: &App) -> Element<'_, Message> {
     col = col.push(menu_row(
         theme,
         "\u{25E7}",
-        "Copiar caminho do socket",
+        t("Copiar caminho do socket"),
         None,
         Message::CopyDaemonSocket,
         false,
@@ -158,9 +159,13 @@ pub fn banner(app: &App) -> Option<Element<'_, Message>> {
             .size(Theme::TEXT_CAPTION)
             .color(hex(colors.text))
             .width(Length::Fill),
-        small("Reconectar agora", Message::DaemonReconnect, Intent::Ghost),
         small(
-            "Usar motor local",
+            t("Reconectar agora"),
+            Message::DaemonReconnect,
+            Intent::Ghost
+        ),
+        small(
+            t("Usar motor local"),
             Message::AskUseLocalEngine,
             Intent::Ghost
         ),
@@ -202,7 +207,7 @@ pub fn modal<'a>(app: &'a App, modal: Modal) -> Element<'a, Message> {
             .width(360),
         row![
             iced::widget::horizontal_space(),
-            button(text("Cancelar").size(Theme::TEXT_BODY))
+            button(text(t("Cancelar")).size(Theme::TEXT_BODY))
                 .on_press(Message::ModalCancel)
                 .padding([6, 14])
                 .style(style::pill(theme, Intent::Ghost)),

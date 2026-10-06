@@ -13,7 +13,19 @@ use std::path::{Path, PathBuf};
 use rust_rtsp_viewer::i18n;
 
 /// Arquivos de `src/ui` cujos textos já passam pelo catálogo.
-const CONVERTED: &[&str] = &["view/menu.rs"];
+const CONVERTED: &[&str] = &[
+    "view/menu.rs",
+    "view/cell_overlay.rs",
+    "view/flex_layout.rs",
+    "view/overlays.rs",
+    "view/toolbar.rs",
+    "view/daemon.rs",
+    "sidebar/cameras.rs",
+    "sidebar/diagnostics.rs",
+    "sidebar/info.rs",
+    "sidebar/timeline.rs",
+    "sidebar/view.rs",
+];
 
 /// Linhas que são de log, depuração ou erro de programação: ficam em português para quem opera.
 const SKIP_LINE: &[&str] = &[
@@ -98,6 +110,31 @@ fn literals(line: &str) -> Vec<(usize, String)> {
     out
 }
 
+/// O texto como o programa o vê: `\u{2026}`, `\"` e `\\` já viram o caractere.
+fn unescape(lit: &str) -> String {
+    let mut out = String::new();
+    let mut chars = lit.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('u') if chars.peek() == Some(&'{') => {
+                chars.next();
+                let hex: String = chars.by_ref().take_while(|c| *c != '}').collect();
+                if let Some(ch) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                    out.push(ch);
+                }
+            }
+            Some('n') => out.push('\n'),
+            Some(other) => out.push(other),
+            None => {}
+        }
+    }
+    out
+}
+
 /// `before` termina na chamada `name(` (e não numa função de nome maior, como `text(`)?
 fn ends_with_call(before: &str, name: &str) -> bool {
     before.strip_suffix(name).is_some_and(|rest| {
@@ -109,29 +146,74 @@ fn ends_with_call(before: &str, name: &str) -> bool {
 }
 
 /// Esse literal vem logo depois de `t(`, `tf(` ou de um argumento de `plural(`?
-fn is_translated(line: &str, pos: usize) -> bool {
+fn is_translated(prev: &str, line: &str, pos: usize) -> bool {
+    // rustfmt pode pôr o literal sozinho na linha de baixo: a chamada termina a linha de cima
     let before = line[..pos].trim_end();
+    let before = if before.is_empty() {
+        prev.trim_end()
+    } else {
+        before
+    };
     ends_with_call(before, "t(")
         || ends_with_call(before, "tf(")
         || ends_with_call(before, "plural(")
         || (before.ends_with(',') && line[..pos].contains("plural("))
 }
 
+/// Parece texto para a pessoa ler: começa com maiúscula e tem 4+ letras ("Concluir", "Atalhos de
+/// teclado", "DESATIVADA"); nomes de código (`a_b`, `a::b`) e modelos (`{}…`) não contam.
+fn looks_like_ui_text(lit: &str) -> bool {
+    // "Ctrl+Q", "Space / k", "Enter / Backspace", "F11": nomes de tecla, iguais nos dois idiomas
+    const KEYS: &[&str] = &[
+        "Ctrl",
+        "Shift",
+        "Alt",
+        "Space",
+        "Enter",
+        "Backspace",
+        "Tab",
+        "Esc",
+        "PgUp",
+        "PgDn",
+    ];
+    let key_name = |w: &str| {
+        w.chars().count() == 1
+            || KEYS.contains(&w)
+            || (w.starts_with('F') && w[1..].chars().all(|c| c.is_ascii_digit()))
+    };
+    if lit
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .all(key_name)
+    {
+        return false;
+    }
+    let letters = lit.chars().filter(|c| c.is_alphabetic()).count();
+    if letters < 4 || lit.contains("::") || lit.contains('_') || lit.starts_with('{') {
+        return false;
+    }
+    lit.chars().next().is_some_and(char::is_uppercase)
+}
+
 fn looks_portuguese(lit: &str) -> bool {
     lit.chars().any(|c| "áéíóúâêôãõçÁÉÍÓÚÂÊÔÃÕÇ".contains(c))
         || WORDS.iter().any(|w| lit.contains(w))
+        || looks_like_ui_text(lit)
 }
 
 /// Todos os `(arquivo, linha, literal)` de português solto num arquivo.
 fn untranslated(rel: &str) -> Vec<String> {
     let mut found = Vec::new();
-    for (n, line) in source(rel).lines().enumerate() {
+    let text = source(rel);
+    let lines: Vec<&str> = text.lines().collect();
+    for (n, line) in lines.iter().enumerate() {
+        let prev = if n > 0 { lines[n - 1] } else { "" };
         let trimmed = line.trim_start();
         if trimmed.starts_with("//") || SKIP_LINE.iter().any(|m| line.contains(m)) {
             continue;
         }
         for (pos, lit) in literals(line) {
-            if looks_portuguese(&lit) && !is_translated(line, pos) {
+            if looks_portuguese(&lit) && !is_translated(prev, line, pos) {
                 found.push(format!("{rel}:{}: \"{lit}\"", n + 1));
             }
         }
@@ -141,13 +223,16 @@ fn untranslated(rel: &str) -> Vec<String> {
 
 fn translated_keys(rel: &str) -> Vec<(usize, String)> {
     let mut keys = Vec::new();
-    for (n, line) in source(rel).lines().enumerate() {
+    let text = source(rel);
+    let lines: Vec<&str> = text.lines().collect();
+    for (n, line) in lines.iter().enumerate() {
+        let prev = if n > 0 { lines[n - 1] } else { "" };
         if line.trim_start().starts_with("//") {
             continue;
         }
         for (pos, lit) in literals(line) {
-            if is_translated(line, pos) {
-                keys.push((n + 1, lit));
+            if is_translated(prev, line, pos) {
+                keys.push((n + 1, unescape(&lit)));
             }
         }
     }
@@ -191,14 +276,21 @@ fn the_catalog_has_no_dead_entries_for_converted_files() {
             used.insert(key);
         }
     }
-    // frases usadas fora de `src/ui` (núcleo) também contam: procura nelas
-    let core = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/rrv-core/src");
-    for f in walk(&core) {
-        if let Ok(text) = std::fs::read_to_string(&f) {
-            for line in text.lines() {
-                for (pos, lit) in literals(line) {
-                    if is_translated(line, pos) {
-                        used.insert(lit);
+    // frases usadas fora de `src/ui` (núcleo e seus testes) também contam
+    for dir in [
+        "crates/rrv-core/src",
+        "crates/rrv-core/tests",
+        "crates/rrv-daemon/src",
+    ] {
+        for f in walk(&Path::new(env!("CARGO_MANIFEST_DIR")).join(dir)) {
+            if let Ok(text) = std::fs::read_to_string(&f) {
+                let lines: Vec<&str> = text.lines().collect();
+                for (n, line) in lines.iter().enumerate() {
+                    let prev = if n > 0 { lines[n - 1] } else { "" };
+                    for (pos, lit) in literals(line) {
+                        if is_translated(prev, line, pos) {
+                            used.insert(unescape(&lit));
+                        }
                     }
                 }
             }
@@ -253,4 +345,9 @@ fn progress_report() {
         .filter(|f| !untranslated(f).is_empty())
         .collect();
     eprintln!("arquivos de src/ui com texto ainda por converter: {todo:?}");
+    if std::env::var_os("I18N_DETAILS").is_some() {
+        for f in todo {
+            eprintln!("{}", untranslated(f).join("\n"));
+        }
+    }
 }

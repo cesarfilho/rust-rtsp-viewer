@@ -108,7 +108,7 @@ fn segmented<'a>(theme: Theme, items: Vec<(String, bool, Message)>) -> Element<'
 
 fn density_row(app: &App) -> Element<'_, Message> {
     let mut items = vec![(
-        "Auto".to_string(),
+        "Auto".to_string(), // i18n-ok: igual nos dois idiomas
         app.view.mode == GridMode::Auto,
         Message::GridModeChanged(GridMode::Auto),
     )];
@@ -133,7 +133,7 @@ fn layout_row(app: &App) -> Element<'_, Message> {
                 Message::LayoutModeChanged(LayoutMode::Grid),
             ),
             (
-                "Flex".into(),
+                "Flex".into(), // i18n-ok: nome do modo
                 app.layout_mode == LayoutMode::Flex,
                 Message::LayoutModeChanged(LayoutMode::Flex),
             ),
@@ -335,7 +335,7 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
             theme,
             "\u{25CF}",
             t("Sair"),
-            Some("Ctrl Q"),
+            Some("Ctrl Q"), // i18n-ok: nome de tecla
             Message::Quit,
             true,
         ));
