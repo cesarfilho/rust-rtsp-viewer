@@ -1339,7 +1339,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
                 )
             };
             let when = format_clock(p.segment.ts_start + pos as i64);
-            row![
+            // Dois grupos em duas linhas: tocar/pular/velocidade e, embaixo, marcar/proteger/exportar.
+            // Numa só linha os botões da direita quebravam o texto ("Exportar" / "E") em janelas estreitas.
+            let transport = row![
                 pill_button(
                     app,
                     if p.paused { t("Tocar") } else { t("Pausar") },
@@ -1362,6 +1364,10 @@ pub fn view(app: &App) -> Element<'_, Message> {
                 ))
                 .size(12)
                 .color(dim),
+            ]
+            .spacing(6)
+            .align_y(iced::Alignment::Center);
+            let marks = row![
                 iced::widget::space::horizontal(),
                 pill_button(app, t("Início  I"), RecMsg::MarkIn, sel(v.mark_in.is_some())),
                 pill_button(app, t("Fim  O"), RecMsg::MarkOut, sel(v.mark_out.is_some())),
@@ -1374,8 +1380,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
                 pill_button(app, t("Exportar  E"), RecMsg::Export, Intent::Primary),
             ]
             .spacing(6)
-            .align_y(iced::Alignment::Center)
-            .into()
+            .align_y(iced::Alignment::Center);
+            column![transport, marks].spacing(4).into()
         }
         None => text(t(
             "Clique para ver · roda do mouse aproxima · ‹ › desloca · Espaço toca/pausa · setas esquerda/direita pulam 10 s",
@@ -1488,19 +1494,25 @@ fn compare_row<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message> 
         return iced::widget::Space::new().into();
     }
     let dim = Theme::color_from_hex(app.theme.colors().text_secondary);
-    let mut r = row![text(t("Comparar:")).size(12).color(dim)]
-        .spacing(6)
-        .align_y(iced::Alignment::Center);
+    // Com muitas câmeras a linha não cabe: os botões quebram para a linha de baixo em vez de se espremerem.
+    let mut items: Vec<Element<'a, Message>> =
+        vec![text(t("Comparar:")).size(12).color(dim).into()];
     for name in others {
         let on = v.followers.iter().any(|f| f.camera == *name);
-        r = r.push(
+        items.push(
             button(text(name.as_str()).size(12))
                 .padding(iced::Padding::from([4, 10]))
                 .style(style::pill(app.theme, sel(on)))
-                .on_press(Message::Recordings(RecMsg::ToggleCompare(name.clone()))),
+                .on_press(Message::Recordings(RecMsg::ToggleCompare(name.clone())))
+                .into(),
         );
     }
-    r.into()
+    row(items)
+        .spacing(6)
+        .align_y(iced::Alignment::Center)
+        .wrap()
+        .vertical_spacing(4)
+        .into()
 }
 
 /// O nome de um evento do histórico, em português.
