@@ -8,7 +8,7 @@
 #   DE       início do `make clip` (ex.: -30m, -2h)       (padrão: -5m)
 
 .DEFAULT_GOAL := help
-.PHONY: help all build release bin run run-embedded run-daemon-local run-with-daemon check ci fmt fmt-check lint test test-lib \
+.PHONY: help all build release bin run-daemon-detect run run-embedded run-daemon-local run-with-daemon check ci fmt fmt-check lint test test-lib \
         deny clean watch config-check install uninstall \
         docker-build up up-vaapi up-nvidia down restart logs ps init-docker \
         status history record enable disable clip events \
@@ -90,6 +90,9 @@ run-embedded: ## Igual a `run`, forçando o motor local mesmo que haja um daemon
 
 run-daemon-local: ## Roda o daemon direto, sem Docker (grava e detecta com o config.toml)
 	cargo run --release -p rrv-daemon -- $(CONFIG)
+
+run-daemon-detect: ## Daemon com detecção de objetos (precisa de `make bin FEATURES=detect` e scripts/fetch-model.sh)
+	ORT_DYLIB_PATH=$(CURDIR)/models/onnxruntime/lib/libonnxruntime.so ./bin/rrv-daemon $(CONFIG)
 
 run-with-daemon: ## Abre a janela ligada ao daemon em o socket do daemon (a vista Gravações, tecla t)
 	RRV_SOCKET=$(SOCKET) cargo run --release -- $(CONFIG)

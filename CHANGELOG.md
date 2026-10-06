@@ -4,6 +4,33 @@ Todas as mudanças notáveis neste projeto serão documentadas neste arquivo.
 
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
+## [Não lançado]
+
+### ✨ Adicionado
+
+- **Detecção de objetos** (YOLO11 da Ultralytics, ONNX Runtime carregado em execução): `[detect]` (`enabled`, `model`, `backend`
+  cpu/cuda/auto, `min_score`, `iou`, `labels`, `cooldown_secs`). Só roda onde há movimento e dentro das zonas; o evento
+  `detection` (rótulo, confiança, caixa, zona) vai ao histórico (schema v3), aos avisos e ao webhook. `rrvctl history --label person`.
+  Daemon com `make bin FEATURES=detect`; `scripts/fetch-model.sh` baixa o modelo (SHA-256 fixo) e a libonnxruntime;
+  imagens Docker `detect-cpu` e `detect-cuda` (`compose.detect.yaml`, `compose.detect-cuda.yaml`). Medido: CUDA (GTX 1650)
+  4,6 ms a 320 px e 9,7 ms a 640 px; CPU 27 / 68 ms (`docs/spike-0.6-ort.md`).
+- **Caixas dos objetos** no spotlight e no player de gravações, botão "Objeto:" na lista de eventos da vista Gravações.
+- **ONVIF** (só descoberta e cadastro): `rrvctl discover [--user U]` acha as câmeras (multicast + varredura unicast da sub-rede) e
+  imprime o trecho do `config.toml` com o stream principal e o sub-stream; a senha vai como `${SEGREDO}`.
+- **Chaveiro do sistema** (Secret Service) como terceira origem de `${NOME}`: `rrvctl secret set|check|delete`,
+  `rrvctl discover --store-secret`. A janela lê a senha da câmera do chaveiro, sem ela no `config.toml`.
+- **Idiomas**: pt-BR e inglês, trocados no menu `⋯` → Aparência (ou `language = "en"`); `tests/i18n_scan.rs` impede texto fixo.
+- **MQTT** opcional (`[mqtt]`): estado de cada câmera e eventos, com descoberta do Home Assistant; só `mqtt://` (sem TLS).
+- **Vídeo na GPU**: widget `shader` com NV12 (1,5 byte por pixel em vez de 4; YUV→RGB na GPU), RGBA como reserva
+  (`RRV_DISPLAY_FORMAT=rgba`).
+- `make bin` deixa janela, daemon e `rrvctl` em `./bin/`.
+
+### 🔧 Alterado
+
+- **iced 0.14** (wgpu 27). A interface é desenhada na iGPU Intel (`WGPU_POWER_PREF=low`); a GTX 1650 clareava as cores. O estado anterior
+  (iced 0.13) fica na branch `iced-0.13-final`.
+- O vídeo deixou de usar `iced::widget::image` (no 0.14 imagens > 2 MiB carregam de forma assíncrona e piscavam).
+
 ## [0.9.0] - 2026-10-06
 
 O app passa a ser um **NVR que grava e detecta com a janela fechada**: um daemon (`rrv-daemon`, no Docker) faz o trabalho
