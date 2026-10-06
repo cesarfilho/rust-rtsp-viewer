@@ -402,7 +402,6 @@ src/
 │   ├── codec.rs                — enum Codec (H264/H265/Mjpeg/…)
 │   ├── diagnostics.rs          — hints e severidade
 │   ├── groups.rs               — agrupamento de câmeras
-│   ├── hw_encoder.rs           — seleção de encoder por hardware
 │   ├── metrics.rs              — Metrics (contadores atômicos)
 │   ├── motion.rs               — detecção de movimento por diferença de frames
 │   ├── multi_stream.rs         — seleção main/sub stream

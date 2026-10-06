@@ -40,7 +40,7 @@ A meta declarada é ML (ADR 0003), então M4 segue no plano, mas vale confirmar 
   1. `gst-plugin-va` e decodificar na iGPU Intel (deixa a NVIDIA para IA);
   2. baixar o frame em NV12 e converter em shader (widget wgpu próprio no iced);
   3. zero-copy (neste notebook híbrido exigiria renderizar na NVIDIA).
-- [ ] Encoder por hardware (`hw_encoder`) — só relevante enquanto a gravação reencoda (ADR 0007).
+- [x] ~~Encoder por hardware (`hw_encoder`)~~ — removido: a gravação RTSP deixou de reencodar (ADR 0007, plano 3.1).
 - [ ] Áudio usa a URL principal mesmo com a câmera no sub (sessão extra na câmera).
 - **Saída:** 16 câmeras dentro do orçamento de CPU/GPU definido no baseline.
 

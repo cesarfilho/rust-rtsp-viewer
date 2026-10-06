@@ -11,7 +11,6 @@ pub mod camera_status;
 pub mod codec;
 pub mod diagnostics;
 pub mod groups;
-pub mod hw_encoder;
 pub mod metrics;
 pub mod motion;
 pub mod multi_stream;

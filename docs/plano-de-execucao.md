@@ -65,7 +65,7 @@ Depende de 0.4 e 0.5.
 | 2.4 | Zero-copy / PRIME offload (renderizar na NVIDIA) | só se 2.3 não bastar | XG |
 | 2.5 | Topologia B (ADR 0008): pipeline *detect* sempre ligado no sub + *display* só para o visível | decidido com 0.3, 0.4 (**D1**, **D2**) | G |
 | 2.6 | Ligar `streaming` (pausa em cena estática) | só se o baseline mostrar ganho; senão remover o módulo | M |
-| 2.7 | Decidir `hw_encoder`: provavelmente **remover**, pois 3.1 elimina o reencode | módulo removido ou ligado | P |
+| 2.7 | Decidir `hw_encoder`: provavelmente **remover**, pois 3.1 elimina o reencode | módulo removido ou ligado | P | [x] módulo removido em 2026-10-05: ninguém o usava e a gravação RTSP H.264/H.265 já não reencoda (3.1); HLS/arquivo seguem com `x264enc` fixo
 | 2.8 | Teste de estresse: 16 fontes sintéticas + tempestade de reconexões | sem vazamento de threads/memória em 1 h | M | [~] `tests/stress.rs`: 5 min OK (7.482 ciclos, sem vazamento de threads/fds, RSS em platô); falta a corrida de 1 h (`RRV_STRESS_SECS=3600`) |
 
 Gate M2: 16 câmeras dentro do orçamento do baseline. Risco principal: 2.3.

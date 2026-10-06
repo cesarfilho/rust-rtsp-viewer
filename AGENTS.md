@@ -141,7 +141,6 @@ keyring is plan 5.3.
 | `codec.rs` | `enum Codec` (H264/H265/Mjpeg/Vp8/…), `from_caps` |
 | `diagnostics.rs` | `Severity`, `Hint`, `diagnose`, `overall_severity` |
 | `groups.rs` | camera grouping — wired to `[[groups]]` + sidebar/grid filter |
-| `hw_encoder.rs` | hardware encoder selection |
 | `metrics.rs` | `Metrics` (atomic), `PacketStats`, `StreamInfo` |
 | `motion.rs` | frame-difference motion detection |
 | `multi_stream.rs` | `StreamQuality`, `desired_quality`, `stream_url_for_quality` — wired to `sub_url` |
