@@ -5,8 +5,8 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
 
 ## Architecture
 
-- **Stack**: `iced = "0.13"` (features: `image`, `tokio`, `advanced`, `canvas`)
-  + `gstreamer = "0.20"` + `gstreamer-app = "0.20"`
+- **Stack**: `iced = "0.14"` (features: `image`, `tokio`, `advanced`, `canvas`; since 2026-10-06 — the 0.13 state is the branch `iced-0.13-final`)
+  + `gstreamer = "0.25"` + `gstreamer-app = "0.25"`
 - **Display pipeline**:
   `rtspsrc → <decoder> → postdec_queue → videoconvert → capsfilter(RGBA) → tee → display_queue → appsink`
   - The decoder is named `video_decoder` so decode-time probes can find it.
@@ -338,7 +338,7 @@ via `subscription`'s `listen_with`, or any keypress) and auto-hides after
   a `parse_launch` string, including the audio pipelines.
 - **Mutex poisoning**: recover with `unwrap_or_else(|e| e.into_inner())`.
 - **`Container::align_top(x)` / `align_left(x)` set the container's *height /
-  width*, not a margin** (iced 0.13). Using them as "x px from the edge" squeezes
+  width*, not a margin** (iced 0.13/0.14). Using them as "x px from the edge" squeezes
   the content into an x-pixel box (a menu opened at the pointer then resizes as
   the pointer moves). Use `view::pinned(el, Horizontal, Vertical, padding)` (layer-sized
   container + padding; it does not capture events).
