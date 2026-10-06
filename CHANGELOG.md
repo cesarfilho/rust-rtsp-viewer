@@ -6,12 +6,20 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 
 ## [Não lançado]
 
+## [0.11.0] - 2026-10-06
+
 ### ✨ Adicionado
 
 - **A janela em outra máquina, pela LAN (IP)**: o daemon escuta em TCP (`[daemon] listen`) e a janela / `rrvctl` conectam com
   `tcp://host:porta` e um token (desafio-resposta HMAC-SHA256; o token não trafega). O daemon serve os vídeos gravados por HTTP
   (`Range`, URLs assinadas e curtas) e a janela baixa os clipes exportados. **O tráfego não é criptografado**: só numa LAN de
   confiança ou por VPN.
+
+### 🐛 Corrigido
+
+- **Modo flex**: ao trocar de câmera o vídeo aparecia só na miniatura e a área grande ficava preta (o mesmo vídeo era desenhado
+  duas vezes e dividia o retângulo da GPU). A miniatura da câmera principal agora só mostra o nome, e as demais se renovam a cada 60 s.
+- **Vista Gravações**: a linha "Comparar" quebra de linha e os controles do player ficam em duas linhas.
 
 ## [0.10.0] - 2026-10-06
 
