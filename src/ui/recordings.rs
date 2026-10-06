@@ -90,7 +90,14 @@ pub struct RecordingsView {
     pub truncated: bool,
     /// Filtro da lista de eventos: só movimento.
     pub motion_only: bool,
+    /// A janela acompanha o vivo: novos segmentos entram sozinhos.
+    pub follow: bool,
+    /// Quando o histórico foi pedido pela última vez (para o refresco automático).
+    pub refreshed_at: std::time::Instant,
 }
+
+/// De quanto em quanto tempo a vista aberta pergunta ao daemon se há segmentos novos.
+const REFRESH_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -148,18 +155,21 @@ pub fn update(app: &mut App, msg: RecMsg) -> Task<Message> {
         RecMsg::SetSpan(hours) => {
             if let Some(v) = app.recordings.as_mut() {
                 v.span = Span::last_hours(now_ms(), hours);
+                v.follow = true;
             }
             request_history(app);
         }
         RecMsg::Pan(f) => {
             if let Some(v) = app.recordings.as_mut() {
                 v.span = v.span.panned(f).clamped_to(now_ms());
+                v.follow = v.span.is_following(now_ms());
             }
             request_history(app);
         }
         RecMsg::Zoom { factor, anchor } => {
             if let Some(v) = app.recordings.as_mut() {
                 v.span = v.span.zoomed(factor, anchor).clamped_to(now_ms());
+                v.follow = v.span.is_following(now_ms());
             }
             request_history(app);
         }
@@ -239,6 +249,8 @@ fn open(app: &mut App) {
         mark_out: None,
         truncated: false,
         motion_only: false,
+        follow: true,
+        refreshed_at: std::time::Instant::now(),
     });
     request_history(app);
 }
@@ -248,7 +260,9 @@ fn request_history(app: &mut App) {
         return;
     };
     if let Some(v) = app.recordings.as_mut() {
-        v.loading = true;
+        // Com dados na tela o refresco é silencioso (sem piscar "Carregando…").
+        v.loading = v.segments.is_empty();
+        v.refreshed_at = std::time::Instant::now();
     }
     super::update::send_to_daemon(
         app,
@@ -274,6 +288,11 @@ pub fn on_history(app: &mut App, result: Result<Response, String>) {
             truncated,
         }) => {
             v.segments = segments;
+            if let Some(p) = v.player.as_mut()
+                && let Some(fresh) = v.segments.iter().find(|s| s.id == p.segment.id)
+            {
+                p.segment = fresh.clone();
+            }
             v.events = events;
             v.truncated = truncated;
             v.error = None;
@@ -503,8 +522,26 @@ fn export(app: &mut App) {
     }
 }
 
+/// A cada [`REFRESH_EVERY`] pergunta ao daemon pelo histórico de novo; se a janela segue o
+/// vivo, ela anda junto com o relógio. Sem daemon, não faz nada (e não enche a tela de avisos).
+fn refresh_if_due(app: &mut App) {
+    let connected = app.daemon.is_connected();
+    let now = now_ms();
+    let Some(v) = app.recordings.as_mut() else {
+        return;
+    };
+    if !connected || v.refreshed_at.elapsed() < REFRESH_EVERY {
+        return;
+    }
+    if v.follow {
+        v.span = v.span.following(now);
+    }
+    request_history(app);
+}
+
 /// A cada tick: conclui um seek pendente e passa ao trecho seguinte quando um acaba.
 pub fn tick(app: &mut App) {
+    refresh_if_due(app);
     let mut next: Option<(String, SegmentInfo)> = None;
     if let Some(v) = app.recordings.as_mut()
         && let Some(p) = v.player.as_mut()

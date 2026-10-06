@@ -2440,6 +2440,82 @@ mod tests {
         assert!(app.recordings.as_ref().unwrap().motion_only);
     }
 
+    fn history_requests(app: &App) -> usize {
+        app.pending
+            .values()
+            .filter(|p| matches!(p, PendingRequest::History))
+            .count()
+    }
+
+    #[test]
+    fn the_open_view_refreshes_itself_and_follows_the_live_edge() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        let _ = update(&mut app, Message::Recordings(RecMsg::Open));
+        let token = *app.pending.keys().next().unwrap();
+        handle_reply(
+            &mut app,
+            token,
+            Ok(history_reply(vec![seg(1, 1_000, Some(2_000), "a.mkv")])),
+        );
+        assert_eq!(history_requests(&app), 0);
+
+        // ainda não venceu: nada é pedido
+        super::super::recordings::tick(&mut app);
+        assert_eq!(history_requests(&app), 0, "5 s ainda não passaram");
+
+        // venceu: pede de novo, e a janela anda com o relógio
+        let old_to = app.recordings.as_ref().unwrap().span.to;
+        app.recordings.as_mut().unwrap().refreshed_at = Instant::now() - Duration::from_secs(10);
+        std::thread::sleep(Duration::from_millis(20));
+        super::super::recordings::tick(&mut app);
+        assert_eq!(history_requests(&app), 1);
+        let v = app.recordings.as_ref().unwrap();
+        assert!(v.span.to > old_to, "a janela seguiu o vivo");
+        assert!(
+            !v.loading,
+            "o refresco não pisca \"Carregando…\" com dados na tela"
+        );
+    }
+
+    #[test]
+    fn looking_at_the_past_is_not_dragged_by_the_refresh() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        let _ = update(&mut app, Message::Recordings(RecMsg::Open));
+        let token = *app.pending.keys().next().unwrap();
+        handle_reply(&mut app, token, Ok(history_reply(vec![])));
+        let _ = update(&mut app, Message::Recordings(RecMsg::Pan(-0.5)));
+        assert!(!app.recordings.as_ref().unwrap().follow);
+        let span = app.recordings.as_ref().unwrap().span;
+        app.pending.clear();
+        app.recordings.as_mut().unwrap().refreshed_at = Instant::now() - Duration::from_secs(10);
+        super::super::recordings::tick(&mut app);
+        assert_eq!(history_requests(&app), 1, "ainda atualiza os dados");
+        assert_eq!(
+            app.recordings.as_ref().unwrap().span,
+            span,
+            "mas não move a janela"
+        );
+        // voltar ao presente religa o seguir
+        let _ = update(&mut app, Message::Recordings(RecMsg::SetSpan(6)));
+        assert!(app.recordings.as_ref().unwrap().follow);
+    }
+
+    #[test]
+    fn without_a_connection_the_refresh_is_silent() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        let _ = update(&mut app, Message::Recordings(RecMsg::Open));
+        app.daemon.mode = Mode::Lost;
+        app.pending.clear();
+        let toasts = app.toasts.len();
+        app.recordings.as_mut().unwrap().refreshed_at = Instant::now() - Duration::from_secs(10);
+        super::super::recordings::tick(&mut app);
+        assert!(app.pending.is_empty());
+        assert_eq!(app.toasts.len(), toasts, "sem avisos a cada 5 s");
+    }
+
     #[test]
     fn closing_without_local_recordings_does_not_ask() {
         let mut app = test_app();

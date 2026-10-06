@@ -4,6 +4,8 @@
 
 const MIN_SPAN_MS: i64 = 5 * 60_000; // 5 min
 const MAX_SPAN_MS: i64 = 7 * 86_400_000; // 7 dias
+/// Até quanto antes de "agora" o fim do intervalo ainda conta como seguir o vivo.
+const FOLLOW_SLACK_MS: i64 = 2_000;
 
 /// O intervalo de tempo visível (Unix ms).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +59,19 @@ impl Span {
         Self {
             from: self.from + d,
             to: self.to + d,
+        }
+    }
+
+    /// Está "seguindo o vivo": o fim do intervalo é (quase) agora.
+    pub fn is_following(&self, now: i64) -> bool {
+        self.to >= now - FOLLOW_SLACK_MS
+    }
+
+    /// O mesmo tamanho, terminando em `now` (para a vista acompanhar as gravações novas).
+    pub fn following(&self, now: i64) -> Self {
+        Self {
+            from: now - self.len(),
+            to: now,
         }
     }
 
@@ -237,6 +252,21 @@ mod tests {
         let fwd = s.panned(0.5).clamped_to(NOW);
         assert_eq!(fwd.to, NOW);
         assert_eq!(fwd.len(), 10 * H, "o tamanho não muda");
+    }
+
+    #[test]
+    fn following_slides_the_window_to_now_keeping_its_size() {
+        let s = Span::last_hours(NOW, 6);
+        assert!(s.is_following(NOW + 1_500), "folga de 2 s");
+        assert!(
+            !s.is_following(NOW + 60_000),
+            "um minuto atrás já não segue"
+        );
+        let later = NOW + 90_000;
+        let f = s.following(later);
+        assert_eq!((f.to, f.len()), (later, 6 * H));
+        // quem olha o passado não é arrastado
+        assert!(!s.panned(-0.5).is_following(NOW));
     }
 
     #[test]
