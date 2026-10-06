@@ -333,7 +333,7 @@ docker compose logs -f rrv
 `vah264dec (GPU)` ou `avdec_h264 (CPU)`. **No daemon ela corta a CPU quase pela metade** (medido: 88% → 47% de um núcleo com
 11 câmeras HLS); para a janela o ganho espera o caminho NV12 (plano 2.3). Veja `docs/gpu-container.md`.
 **GPU NVIDIA:** `compose.nvidia.yaml`; precisa do `nvidia-container-toolkit` no host (`scripts/check-nvidia-host.sh` diz o que
-falta; ainda não testada). e o aviso de movimento com a janela fechada é o `[webhook]` (abaixo); os eventos também vão para
+falta; ainda não testada). O aviso de movimento com a janela fechada é o `[webhook]` (abaixo); os eventos também vão para
 `docker compose logs`. A imagem tem ~1 GB (plugins
 `bad`/`ugly`/`libav` do GStreamer).
 
