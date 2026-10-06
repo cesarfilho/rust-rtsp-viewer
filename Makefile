@@ -101,7 +101,7 @@ run-with-daemon: ## Abre a janela ligada ao daemon em o socket do daemon (a vist
 init-docker: ## Cria as pastas e o config.docker.toml a partir do exemplo (só se faltarem)
 	mkdir -p recordings state secrets "$${XDG_RUNTIME_DIR:-/run/user/$$(id -u)}/rrv"
 	@[ -f config.docker.toml ] || { cp config.docker.toml.example config.docker.toml; echo "criado config.docker.toml: edite as câmeras"; }
-	@echo "Senhas: um arquivo por câmera em ./secrets com o nome do ${nome} do config, ex.: printf '%s' 'senha' > secrets/cam_portao_password && chmod 600 secrets/cam_portao_password"
+	@echo "Senhas: um arquivo por câmera em ./secrets com o nome que o config usa entre chaves, ex.: printf '%s' 'senha' > secrets/cam_portao_password && chmod 600 secrets/cam_portao_password"
 
 _docker-ready:
 	@[ -f config.docker.toml ] || { echo "falta o config.docker.toml: rode 'make init-docker' e edite as câmeras"; exit 1; }
