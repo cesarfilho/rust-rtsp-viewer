@@ -119,6 +119,14 @@ each segment (with Docker, set it to the host folder mounted as `/data`). The pl
 `<recordings>/exports/`. Test aid: `RRV_OPEN_RECORDINGS=1` opens the view once the daemon connects,
 `=play` also plays the latest finished segment, `=compare` also puts every other camera side by side (no synthetic key presses needed). **Several channels**: the main `Player` plus `Follower`s (`RecordingsView.followers`, up to `MAX_CHANNELS` = 4); `sync_followers` (each tick) asks the pure `timeline_view::follow_action` what each follower does (keep / open the segment covering the main's instant / seek if it drifted over `FOLLOW_DRIFT_MS` / gap). A follower whose file has not reported a position yet counts as "where it should be" (else it is reopened every tick forever), and followers hold while the main has ended.
 
+## Inference (plan C2)
+
+`engine::inference::InferenceWorker` runs the detector on its own thread behind the `Infer` trait.
+`submit` never blocks: one waiting frame per camera (a newer one replaces it) and at most `capacity`
+overall (oldest evicted); both count in `InferenceStats.dropped`. Results come back through
+`take_results` (bounded), each with `infer_ms` / `queued_ms`. Tested with a deliberately slow fake;
+`Detector` implements `Infer` under feature `detect`. Not wired to the engine yet (C3).
+
 ## Secrets (plan 2.5.8)
 
 URLs in the config may carry `${NAME}` (`rrv_core::secrets`): value from env var `NAME`, else file

@@ -7,6 +7,7 @@
 pub mod backoff;
 pub mod bridge;
 pub mod clip;
+pub mod inference;
 pub mod pipeline;
 pub mod playback;
 

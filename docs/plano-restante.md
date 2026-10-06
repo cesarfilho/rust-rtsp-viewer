@@ -64,7 +64,7 @@ exato ao baixá-lo.
 |---|---|---|---|---|
 | C0 ✅ | **0.6, spike do `ort`**: YOLO-n a 320 e 640 em (1) CPU (já medido: 38–117 ms), (2) OpenVINO na iGPU Intel (sem `sudo`), (3) CUDA na GTX 1650 (só se a D6 estiver feita). Escolher o backend | M | eu (+ você: D6) | `docs/spike-0.6-ort.md` com ms/inferência e VRAM por backend e a recomendação |
 | C1 ✅ | **4.1 módulo `detect`** (feature `detect`): pré-processamento, inferência, NMS; `scripts/fetch-model.sh` com SHA-256 (o peso não entra no repositório) | G | eu | testes com imagens de referência: caixas dentro de uma tolerância de IoU |
-| C2 | **4.2 thread de inferência**: fila limitada que descarta o mais antigo, métricas (ms, fila, descartes) | M | eu | nunca bloqueia o `appsink` nem a janela (teste com inferência lenta simulada) |
+| C2 ✅ | **4.2 thread de inferência**: fila limitada que descarta o mais antigo, métricas (ms, fila, descartes) | M | eu | nunca bloqueia o `appsink` nem a janela (teste com inferência lenta simulada) |
 | C3 | **4.3 gatilho**: só roda com movimento e dentro das zonas, sobre a região recortada do ramo de detecção | M | eu | GPU/CPU ociosas sem movimento (medido) |
 | C4 | **4.4 eventos por rótulo**: schema v3 do histórico (caixa, rótulo, score, zona), `[detect] labels`/`min_score`, notificação e webhook por rótulo, cooldown por rótulo | M | eu | filtro por rótulo funciona de ponta a ponta no `rrvctl history` |
 | C5 | **4.5 interface**: caixas sobre o vídeo no spotlight e no player, filtro por rótulo na lista de eventos, revisão "Alertas × Detecções" | G | eu + você | você revisa a interface na tela; contraste dos novos estados nos 5 temas |
