@@ -4,32 +4,49 @@ Todas as mudanças notáveis neste projeto serão documentadas neste arquivo.
 
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
-## [Unreleased]
+## [0.9.0] - 2026-10-06
 
-### 🐛 Corrigido
-
-- **Câmeras fora da página ficavam cegas**: com `[view] pause_hidden` (padrão) elas eram
-  paradas e não detectavam movimento, então `[recording] on_motion` e `[notifications]`
-  não funcionavam nelas. Agora, quando `[motion]` está ligado e algo reage a movimento,
-  todas as câmeras continuam decodificando (no sub-stream, se houver `sub_url`).
-  Sem `on_motion`/notificações, o `pause_hidden` segue valendo.
-- **Recuperação rápida na partida**: um pipeline que reporta erro logo ao iniciar agenda o
-  retry na hora (backoff de 1 s), em vez de esperar os 12 s de graça (medido: ~13 s → ~8 s
-  com uma fonte HLS que leva ~5 s para publicar). O erro antigo agora é limpo no `stop()`,
-  para não derrubar uma reconexão ainda em andamento.
-- `scripts/baseline.sh` nunca achava o processo (`pgrep -x` com nome de 16 caracteres).
+O app passa a ser um **NVR que grava e detecta com a janela fechada**: um daemon (`rrv-daemon`, no Docker) faz o trabalho
+de vídeo e a janela é um cliente dele. Só Linux.
 
 ### ✨ Adicionado
 
-- **`--check`** e validação do `config.toml` na partida (`config_check`): avisa sobre chaves
-  com erro de digitação (antes eram ignoradas em silêncio, ex.: `sub_ul`), valores fora de
-  faixa, esquema de URL não suportado, nomes/rótulos duplicados, índices de grupo inválidos e
-  tema inexistente (caía no padrão sem aviso). Erros abortam; avisos não. Senhas mascaradas.
+- **Daemon sem janela** (`crates/rrv-daemon`) e a CLI **`rrvctl`** (`status`, `record`, `enable|disable`, `zones`, `events`,
+  `history`, `export`). Canal de controle por socket Unix `0600`, JSON por linha, protocolo versionado. A janela conecta, mostra o
+  estado (chip, banner de contato perdido, confirmações) e só aplica o que o daemon confirma.
+- **Docker**: `compose.yaml` (rede host, UID/GID, healthcheck, `docker stop` finaliza as gravações), segredos (`${NOME}` do
+  ambiente ou de `/run/secrets`, senha codificada na URL), **webhook** (`json` ou `ntfy`) para o aviso com a janela fechada.
+- **GPU**: decodificação pela iGPU Intel (`compose.vaapi.yaml`, CPU do daemon −47%); NVIDIA preparada por CDI
+  (`compose.nvidia.yaml`, `scripts/check-nvidia-host.sh`; **ainda não testada**).
+- **Gravação sem reencode** para câmeras RTSP H.264/H.265 (começa no keyframe, ~0,1% de CPU), **pré-roll** (`[recording]
+  motion_pre_roll_secs`, padrão 5) e **áudio opcional** (`record_audio`, desligado por padrão; AAC em mkv/mp4, G.711 só em mkv).
+- **Histórico persistente** (SQLite): segmentos e eventos; **retenção** (`[retention]`: `motion_days` 7, `manual_days`,
+  `max_disk_percent` 80); **aviso de disco** (< 10% livre) por log, webhook e janela; **proteger** trechos.
+- **Vista Gravações** (tecla `t`): linha do tempo por câmera (zoom, deslocamento, arrastar), player (seek, 0,5×–4×, quadro a
+  quadro), **até 4 câmeras lado a lado**, lista de eventos, marcar I/O e **exportar clipe** `.mp4` sem reencode, atualização automática.
+- `scripts/baseline-docker.sh` e `docs/baseline.md` (1/4/16 câmeras, CPU × GPU).
+- **`--check`** e validação do `config.toml` (chaves com erro de digitação, faixas, URLs, duplicatas).
 
 ### 🔧 Alterado
 
-- CI: `cargo fmt --check`, `cargo-deny` (licenças/RustSec/fontes), testes de doc e job
-  que garante o MSRV 1.88. Código formatado com `cargo fmt`.
+- **Workspace** `rrv-core` (motor, sem `iced`) / `rrv-daemon` / janela; GStreamer 0.25 (MSRV 1.92).
+- O daemon **não converte mais para RGBA** (CPU −57% com 11 câmeras); decodificadores de software limitados a 2 threads
+  (memória por câmera ~190 → ~85 MiB). 16 câmeras: 65% de um núcleo (39% com a iGPU).
+- **Só Linux** (ADR 0001 revisada). CI com `fmt`, `clippy`, `cargo-deny` e MSRV.
+
+### 🐛 Corrigido
+
+- **Os arquivos de gravação agora levam o nome da câmera**: duas câmeras que começavam no mesmo segundo geravam o mesmo nome
+  e uma sobrescrevia a outra.
+- Pipeline congelava de forma intermitente (sink do ramo de detecção e `splitmuxsink` assíncronos).
+- Áudio que o muxer não aceita (G.711 em mp4) derrubava a câmera por um erro de pipeline; agora a gravação sai só com vídeo.
+- Segmentos sem vídeo (a gravação parou antes do primeiro keyframe) não ficam no histórico.
+- Câmeras fora da página ficavam cegas com `pause_hidden`; recuperação rápida na partida; `scripts/baseline.sh`.
+
+### 🗑️ Removido
+
+- Módulos que ninguém usava: `streaming`, `timelapse`, `bidirectional_audio`, `hw_encoder`, `ptz`, `AudioController`;
+  todos os `allow(dead_code)`.
 
 ## [0.8.0]
 
