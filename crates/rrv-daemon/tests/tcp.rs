@@ -209,3 +209,41 @@ fn the_daemon_serves_its_recordings_by_signed_url_to_a_client_on_the_network() {
     };
     stop(child);
 }
+
+#[test]
+fn the_token_can_come_from_a_secret_file_like_in_docker() {
+    let tmp = TempDir::new("tcp-secret");
+    std::fs::create_dir_all(tmp.path("secrets")).unwrap();
+    std::fs::write(tmp.path("secrets/rrv_token"), format!("{TOKEN}\n")).unwrap(); // com \n final, como o `openssl > arquivo`
+    let port = free_port();
+    let config = format!(
+        "[recording]\ndir = {rec:?}\n[logs]\ndir = {logs:?}\n[daemon]\nlisten = \"127.0.0.1:{port}\"\ntoken = \"${{rrv_token}}\"\n[[cameras]]\nurl = \"rtsp://127.0.0.1:9/x\"\nname = \"Portão\"\n",
+        rec = tmp.path("rec"),
+        logs = tmp.path("logs"),
+    );
+    let path = tmp.path("config.toml");
+    std::fs::write(&path, config).unwrap();
+    let socket = tmp.path("rrv.sock");
+    let child = Command::new(DAEMON)
+        .arg(&path)
+        .env("XDG_STATE_HOME", tmp.path("state"))
+        .env("RRV_SOCKET", &socket)
+        .env("RRV_SECRETS_DIR", tmp.path("secrets"))
+        .env("RRV_KEYRING", "off")
+        .stderr(Stdio::null())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("rrv-daemon");
+    wait_for(&socket);
+    let addr = format!("tcp://127.0.0.1:{port}");
+    let end = Instant::now() + Duration::from_secs(10);
+    let ok = loop {
+        match IpcClient::connect_target(std::path::Path::new(&addr), Some(TOKEN)) {
+            Ok(c) => break Some(c),
+            Err(_) if Instant::now() < end => std::thread::sleep(Duration::from_millis(100)),
+            Err(_) => break None,
+        }
+    };
+    stop(child);
+    assert!(ok.is_some(), "o token do arquivo de segredo não serviu");
+}

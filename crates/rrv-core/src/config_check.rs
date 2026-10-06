@@ -213,7 +213,18 @@ pub fn validate(config: &Config) -> Vec<Issue> {
                     format!("'{l}' não é um endereço IP:porta (ex.: 0.0.0.0:7878)"),
                 )),
                 Ok(addr) => {
-                    if let Err(m) = crate::ipc::auth::validate_token(token) {
+                    // `${segredo}`: o valor só existe depois de expandir; quem escuta valida o token já expandido
+                    let strength = if token.contains("${") {
+                        Ok(())
+                    } else {
+                        crate::ipc::auth::validate_token(token)
+                    };
+                    if token.is_empty() {
+                        issues.push(Issue::error(
+                            "daemon.token",
+                            "falta o token (necessário com listen)".to_string(),
+                        ));
+                    } else if let Err(m) = strength {
                         issues.push(Issue::error(
                             "daemon.token",
                             format!("{m} (necessário com listen)"),
@@ -246,6 +257,7 @@ pub fn validate(config: &Config) -> Vec<Issue> {
                 ));
             }
             if !token.is_empty()
+                && !token.contains("${")
                 && let Err(m) = crate::ipc::auth::validate_token(token)
             {
                 issues.push(Issue::error("daemon.token", m));
@@ -464,6 +476,34 @@ mod tests {
 
     fn one_camera(extra: &str) -> String {
         format!("[[cameras]]\nurl = \"rtsp://h/s\"\n{extra}")
+    }
+
+    #[test]
+    fn the_network_channel_needs_a_real_token_but_a_secret_placeholder_is_accepted() {
+        let check_daemon = |daemon: &str| {
+            let (_, issues) = check(&one_camera(daemon)).unwrap();
+            issues
+        };
+        // o marcador `${segredo}` ainda não foi expandido aqui: quem escuta valida o valor real
+        let ok = check_daemon("[daemon]\nlisten = \"0.0.0.0:7878\"\ntoken = \"${rrv_token}\"\n");
+        assert!(!has_errors(&ok), "{ok:?}");
+        assert!(
+            paths(&ok).contains(&"daemon.listen"),
+            "avisa que não é criptografado"
+        );
+        // literal fraco, ausente e endereço ruim são erros
+        for bad in [
+            "[daemon]\nlisten = \"0.0.0.0:7878\"\ntoken = \"curto\"\n",
+            "[daemon]\nlisten = \"0.0.0.0:7878\"\n",
+            "[daemon]\nlisten = \"7878\"\ntoken = \"0123456789abcdef0123\"\n",
+        ] {
+            assert!(has_errors(&check_daemon(bad)), "{bad}");
+        }
+        // um token bom, literal, é aceito
+        let good = check_daemon(
+            "[daemon]\nlisten = \"127.0.0.1:7878\"\ntoken = \"0123456789abcdef0123\"\n",
+        );
+        assert!(good.is_empty(), "{good:?}");
     }
 
     #[test]
