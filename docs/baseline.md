@@ -34,3 +34,12 @@ Câmeras: 1 Intelbras local (RTSP, 1080p principal / 480p sub) e 11 HLS pública
   cópias RGBA. O ganho real é a tarefa 2.3 (NV12 + shader).
 - **Ressalva:** o link da Intelbras perde ~25% dos pacotes, então o fps dela é baixo.
   É rede (cabo, Wi-Fi ou switch), não o motor.
+
+## Pré-roll (plano 3.6), memória
+Intelbras 1080p (≈2–4 Mb/s) no contêiner, `on_motion = true`, com `motion_pre_roll_secs` = 0 / 5 / 30:
+RSS **~77 MiB (5 s) e ~80 MiB (30 s)**; o ring de 30 s custou cerca de 3 MiB sobre o de 5 s, uma ordem de
+grandeza abaixo do decodificador (~70 MiB por câmera). O pré-roll não é problema de memória com 16 câmeras
+(≈ bitrate × segundos; 16 × 4 Mb/s × 5 s ≈ 40 MB no total). A rodada de 0 s não subiu a câmera (0/1 ao vivo) e
+as de CPU saíram confundidas por um build em paralelo: só o RSS vale.
+Limites conhecidos: o tap codificado liga o primeiro pad do `rtspsrc` (como o `decodebin` já fazia): uma
+câmera cujo SDP lista o áudio antes do vídeo não funcionaria; a faixa de áudio ainda não entra no arquivo.

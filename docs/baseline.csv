@@ -13,3 +13,6 @@ label,cams,live,cpu_avg_pct,cpu_max_pct,rss_mib,net_mbps,stream_mbps,fps_avg,res
 "11 HLS, decoder max-threads=4",11,11,156.9,205.7,1113,22.63,18.87,26.3,1280x720/1920x1080,avdec_h264
 "11 HLS, headless (sem RGBA)",11,11,61.5,76.2,631,23.02,18.89,26.0,1280x720/1920x1080,avdec_h264
 "12 câmeras COM movimento, headless",12,10,52.2,68.3,687,23.22,21.78,26.9,1280x720/1920x1080,avdec_h264
+"Intelbras 1080p, pré-roll 0s",1,0,2.2,10.8,109,1.89,0.00,0.0,-,-
+"Intelbras 1080p, pré-roll 5s",1,1,8.2,27.5,77,3.97,1.92,16.0,1920x1080,avdec_h264
+"Intelbras 1080p, pré-roll 30s",1,1,9.2,45.2,80,2.06,0.03,0.0,1920x1080,avdec_h264
