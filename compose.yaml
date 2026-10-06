@@ -1,7 +1,8 @@
 # O NVR sem janela: grava e detecta mesmo com a janela fechada (ADR 0010).
 #
 #   cp config.docker.toml.example config.docker.toml   # e edite as câmeras
-#   mkdir -p recordings state secrets "$XDG_RUNTIME_DIR/rrv"
+#   make init-docker                                   # cria as pastas (recordings, state, secrets) e o config.docker.toml
+#   # a senha de cada câmera: um arquivo em ./secrets com o nome usado no config (${nome}), ex.:
 #   printf '%s' 'a-senha-da-camera' > secrets/cam_portao_password && chmod 600 secrets/cam_portao_password
 #   docker compose up -d --build
 #   docker compose logs -f rrv
@@ -25,10 +26,6 @@ services:
     # Tempo para finalizar os segmentos de gravação antes do SIGKILL.
     stop_grace_period: 30s
 
-    # A senha da câmera entra como segredo (montado em /run/secrets/<nome>), não no config.
-    secrets:
-      - cam_portao_password
-
     environment:
       TZ: "${TZ:-America/Sao_Paulo}"
 
@@ -36,6 +33,10 @@ services:
       - ./config.docker.toml:/config/config.toml:ro
       - ${RRV_RECORDINGS:-./recordings}:/data
       - ./state:/state
+      # As senhas das câmeras: cada arquivo de ./secrets vira /run/secrets/<nome>, que o `${nome}` do
+      # config lê. A pasta inteira (e não um segredo por câmera) para o compose não falhar por um
+      # arquivo que ainda não existe, e para qualquer câmera nova só precisar de um arquivo.
+      - ./secrets:/run/secrets:ro
       # O socket de controle: a janela (nativa) o encontra em $XDG_RUNTIME_DIR/rrv/rrv.sock.
       # Crie o diretório antes (`mkdir -p "$XDG_RUNTIME_DIR/rrv"`); senão o Docker o cria
       # como root e o daemon não consegue abrir o socket.
@@ -43,7 +44,3 @@ services:
 
     # Decodificação por GPU Intel (VA-API) é a tarefa 2.5.10:
     # devices: ["/dev/dri:/dev/dri"]
-
-secrets:
-  cam_portao_password:
-    file: ./secrets/cam_portao_password

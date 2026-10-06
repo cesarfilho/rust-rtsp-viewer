@@ -8,7 +8,7 @@
 #   DE       início do `make clip` (ex.: -30m, -2h)       (padrão: -5m)
 
 .DEFAULT_GOAL := help
-.PHONY: help all build release bin run-daemon-detect run run-embedded run-daemon-local run-with-daemon check ci fmt fmt-check lint test test-lib \
+.PHONY: _docker-ready help all build release bin run-daemon-detect run run-embedded run-daemon-local run-with-daemon check ci fmt fmt-check lint test test-lib \
         deny clean watch config-check install uninstall \
         docker-build up up-vaapi up-nvidia down restart logs ps init-docker \
         status history record enable disable clip events \
@@ -101,18 +101,22 @@ run-with-daemon: ## Abre a janela ligada ao daemon em o socket do daemon (a vist
 init-docker: ## Cria as pastas e o config.docker.toml a partir do exemplo (só se faltarem)
 	mkdir -p recordings state secrets "$${XDG_RUNTIME_DIR:-/run/user/$$(id -u)}/rrv"
 	@[ -f config.docker.toml ] || { cp config.docker.toml.example config.docker.toml; echo "criado config.docker.toml: edite as câmeras"; }
-	@echo "Segredos: printf '%s' 'senha' > secrets/cam_portao_password && chmod 600 secrets/cam_portao_password"
+	@echo "Senhas: um arquivo por câmera em ./secrets com o nome do ${nome} do config, ex.: printf '%s' 'senha' > secrets/cam_portao_password && chmod 600 secrets/cam_portao_password"
+
+_docker-ready:
+	@[ -f config.docker.toml ] || { echo "falta o config.docker.toml: rode 'make init-docker' e edite as câmeras"; exit 1; }
+	@[ -d secrets ] && [ -d state ] && [ -d recordings ] || { echo "faltam as pastas recordings/state/secrets: rode 'make init-docker'"; exit 1; }
 
 docker-build: ## Constrói a imagem (tags :local e :a versão)
 	DOCKER_BUILDKIT=1 docker build -t $(IMAGE):local -t $(IMAGE):$(VERSION) .
 
-up: ## Sobe o daemon
+up: _docker-ready ## Sobe o daemon
 	$(COMPOSE) up -d
 
-up-vaapi: ## Sobe o daemon decodificando na iGPU Intel (VA-API)
+up-vaapi: _docker-ready ## Sobe o daemon decodificando na iGPU Intel (VA-API)
 	$(COMPOSE) -f compose.yaml -f compose.vaapi.yaml up -d
 
-up-nvidia: ## Sobe o daemon com a GPU NVIDIA (precisa do toolkit: `make gpu-check`)
+up-nvidia: _docker-ready ## Sobe o daemon com a GPU NVIDIA (precisa do toolkit: `make gpu-check`)
 	$(COMPOSE) -f compose.yaml -f compose.nvidia.yaml up -d
 
 down: ## Para o daemon (finaliza as gravações antes)
