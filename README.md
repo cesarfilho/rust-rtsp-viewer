@@ -356,7 +356,44 @@ diz em que modo está; clique nele para o menu.
 - `rust-rtsp-viewer --embedded` força o motor local; `--daemon <socket>` (ou `RRV_SOCKET`) aponta o socket.
 - Gravar (`r`) e salvar zonas viram pedidos ao daemon e só aparecem na tela **depois** de ele confirmar;
   se ele recusar, o editor de zonas continua aberto com o desenho.
-- A aba Eventos mostra o que chegou desde que a janela conectou (o histórico persistente é do M3).
+- A aba Eventos mostra o que chegou desde que a janela conectou. O histórico completo está na vista **Gravações** (abaixo).
+
+### Gravações: histórico, reprodução e clipes
+
+O daemon guarda um **histórico** (SQLite, em `state/rust-rtsp-viewer/history.db`) de cada segmento gravado e de
+cada evento. Na janela, a tecla **`t`** (ou `⋯` → Gravações) abre a vista **Gravações**:
+
+- uma **linha do tempo por câmera** (1 h / 6 h / 24 h / 7 d, roda do mouse aproxima, `‹ ›` desloca); azul =
+  gravação, âmbar = com movimento, vermelho = gravando agora, um traço claro no topo = protegido;
+- **clicar** toca aquele instante (se cair numa lacuna, vai para o próximo trecho); o player tem tocar/pausar
+  (`Espaço`), ±10 s (`←` `→`), quadro a quadro, 0,5×–4×;
+- a **lista de eventos** ao lado (filtro "só movimento"); clicar num evento toca **5 s antes** dele;
+- **`I`** e **`O`** marcam início e fim, **`E`** exporta o clipe (`.mp4`, sem reencode) para `exports/` dentro da
+  pasta de gravações; **`P`** protege o trecho (a retenção nunca o apaga);
+- a vista se atualiza sozinha a cada 5 s e acompanha o vivo.
+
+**A janela lê os vídeos da sua própria `[recording] dir`.** Com Docker, aponte-a para a pasta do host que o
+`compose.yaml` monta em `/data` (por padrão `./recordings`); senão a janela avisa onde procurou e não acha o arquivo.
+
+Pela linha de comando: `rrvctl history [câmera] --hours 24` e `rrvctl export "Portão" -30m` (ou `"2026-10-05 19:00:00"
+"2026-10-05 19:05:00"`).
+
+**Gravação por movimento com pré-roll.** Com `on_motion = true`, o arquivo começa **antes** do movimento
+(`motion_pre_roll_secs`, padrão 5): câmeras RTSP H.264/H.265 guardam em memória os últimos GOPs do vídeo *já codificado*
+(sem reencode, ≈ 1 MB por câmera) e a gravação começa no keyframe anterior. Câmeras com "Smart Codec"/H.264+ esticam o GOP
+em cena parada (a Intelbras de teste mandava um keyframe a cada ~20 s): nelas o pré-roll vira o GOP todo (até 30 s);
+para um pré-roll curto, reduza o intervalo de quadro-I da câmera. Com `record_audio = true` a faixa de áudio da câmera
+também entra no arquivo (**desligado por padrão**: gravar a voz das pessoas é uma decisão sua).
+
+**Retenção.** O daemon apaga as gravações antigas (arquivo primeiro, depois o registro; nunca um trecho protegido ou
+em gravação) e avisa quando o disco chega a menos de 10% livre (log, webhook e a janela):
+
+```toml
+[retention]
+motion_days = 7          # gravações por movimento: 7 dias (0 = sem limite de idade)
+manual_days = 0          # gravações manuais/contínuas: 0 = não expiram por idade
+max_disk_percent = 80    # nunca passa de 80% do disco; apaga o mais antigo (50–95)
+```
 
 ## Teclas de Atalho
 
@@ -379,6 +416,7 @@ diz em que modo está; clique nele para o menu.
 | `F3` | Alternar aba da sidebar |
 | `F11` | Tela cheia do sistema + imersivo |
 | `/` | Focar a busca de câmeras |
+| `t` | Vista Gravações (linha do tempo, player, clipes); precisa do daemon |
 | `Esc` | Voltar: spotlight → imersivo → menu → busca |
 | `?` | Ajuda (atalhos) |
 | `Ctrl+Q` | Sair |

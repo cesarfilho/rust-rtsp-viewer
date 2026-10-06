@@ -101,6 +101,7 @@ pub fn help_overlay<'a>(app: &App, main_content: Element<'a, Message>) -> Elemen
         row("F2", "Mostrar / ocultar a sidebar"),
         row("F3", "Alternar aba da sidebar"),
         row("/", "Filtrar câmeras"),
+        row("t", "Gravações: linha do tempo e player"),
         row("Enter / Backspace", "Zonas de movimento: concluir / desfazer"),
         row("Esc", "Voltar: ajuda \u{2192} spotlight \u{2192} imersivo \u{2192} menu \u{2192} busca"),
         row("?", "Mostrar / ocultar esta ajuda"),
