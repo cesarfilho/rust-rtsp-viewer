@@ -212,6 +212,9 @@ staggered start — *initial* values; runtime tweaks persist to
 
 ## Build/test
 
+`make help` lists the shortcuts (`make ci` = everything below; `make status|history|record|clip` drive `rrvctl`;
+`make up|down|logs` the Docker daemon).
+
 ```bash
 cargo build --workspace            # zero warnings expected
 cargo fmt --all --check            # CI enforces rustfmt (run `cargo fmt --all` to fix)

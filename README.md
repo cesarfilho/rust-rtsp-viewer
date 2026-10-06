@@ -32,6 +32,22 @@ sudo apt install \
 sudo pacman -S gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly gst-libav
 ```
 
+### Atalhos com `make`
+
+`make` sozinho lista tudo (`make help`). Os mais usados:
+
+| Comando | Faz |
+|---|---|
+| `make run` | abre a janela (motor local) |
+| `make ci` | o que o CI roda: formatação, clippy, `cargo deny` e todos os testes (`make check` é a versão rápida, sem testes) |
+| `make docker-build` · `make up` · `make down` · `make logs` | construir, subir, parar e acompanhar o daemon no Docker (`make up-vaapi` / `make up-nvidia` para a GPU) |
+| `make run-with-daemon` | abre a janela ligada ao daemon (a vista Gravações, tecla `t`) |
+| `make status` · `make history` · `make record CAM=Garagem` · `make clip CAM=Garagem DE=-10m` | o `rrvctl` sem digitar o socket |
+| `make a8` · `make a8-window` · `make a8-stop` | o roteiro de verificação com mouse (`docs/roteiro-a8.md`) |
+| `make stress SEGUNDOS=3600` | o teste de estresse de 1 h |
+
+Variáveis: `CONFIG`, `SOCKET` (o socket do daemon), `CAM`, `HORAS`, `DE`.
+
 ### Compilar
 
 ```bash
