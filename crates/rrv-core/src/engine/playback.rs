@@ -124,6 +124,36 @@ mod tests {
     }
 
     #[test]
+    fn the_window_receives_nv12_and_snapshots_still_get_rgba() {
+        use crate::engine::bridge::PixelFormat;
+        let clip = make_clip("nv12");
+        let mut b = GStreamerBridge::new(320, 240).unwrap();
+        b.start_file(&clip.to_string_lossy()).unwrap();
+        assert!(wait_for(|| b.has_frame()), "nenhum quadro");
+
+        let (frame, w, h, _) = b.read_frame();
+        let frame = frame.unwrap();
+        assert!(
+            matches!(frame.format, PixelFormat::Nv12(_)),
+            "o padrão da janela é NV12, veio {:?}",
+            frame.format
+        );
+        assert_eq!(
+            Some(frame.pixels.len()),
+            crate::domain::yuv::nv12_len(w, h),
+            "NV12 compacto: Y e depois UV"
+        );
+        // 1,5 byte por pixel: menos da metade do RGBA
+        assert!(frame.pixels.len() * 2 < w as usize * h as usize * 4);
+
+        // o snapshot converte sob demanda e continua RGBA de verdade
+        let (rgba, sw, sh) = b.capture_frame().unwrap();
+        assert_eq!((sw, sh), (w, h));
+        assert_eq!(rgba.len(), w as usize * h as usize * 4);
+        assert!(rgba.iter().any(|&v| v != 0), "imagem toda preta");
+    }
+
+    #[test]
     fn a_recording_plays_seeks_changes_speed_and_steps() {
         let clip = make_clip("controls");
         let mut b = GStreamerBridge::new(320, 240).unwrap();

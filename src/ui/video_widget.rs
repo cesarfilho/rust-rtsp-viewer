@@ -31,15 +31,16 @@ impl VideoWidget {
     }
 
     pub fn view(&self) -> Element<'static, Message> {
-        let (rgba, width, height, generation) = self
+        let (video, _, _, generation) = self
             .bridge
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .read_frame();
-        let frame = rgba.map(|rgba| Frame {
-            rgba,
-            width,
-            height,
+        let frame = video.map(|v| Frame {
+            pixels: v.pixels,
+            width: v.width,
+            height: v.height,
+            format: v.format,
             generation,
         });
         iced::widget::shader(VideoProgram {

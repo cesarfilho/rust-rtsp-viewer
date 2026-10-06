@@ -10,6 +10,7 @@ use bytes::Bytes;
 use crate::domain::camera_status::{BitrateReading, CameraStatus, StatusReading};
 use crate::domain::metrics::{Metrics, PacketStats};
 use crate::domain::recording::RecordingConfig;
+use crate::domain::yuv::{YuvFormat, nv12_to_rgba};
 
 pub(crate) const EMA_ALPHA_X1000: u64 = 200;
 pub(crate) const SAMPLE_EVERY_N: u64 = 30;
@@ -25,12 +26,46 @@ pub(crate) struct FrameState {
     pub height: u32,
     pub generation: u64,
     pub frame_count: u64,
-    /// Raw RGBA pixels of the most recent frame, kept for snapshots.
+    /// Pixels of the most recent frame, in `format`, kept for the window and snapshots.
     ///
-    /// `Bytes` is reference-counted, so the appsink callback can hand the
-    /// same allocation to both the UI's image handle and this field, and
-    /// `capture_frame` can clone it, without ever copying the pixel data.
-    pub raw_rgba: Bytes,
+    /// `Bytes` is reference-counted, so the appsink callback hands the same
+    /// allocation to the window's texture upload and to this field, and
+    /// `read_frame` clones it, without ever copying the pixel data.
+    pub pixels: Bytes,
+    pub format: PixelFormat,
+}
+
+/// How `FrameState::pixels` is laid out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PixelFormat {
+    /// 4 bytes per pixel, `width × height × 4`.
+    Rgba,
+    /// Tightly packed NV12 (see `domain::yuv`): Y plane, then interleaved UV.
+    Nv12(YuvFormat),
+}
+
+/// A decoded frame as the window receives it: shared bytes plus how to read them.
+#[derive(Clone)]
+pub struct VideoFrame {
+    pub pixels: Bytes,
+    pub width: u32,
+    pub height: u32,
+    pub format: PixelFormat,
+}
+
+impl VideoFrame {
+    /// The picture as RGBA, converting on the CPU when it is NV12 (snapshots only:
+    /// the window converts on the GPU). `None` if the byte count disagrees with the size.
+    pub fn to_rgba(&self) -> Option<Bytes> {
+        match self.format {
+            PixelFormat::Rgba => (self.pixels.len()
+                == self.width as usize * self.height as usize * 4)
+                .then(|| self.pixels.clone()),
+            PixelFormat::Nv12(fmt) => {
+                nv12_to_rgba(&self.pixels, self.width, self.height, fmt).map(Bytes::from)
+            }
+        }
+    }
 }
 
 /// Latest frame of the reduced detection branch (see `pipeline::insert_detect_branch`).
@@ -173,7 +208,8 @@ impl GStreamerBridge {
                 height,
                 generation: 0,
                 frame_count: 0,
-                raw_rgba: Bytes::new(),
+                pixels: Bytes::new(),
+                format: PixelFormat::Rgba,
             })),
             fps_calc: Arc::new(Mutex::new(FpsCalc {
                 last_fps_calc: now,
@@ -664,24 +700,32 @@ impl GStreamerBridge {
         false
     }
 
-    /// The latest frame as shared RGBA bytes, its size and a generation that
+    /// The latest frame (shared bytes, no copy), its size and a generation that
     /// changes with every new frame. `None` until the first frame arrives; the
-    /// UI turns the bytes into an image handle only when the generation moves.
-    pub fn read_frame(&self) -> (Option<Bytes>, u32, u32, u64) {
+    /// window uploads it to the GPU only when the generation moves.
+    pub fn read_frame(&self) -> (Option<VideoFrame>, u32, u32, u64) {
         let state = self.frame.lock().unwrap_or_else(|e| e.into_inner());
-        let rgba = (!state.raw_rgba.is_empty()).then(|| state.raw_rgba.clone());
-        (rgba, state.width, state.height, state.generation)
+        let frame = (!state.pixels.is_empty()).then(|| VideoFrame {
+            pixels: state.pixels.clone(),
+            width: state.width,
+            height: state.height,
+            format: state.format,
+        });
+        (frame, state.width, state.height, state.generation)
     }
 
-    /// Most recent frame as raw RGBA. Cloning `Bytes` bumps a refcount, so
-    /// this does not copy the pixel buffer.
-    pub fn capture_frame(&self) -> Option<(Bytes, u32, u32)> {
+    /// Whether any frame has arrived yet (cheap: nothing is cloned or converted).
+    pub fn has_frame(&self) -> bool {
         let state = self.frame.lock().unwrap_or_else(|e| e.into_inner());
-        if state.raw_rgba.is_empty() {
-            None
-        } else {
-            Some((state.raw_rgba.clone(), state.width, state.height))
-        }
+        !state.pixels.is_empty()
+    }
+
+    /// Most recent frame as raw RGBA, for snapshots. Free for an RGBA frame; an
+    /// NV12 one is converted on the CPU here, which only happens on demand.
+    pub fn capture_frame(&self) -> Option<(Bytes, u32, u32)> {
+        let (frame, w, h, _) = self.read_frame();
+        let rgba = frame?.to_rgba()?;
+        Some((rgba, w, h))
     }
 
     /// Most recent frame of the reduced detection branch (RGBA, ~320 px wide).
@@ -843,21 +887,47 @@ pub(crate) fn sample_image_quality_rgba(
     width: usize,
     height: usize,
 ) {
+    sample_image_quality(metrics, width, height, |row, col| {
+        let idx = (row * width + col) * 4;
+        (idx + 2 < rgba.len()).then(|| {
+            let r = rgba[idx] as f64;
+            let g = rgba[idx + 1] as f64;
+            let b = rgba[idx + 2] as f64;
+            (0.299 * r + 0.587 * g + 0.114 * b) as u64
+        })
+    });
+}
+
+/// Same sampling for an NV12 frame: its Y plane *is* the luma, no conversion needed
+/// (limited-range black sits at 16; the delta thresholds are relative, so that is fine).
+pub(crate) fn sample_image_quality_nv12(
+    metrics: &Metrics,
+    nv12: &[u8],
+    width: usize,
+    height: usize,
+) {
+    sample_image_quality(metrics, width, height, |row, col| {
+        nv12.get(row * width + col).map(|&y| y as u64)
+    });
+}
+
+/// Samples every 8th pixel of every 8th row through `luma(row, col)`, then updates
+/// the mean/stddev/scene-change metrics.
+fn sample_image_quality(
+    metrics: &Metrics,
+    width: usize,
+    height: usize,
+    luma: impl Fn(usize, usize) -> Option<u64>,
+) {
     let stride = 8;
     let mut sum: u64 = 0;
     let mut count: u64 = 0;
     let mut row = 0;
     while row < height {
-        let row_start = row * width * 4;
         let mut col = 0;
         while col < width {
-            let idx = row_start + col * 4;
-            if idx + 2 < rgba.len() {
-                let r = rgba[idx] as f64;
-                let g = rgba[idx + 1] as f64;
-                let b = rgba[idx + 2] as f64;
-                let luma = (0.299 * r + 0.587 * g + 0.114 * b) as u64;
-                sum += luma;
+            if let Some(l) = luma(row, col) {
+                sum += l;
                 count += 1;
             }
             col += stride;
@@ -873,16 +943,10 @@ pub(crate) fn sample_image_quality_rgba(
     let mean_i = mean as i64;
     row = 0;
     while row < height {
-        let row_start = row * width * 4;
         let mut col = 0;
         while col < width {
-            let idx = row_start + col * 4;
-            if idx + 2 < rgba.len() {
-                let r = rgba[idx] as f64;
-                let g = rgba[idx + 1] as f64;
-                let b = rgba[idx + 2] as f64;
-                let luma = (0.299 * r + 0.587 * g + 0.114 * b) as i64;
-                let d = luma - mean_i;
+            if let Some(l) = luma(row, col) {
+                let d = l as i64 - mean_i;
                 sq_sum += (d * d) as u64;
             }
             col += stride;
@@ -921,6 +985,17 @@ pub(crate) fn sample_image_quality_rgba(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nv12_quality_sampling_reads_the_y_plane() {
+        let m = Metrics::new();
+        // 16x16, Y constante 100, UV qualquer: média 100, sem desvio
+        let mut nv12 = vec![100u8; 16 * 16];
+        nv12.extend(std::iter::repeat_n(128u8, 16 * 8));
+        sample_image_quality_nv12(&m, &nv12, 16, 16);
+        assert_eq!(m.last_avg_luma.load(Ordering::Relaxed), 100);
+        assert_eq!(m.last_luma_stddev.load(Ordering::Relaxed), 0);
+    }
 
     #[test]
     fn bridge_creation_returns_none_frame() {

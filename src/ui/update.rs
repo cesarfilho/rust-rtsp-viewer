@@ -1172,8 +1172,7 @@ fn drive_previews(app: &mut App) {
         let got = app.engine.bridges[i]
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .capture_frame()
-            .is_some();
+            .has_frame();
         if got || since.elapsed().as_secs() >= PREVIEW_TIMEOUT_SECS {
             app.preview_done[i] = true;
             app.preview_cam = None;
@@ -1190,11 +1189,10 @@ fn drive_previews(app: &mut App) {
         app.engine.camera_enabled[i]
             && !app.engine.active_stream[i]
             && !app.preview_done[i]
-            && app.engine.bridges[i]
+            && !app.engine.bridges[i]
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .capture_frame()
-                .is_none()
+                .has_frame()
     });
     if let Some(i) = next {
         app.preview_cam = Some((i, Instant::now()));
