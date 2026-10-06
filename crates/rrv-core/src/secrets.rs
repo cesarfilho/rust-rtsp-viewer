@@ -6,6 +6,10 @@
 //! *secrets*). Assim a senha da câmera não fica no arquivo de configuração, que
 //! costuma ir para um volume, um repositório ou um backup.
 //!
+//! Terceira origem, para a janela: o **chaveiro do sistema** (Secret Service: GNOME Keyring, KWallet,
+//! KeePassXC) pelo `secret-tool`, sem biblioteca nova. `rrvctl secret set NOME` guarda; o daemon em
+//! contêiner não tem `secret-tool` e ignora esta origem. `RRV_KEYRING=off` a desliga.
+//!
 //! - `$${` escreve um `${` literal.
 //! - Na parte de usuário/senha de uma URL (`esquema://AQUI@host`), o valor é
 //!   **percent-encoded** sozinho: uma senha com `@`, `/` ou `:` não quebra a URL.
@@ -21,7 +25,7 @@ pub fn secrets_dir() -> PathBuf {
 }
 
 /// O valor de `name`: variável de ambiente, senão arquivo no diretório de
-/// segredos (sem o `\n` final que editores e `echo` deixam).
+/// segredos (sem o `\n` final que editores e `echo` deixam), senão o chaveiro do sistema.
 pub fn lookup(name: &str) -> Option<String> {
     if let Ok(v) = std::env::var(name) {
         return Some(v);
@@ -33,6 +37,120 @@ pub fn lookup(name: &str) -> Option<String> {
     std::fs::read_to_string(secrets_dir().join(name))
         .ok()
         .map(|s| s.trim_end_matches(['\n', '\r']).to_string())
+        .or_else(|| keyring::lookup(name))
+}
+
+/// O chaveiro do sistema (Secret Service) por meio do `secret-tool`.
+///
+/// Os itens levam `service=rust-rtsp-viewer` e `name=NOME`. O valor só passa pela entrada e pela saída
+/// padrão do `secret-tool`, nunca por argumento de linha de comando (que qualquer um vê no `ps`).
+pub mod keyring {
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    const SERVICE: &str = "rust-rtsp-viewer";
+    /// Um chaveiro trancado abre um diálogo de senha; não esperamos por ele para sempre.
+    const TIMEOUT: Duration = Duration::from_secs(8);
+
+    /// O chaveiro está ligado (não desligado por `RRV_KEYRING=off`)?
+    fn enabled() -> bool {
+        !std::env::var("RRV_KEYRING").is_ok_and(|v| v.eq_ignore_ascii_case("off"))
+    }
+
+    fn valid(name: &str) -> bool {
+        !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+    }
+
+    /// Roda o `secret-tool` com `args`, `input` na entrada padrão; devolve `(sucesso, saída)`. `None`
+    /// se ele não existe, trava além do prazo ou o chaveiro está desligado.
+    fn run(args: &[&str], input: Option<&str>) -> Option<(bool, String)> {
+        if !enabled() {
+            return None;
+        }
+        let mut child = Command::new("secret-tool")
+            .args(args)
+            .stdin(if input.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        if let (Some(text), Some(mut stdin)) = (input, child.stdin.take()) {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            match child.try_wait().ok()? {
+                Some(status) => {
+                    let mut out = String::new();
+                    if let Some(mut o) = child.stdout.take() {
+                        let _ = o.read_to_string(&mut out);
+                    }
+                    return Some((status.success(), out));
+                }
+                None if Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                None => std::thread::sleep(Duration::from_millis(20)),
+            }
+        }
+    }
+
+    /// O valor guardado para `name`, se houver.
+    pub fn lookup(name: &str) -> Option<String> {
+        if !valid(name) {
+            return None;
+        }
+        let (ok, out) = run(&["lookup", "service", SERVICE, "name", name], None)?;
+        (ok && !out.is_empty()).then(|| out.trim_end_matches(['\n', '\r']).to_string())
+    }
+
+    /// Guarda (ou troca) o valor de `name`.
+    pub fn store(name: &str, value: &str) -> Result<(), String> {
+        if !valid(name) {
+            return Err(format!(
+                "nome de segredo '{name}' inválido (letras, dígitos, _ - .)"
+            ));
+        }
+        if value.is_empty() {
+            return Err("a senha está vazia".into());
+        }
+        let label = format!("rust-rtsp-viewer: {name}");
+        match run(
+            &["store", "--label", &label, "service", SERVICE, "name", name],
+            Some(value),
+        ) {
+            Some((true, _)) => Ok(()),
+            Some((false, _)) => Err("o chaveiro recusou guardar o segredo".into()),
+            None => Err(
+                "sem chaveiro: instale o `secret-tool` (libsecret) e um serviço de chaveiro".into(),
+            ),
+        }
+    }
+
+    /// Apaga `name`; `Ok` mesmo se não existia.
+    pub fn clear(name: &str) -> Result<(), String> {
+        if !valid(name) {
+            return Err(format!("nome de segredo '{name}' inválido"));
+        }
+        run(&["clear", "service", SERVICE, "name", name], None)
+            .map(|_| ())
+            .ok_or_else(|| "sem chaveiro".to_string())
+    }
+
+    /// Existe um valor para `name`? (Lê o valor para saber, mas só devolve o sim/não.)
+    pub fn exists(name: &str) -> bool {
+        lookup(name).is_some()
+    }
 }
 
 /// Percent-encoding do que quebraria o campo de usuário/senha de uma URL.
@@ -127,7 +245,7 @@ pub fn missing_message(field: &str, names: &[String]) -> String {
         .iter()
         .map(|n| {
             format!(
-                "{field}: o segredo '{n}' não existe (variável de ambiente {n} ou arquivo {})",
+                "{field}: o segredo '{n}' não existe (variável de ambiente {n}, arquivo {} ou chaveiro: `rrvctl secret set {n}`)",
                 dir.join(n).display()
             )
         })

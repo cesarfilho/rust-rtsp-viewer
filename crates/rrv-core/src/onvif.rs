@@ -545,14 +545,23 @@ pub fn inspect(found: &Found, user: &str, password: &str) -> Result<Inspection, 
     })
 }
 
-/// O trecho de `config.toml` de uma câmera inspecionada; a senha entra como `${SEGREDO}`.
-pub fn config_snippet(found: &Found, user: &str, i: &Inspection) -> String {
-    let display = found
+fn display_name(found: &Found, i: &Inspection) -> String {
+    found
         .name
         .clone()
         .or_else(|| (!i.manufacturer.is_empty()).then(|| format!("{} {}", i.manufacturer, i.model)))
-        .unwrap_or_else(|| found.ip.clone());
-    let secret = secret_name(&format!("{display} {}", found.ip));
+        .unwrap_or_else(|| found.ip.clone())
+}
+
+/// O nome do segredo que o trecho de `config_snippet` usa para a senha desta câmera.
+pub fn secret_name_for(found: &Found, i: &Inspection) -> String {
+    secret_name(&format!("{} {}", display_name(found, i), found.ip))
+}
+
+/// O trecho de `config.toml` de uma câmera inspecionada; a senha entra como `${SEGREDO}`.
+pub fn config_snippet(found: &Found, user: &str, i: &Inspection) -> String {
+    let display = display_name(found, i);
+    let secret = secret_name_for(found, i);
     let mut out = format!(
         "[[cameras]]\nname = \"{}\"\nurl = \"{}\"\n",
         display.replace('"', "'"),
@@ -565,7 +574,7 @@ pub fn config_snippet(found: &Found, user: &str, i: &Inspection) -> String {
         ));
     }
     out.push_str(&format!(
-        "# a senha vai no segredo `{secret}` (variável de ambiente ou arquivo em /run/secrets)\n"
+        "# a senha vai no segredo `{secret}`: `rrvctl secret set {secret}` (chaveiro), variável de ambiente ou arquivo em /run/secrets\n"
     ));
     out
 }

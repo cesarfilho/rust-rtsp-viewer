@@ -82,7 +82,7 @@ Decididos em 2026-10-06: **só Linux** (ADR 0001) e **sem PTZ**. O ONVIF fica s�
 | # | Tarefa | Tam. | Quem | Critério de saída |
 |---|---|---|---|---|
 | D1 ⏳ | **5.1 ONVIF** (feito: descoberta + leitura dos streams + trecho do config no `rrvctl discover`, testado na Intelbras; falta o assistente dentro da janela): descoberta (WS-Discovery) e assistente de cadastro; Profile T como base, sem PTZ. Teste na Intelbras (a maioria suporta ONVIF) | G | eu | "Adicionar câmera" lista as da rede e preenche a URL e o sub-stream |
-| D2 | **5.3 chaveiro** (`secret-service`) para as senhas da janela (o daemon já usa `${NOME}`/Docker secrets) | M | eu | senha fora do `config.toml` na janela, com fallback documentado |
+| D2 ✅ | **5.3 chaveiro** (`secret-service`) para as senhas da janela (o daemon já usa `${NOME}`/Docker secrets) | M | eu | senha fora do `config.toml` na janela, com fallback documentado |
 | D3 ✅ | **5.4 MQTT/Home Assistant** (`rumqttc`): eventos, saúde por câmera, descoberta automática do Home Assistant | M | eu | câmeras e sensores de movimento aparecem no Home Assistant (teste com um broker local) |
 | D4 | **5.5 i18n e acessibilidade**: extrair os textos (hoje em português dentro do código), pt-BR + en, foco por teclado e rótulos legíveis por leitor de tela | G | eu | alternar o idioma sem reiniciar; nenhum texto fixo fora do catálogo (teste que varre) |
 | D5 | **5.6 empacotamento (só Linux)**: AUR, AppImage/Flatpak, releases automáticas (`cargo-dist`) e a imagem Docker publicada | M | eu + você (contas/chaves) | `pkgbuild` instala e roda; release de teste no GitHub |
