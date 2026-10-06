@@ -1,5 +1,8 @@
 # Plano de execução do roadmap
 
+> **O que ainda está aberto foi refeito em `docs/plano-restante.md` (2026-10-06).** Este arquivo fica como
+> histórico: tudo o que está `[x]` aqui está feito e commitado.
+
 Criado em 2026-10-05 (v0.8.0). Complementa `docs/roadmap.md` (o quê) com ordem, critérios
 de saída, tamanhos e decisões pendentes (o como e o quando). Estado real do código em
 `docs/status.md` e `docs/gap_analysis.md`.
