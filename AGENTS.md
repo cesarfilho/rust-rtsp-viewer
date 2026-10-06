@@ -117,7 +117,7 @@ each segment (with Docker, set it to the host folder mounted as `/data`). The pl
 `GStreamerBridge::start_file` (`engine::playback`: seek, rate, pause, step) shown by the same
 `VideoWidget` as a live camera. Marks `I`/`O` + `E` export `[in, out]` as `.mp4` in
 `<recordings>/exports/`. Test aid: `RRV_OPEN_RECORDINGS=1` opens the view once the daemon connects,
-`=play` also plays the latest finished segment (no synthetic key presses needed).
+`=play` also plays the latest finished segment, `=compare` also puts every other camera side by side (no synthetic key presses needed). **Several channels**: the main `Player` plus `Follower`s (`RecordingsView.followers`, up to `MAX_CHANNELS` = 4); `sync_followers` (each tick) asks the pure `timeline_view::follow_action` what each follower does (keep / open the segment covering the main's instant / seek if it drifted over `FOLLOW_DRIFT_MS` / gap). A follower whose file has not reported a position yet counts as "where it should be" (else it is reopened every tick forever), and followers hold while the main has ended.
 
 ## Secrets (plan 2.5.8)
 

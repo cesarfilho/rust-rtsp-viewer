@@ -61,6 +61,8 @@ pub enum RecMsg {
     },
     /// Mostra só os eventos de movimento.
     ToggleMotionOnly,
+    /// Adiciona / tira uma câmera da comparação (canais lado a lado, no mesmo instante).
+    ToggleCompare(String),
     Live,
 }
 
@@ -74,7 +76,23 @@ pub struct Player {
     pub rate: f64,
     /// O seek pedido antes de o arquivo informar a duração; tenta de novo a cada tick.
     pub pending_seek_ms: Option<u64>,
+    /// Um canal seguidor parado de propósito porque o principal chegou ao fim (e não porque a
+    /// pessoa pausou): volta a tocar quando o principal volta a andar.
+    pub held: bool,
 }
+
+/// Um canal que acompanha o principal: a mesma hora, outra câmera.
+pub struct Follower {
+    pub camera: String,
+    pub player: Option<Player>,
+    /// Por que não há imagem (arquivo ausente...), para o quadro mostrar.
+    pub note: Option<String>,
+    /// Depois de uma falha, só tenta de novo a partir daqui (não martela o disco a 10 Hz).
+    pub retry_at: Option<std::time::Instant>,
+}
+
+/// Quantos canais cabem lado a lado (o principal e mais três).
+pub const MAX_CHANNELS: usize = 4;
 
 pub struct RecordingsView {
     pub span: Span,
@@ -92,6 +110,8 @@ pub struct RecordingsView {
     pub motion_only: bool,
     /// A janela acompanha o vivo: novos segmentos entram sozinhos.
     pub follow: bool,
+    /// Os canais de comparação, que seguem o instante do principal.
+    pub followers: Vec<Follower>,
     /// Quando o histórico foi pedido pela última vez (para o refresco automático).
     pub refreshed_at: std::time::Instant,
 }
@@ -110,13 +130,25 @@ impl RecordingsView {
     pub fn playhead(&self) -> Option<(usize, i64)> {
         let p = self.player.as_ref()?;
         let lane = self.lanes.iter().position(|l| *l == p.camera)?;
-        let pos = p
-            .bridge
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .playback_position_ms()
-            .unwrap_or(0) as i64;
+        // While a seek waits for the file to report its duration, the position is still the
+        // start of the file: the instant the user asked for is the real playhead.
+        let pos = match p.pending_seek_ms {
+            Some(ms) => ms,
+            None => p
+                .bridge
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .playback_position_ms()
+                .unwrap_or(0),
+        } as i64;
         Some((lane, p.segment.ts_start + pos))
+    }
+
+    /// O principal e os canais que acompanham, todos os players abertos.
+    pub fn players_mut(&mut self) -> impl Iterator<Item = &mut Player> {
+        self.player
+            .iter_mut()
+            .chain(self.followers.iter_mut().filter_map(|f| f.player.as_mut()))
     }
 
     fn spans_of(&self, camera: &str) -> Vec<(usize, SegmentSpan)> {
@@ -145,10 +177,15 @@ pub fn update(app: &mut App, msg: RecMsg) -> Task<Message> {
     match msg {
         RecMsg::Open => open(app),
         RecMsg::Close => {
-            if let Some(v) = app.recordings.as_mut()
-                && let Some(p) = v.player.take()
-            {
-                p.bridge.lock().unwrap_or_else(|e| e.into_inner()).stop();
+            if let Some(v) = app.recordings.as_mut() {
+                if let Some(p) = v.player.take() {
+                    p.bridge.lock().unwrap_or_else(|e| e.into_inner()).stop();
+                }
+                for f in v.followers.drain(..) {
+                    if let Some(p) = f.player {
+                        p.bridge.lock().unwrap_or_else(|e| e.into_inner()).stop();
+                    }
+                }
             }
             app.recordings = None;
         }
@@ -175,24 +212,31 @@ pub fn update(app: &mut App, msg: RecMsg) -> Task<Message> {
         }
         RecMsg::Clicked { lane, t_ms } => click(app, lane, t_ms),
         RecMsg::PlayPause => {
-            if let Some(p) = app.recordings.as_mut().and_then(|v| v.player.as_mut()) {
-                p.paused = !p.paused;
-                let _ = p
-                    .bridge
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .set_playback_paused(p.paused);
+            if let Some(v) = app.recordings.as_mut()
+                && let Some(master) = v.player.as_ref()
+            {
+                let paused = !master.paused;
+                for p in v.players_mut() {
+                    p.paused = paused;
+                    let _ = p
+                        .bridge
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .set_playback_paused(paused);
+                }
             }
         }
         RecMsg::Skip(ms) => skip(app, ms),
         RecMsg::Rate(r) => {
-            if let Some(p) = app.recordings.as_mut().and_then(|v| v.player.as_mut()) {
-                p.rate = r;
-                let _ = p
-                    .bridge
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .set_playback_rate(r);
+            if let Some(v) = app.recordings.as_mut() {
+                for p in v.players_mut() {
+                    p.rate = r;
+                    let _ = p
+                        .bridge
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .set_playback_rate(r);
+                }
             }
         }
         RecMsg::Step => {
@@ -223,6 +267,7 @@ pub fn update(app: &mut App, msg: RecMsg) -> Task<Message> {
                 click(app, lane, ts_ms - EVENT_LEAD_MS);
             }
         }
+        RecMsg::ToggleCompare(camera) => toggle_compare(app, camera),
         RecMsg::Live => return update(app, RecMsg::Close),
     }
     Task::none()
@@ -250,6 +295,7 @@ fn open(app: &mut App) {
         truncated: false,
         motion_only: false,
         follow: true,
+        followers: Vec::new(),
         refreshed_at: std::time::Instant::now(),
     });
     request_history(app);
@@ -306,7 +352,17 @@ pub fn on_history(app: &mut App, result: Result<Response, String>) {
             {
                 let camera = seg.camera.clone();
                 let start = seg.ts_start;
-                play(app, camera, seg, start);
+                play(app, camera.clone(), seg, start);
+                if app.recordings_compare {
+                    let others: Vec<String> = app
+                        .recordings
+                        .as_ref()
+                        .map(|v| v.lanes.iter().filter(|l| **l != camera).cloned().collect())
+                        .unwrap_or_default();
+                    for o in others {
+                        toggle_compare(app, o);
+                    }
+                }
             }
         }
         Ok(Response::Error { message }) | Err(message) => v.error = Some(message),
@@ -431,49 +487,258 @@ fn click(app: &mut App, lane: usize, t_ms: i64) {
     play(app, camera, segment, at);
 }
 
-fn play(app: &mut App, camera: String, segment: SegmentInfo, at_ms: i64) {
-    let path = app.recordings_dir.join(&segment.file);
+/// Abre `segment` numa nova bridge, no ponto `at_ms` (Unix ms). Não mexe na vista.
+fn open_player(
+    recordings_dir: &std::path::Path,
+    camera: String,
+    segment: SegmentInfo,
+    at_ms: i64,
+) -> Result<Player, String> {
+    let path = recordings_dir.join(&segment.file);
     if !path.exists() {
-        super::update::toast(
-            app,
-            format!(
-                "Arquivo não encontrado: {}. Ajuste [recording] dir da janela para a pasta de gravações do daemon",
-                path.display()
-            ),
-        );
-        return;
+        return Err(format!(
+            "Arquivo não encontrado: {}. Ajuste [recording] dir da janela para a pasta de gravações do daemon",
+            path.display()
+        ));
     }
-    // Parar o que tocava antes de abrir o próximo (um arquivo por vez).
-    if let Some(v) = app.recordings.as_mut()
-        && let Some(old) = v.player.take()
-    {
-        old.bridge.lock().unwrap_or_else(|e| e.into_inner()).stop();
-    }
-    let mut bridge = match GStreamerBridge::new(640, 360) {
-        Ok(b) => b,
-        Err(e) => {
-            super::update::toast(app, format!("Não consegui abrir o player: {e}"));
-            return;
-        }
-    };
-    if let Err(e) = bridge.start_file(&path.to_string_lossy()) {
-        super::update::toast(app, format!("Não consegui abrir a gravação: {e}"));
-        return;
-    }
+    let mut bridge =
+        GStreamerBridge::new(640, 360).map_err(|e| format!("Não consegui abrir o player: {e}"))?;
+    bridge
+        .start_file(&path.to_string_lossy())
+        .map_err(|e| format!("Não consegui abrir a gravação: {e}"))?;
     let bridge = Arc::new(Mutex::new(bridge));
     let video = VideoWidget::new(bridge.clone());
     let offset = (at_ms - segment.ts_start).max(0) as u64;
-    if let Some(v) = app.recordings.as_mut() {
-        v.player = Some(Player {
-            camera,
-            segment,
-            bridge,
-            video,
-            paused: false,
-            rate: 1.0,
-            pending_seek_ms: (offset > 500).then_some(offset),
+    Ok(Player {
+        camera,
+        segment,
+        bridge,
+        video,
+        paused: false,
+        rate: 1.0,
+        pending_seek_ms: (offset > 500).then_some(offset),
+        held: false,
+    })
+}
+
+fn stop_player(p: Player) {
+    p.bridge.lock().unwrap_or_else(|e| e.into_inner()).stop();
+}
+
+/// Toca `segment` como canal principal em `at_ms`. A câmera que era a principal passa a ser
+/// um canal de comparação (a comparação não se perde ao clicar em outra faixa), e a câmera
+/// clicada deixa de ser seguidora.
+fn play(app: &mut App, camera: String, segment: SegmentInfo, at_ms: i64) {
+    let opened = open_player(&app.recordings_dir, camera.clone(), segment, at_ms);
+    let player = match opened {
+        Ok(p) => p,
+        Err(e) => {
+            super::update::toast(app, e);
+            return;
+        }
+    };
+    let Some(v) = app.recordings.as_mut() else {
+        stop_player(player);
+        return;
+    };
+    // Parar o que tocava antes de abrir o próximo (um arquivo por vez neste canal).
+    let old_master = v.player.take();
+    if let Some(old) = &old_master
+        && old.camera != camera
+        && !v.followers.iter().any(|f| f.camera == old.camera)
+        && v.followers.len() + 1 < MAX_CHANNELS
+    {
+        v.followers.push(Follower {
+            camera: old.camera.clone(),
+            player: None,
+            note: None,
+            retry_at: None,
         });
     }
+    if let Some(old) = old_master {
+        stop_player(old);
+    }
+    if let Some(i) = v.followers.iter().position(|f| f.camera == camera) {
+        let f = v.followers.remove(i);
+        if let Some(p) = f.player {
+            stop_player(p);
+        }
+    }
+    v.player = Some(player);
+}
+
+/// Liga / desliga uma câmera na comparação.
+fn toggle_compare(app: &mut App, camera: String) {
+    let Some(v) = app.recordings.as_mut() else {
+        return;
+    };
+    if v.player.as_ref().is_some_and(|p| p.camera == camera) {
+        return; // o canal principal já está na tela
+    }
+    if let Some(i) = v.followers.iter().position(|f| f.camera == camera) {
+        let f = v.followers.remove(i);
+        if let Some(p) = f.player {
+            stop_player(p);
+        }
+        return;
+    }
+    let used = v.followers.len() + usize::from(v.player.is_some());
+    if used >= MAX_CHANNELS {
+        super::update::toast(
+            app,
+            format!("No máximo {MAX_CHANNELS} câmeras lado a lado: tire uma antes"),
+        );
+        return;
+    }
+    v.followers.push(Follower {
+        camera,
+        player: None,
+        note: None,
+        retry_at: None,
+    });
+}
+
+/// Mantém cada canal de comparação no instante do principal: abre o segmento certo, corrige
+/// o desvio ou mostra que não há gravação ali.
+fn sync_followers(app: &mut App) {
+    let now = now_ms();
+    let dir = app.recordings_dir.clone();
+    let Some(v) = app.recordings.as_mut() else {
+        return;
+    };
+    let Some((_, t)) = v.playhead() else {
+        return;
+    };
+    let (paused, rate) = v
+        .player
+        .as_ref()
+        .map_or((false, 1.0), |p| (p.paused, p.rate));
+    // O principal acabou o arquivo e parou: os outros não seguem tocando sozinhos (seriam
+    // puxados de volta a cada segundo); ficam parados até o principal voltar a andar.
+    let master_ended = v.player.as_ref().is_some_and(|p| {
+        p.pending_seek_ms.is_none()
+            && p.bridge
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .playback_ended()
+    });
+    let mut followers = std::mem::take(&mut v.followers);
+    for f in &mut followers {
+        let spans = v.spans_of(&f.camera);
+        let only: Vec<SegmentSpan> = spans.iter().map(|(_, s)| *s).collect();
+        let current = f.player.as_ref().and_then(|p| {
+            let idx = spans
+                .iter()
+                .position(|(g, _)| v.segments[*g].id == p.segment.id)?;
+            // Right after opening, the file has not reported a position yet: that is "still
+            // loading", not "nothing is playing" (which would reopen the file every tick,
+            // forever). Pretend it is exactly where it should be until it says otherwise.
+            let pos = p
+                .bridge
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .playback_position_ms()
+                .map_or_else(|| (t - p.segment.ts_start).max(0), |ms| ms as i64);
+            Some((idx, pos))
+        });
+        // Um seek pendente (arquivo ainda sem duração) é concluído aqui.
+        if let Some(p) = f.player.as_mut()
+            && let Some(ms) = p.pending_seek_ms
+        {
+            let b = p.bridge.lock().unwrap_or_else(|e| e.into_inner());
+            if b.playback_duration_ms().is_some() && b.seek_ms(ms).is_ok() {
+                p.pending_seek_ms = None;
+            }
+        }
+        if let Some(p) = f.player.as_mut() {
+            if master_ended && !p.held {
+                p.held = true;
+                let _ = p
+                    .bridge
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .set_playback_paused(true);
+            } else if !master_ended && p.held {
+                p.held = false;
+                if !paused {
+                    let _ = p
+                        .bridge
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .set_playback_paused(false);
+                }
+            }
+        }
+        // Com um seek ainda pendente a posição não vale: não corrige o desvio por cima dele.
+        let settling = f
+            .player
+            .as_ref()
+            .is_some_and(|p| p.pending_seek_ms.is_some());
+        let action = timeline_view::follow_action(&only, current, t, now);
+        if !matches!(action, timeline_view::FollowAction::Keep) {
+            log::debug!(
+                "follower {}: t={t} current={current:?} → {action:?}",
+                f.camera
+            );
+        }
+        match action {
+            timeline_view::FollowAction::Keep => {}
+            timeline_view::FollowAction::Seek { .. } if settling => {}
+            timeline_view::FollowAction::Seek { offset_ms } => {
+                if let Some(p) = &f.player {
+                    let _ = p
+                        .bridge
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .seek_ms(offset_ms);
+                }
+            }
+            timeline_view::FollowAction::Gap => {
+                if let Some(p) = f.player.take() {
+                    stop_player(p);
+                }
+                f.note = Some("Sem gravação neste instante".into());
+                f.retry_at = None;
+            }
+            timeline_view::FollowAction::Open { index, offset_ms } => {
+                if f.retry_at.is_some_and(|at| std::time::Instant::now() < at) {
+                    continue;
+                }
+                if let Some(p) = f.player.take() {
+                    stop_player(p);
+                }
+                let segment = v.segments[spans[index].0].clone();
+                let at = segment.ts_start + offset_ms as i64;
+                match open_player(&dir, f.camera.clone(), segment, at) {
+                    Ok(mut p) => {
+                        log::debug!("follower {} opened {}", f.camera, p.segment.file);
+                        // Entra com o mesmo estado do principal (pausa, velocidade).
+                        p.paused = paused;
+                        p.rate = rate;
+                        {
+                            let b = p.bridge.lock().unwrap_or_else(|e| e.into_inner());
+                            if paused {
+                                let _ = b.set_playback_paused(true);
+                            }
+                            if rate != 1.0 {
+                                let _ = b.set_playback_rate(rate);
+                            }
+                        }
+                        f.player = Some(p);
+                        f.note = None;
+                        f.retry_at = None;
+                    }
+                    Err(e) => {
+                        log::debug!("follower {} did not open: {e}", f.camera);
+                        f.note = Some(e);
+                        f.retry_at =
+                            Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
+                    }
+                }
+            }
+        }
+    }
+    v.followers = followers;
 }
 
 fn skip(app: &mut App, ms: i64) {
@@ -585,6 +850,7 @@ pub fn tick(app: &mut App) {
         let start = seg.ts_start;
         play(app, camera, seg, start);
     }
+    sync_followers(app);
 }
 
 // ───────────────────────────── view ─────────────────────────────
@@ -816,6 +1082,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
     // ── a imagem
     let stage: Element<'_, Message> = match &v.player {
+        Some(_) if !v.followers.is_empty() => channels_stage(app, v),
         Some(p) => p.video.view().map(|_| Message::FrameUpdate),
         None => container(
             text(if v.loading {
@@ -915,7 +1182,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
     let bg = Theme::color_from_hex(colors.background);
     container(
-        column![header, stage, controls, timeline]
+        column![header, stage, compare_row(app, v), controls, timeline]
             .spacing(8)
             .padding(12),
     )
@@ -926,6 +1193,92 @@ pub fn view(app: &App) -> Element<'_, Message> {
         ..container::Style::default()
     })
     .into()
+}
+
+/// Os canais lado a lado: o principal e os que acompanham, em grade (2 por linha).
+fn channels_stage<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message> {
+    let colors = app.theme.colors();
+    let dim = Theme::color_from_hex(colors.text_secondary);
+    let text_color = Theme::color_from_hex(colors.text);
+    let tile = |name: &str, body: Element<'a, Message>, is_main: bool| -> Element<'a, Message> {
+        let label = if is_main {
+            format!("{name}  (principal)")
+        } else {
+            name.to_string()
+        };
+        container(
+            column![text(label).size(11).color(text_color), body]
+                .spacing(2)
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(2)
+        .style(|_: &iced::Theme| container::Style {
+            background: Some(iced::Background::Color(iced::Color::BLACK)),
+            ..container::Style::default()
+        })
+        .into()
+    };
+    let mut tiles: Vec<Element<'a, Message>> = Vec::new();
+    if let Some(p) = &v.player {
+        tiles.push(tile(
+            &p.camera,
+            p.video.view().map(|_| Message::FrameUpdate),
+            true,
+        ));
+    }
+    for f in &v.followers {
+        let body: Element<'a, Message> = match &f.player {
+            Some(p) => p.video.view().map(|_| Message::FrameUpdate),
+            None => container(
+                text(f.note.clone().unwrap_or_else(|| "Carregando…".to_string()))
+                    .size(12)
+                    .color(dim),
+            )
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .into(),
+        };
+        tiles.push(tile(&f.camera, body, false));
+    }
+    let mut grid = column![].spacing(4).height(Length::Fill);
+    let mut it = tiles.into_iter();
+    while let Some(first) = it.next() {
+        let second = it
+            .next()
+            .unwrap_or_else(|| iced::widget::Space::new(Length::Fill, Length::Fill).into());
+        grid = grid.push(row![first, second].spacing(4).height(Length::Fill));
+    }
+    grid.into()
+}
+
+/// "Comparar: [Câmera] [Câmera]": liga e desliga canais lado a lado (só com mais de uma câmera).
+fn compare_row<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message> {
+    let master = v.player.as_ref().map(|p| p.camera.as_str());
+    let others: Vec<&String> = v
+        .lanes
+        .iter()
+        .filter(|l| Some(l.as_str()) != master)
+        .collect();
+    if v.player.is_none() || others.is_empty() {
+        return iced::widget::Space::new(Length::Shrink, Length::Shrink).into();
+    }
+    let dim = Theme::color_from_hex(app.theme.colors().text_secondary);
+    let mut r = row![text("Comparar:").size(12).color(dim)]
+        .spacing(6)
+        .align_y(iced::Alignment::Center);
+    for name in others {
+        let on = v.followers.iter().any(|f| f.camera == *name);
+        r = r.push(
+            button(text(name.as_str()).size(12))
+                .padding(iced::Padding::from([4, 10]))
+                .style(style::pill(app.theme, sel(on)))
+                .on_press(Message::Recordings(RecMsg::ToggleCompare(name.clone()))),
+        );
+    }
+    r.into()
 }
 
 /// O nome de um evento do histórico, em português.

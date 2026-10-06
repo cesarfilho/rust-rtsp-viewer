@@ -368,6 +368,8 @@ cada evento. Na janela, a tecla **`t`** (ou `⋯` → Gravações) abre a vista 
   gravação, âmbar = com movimento, vermelho = gravando agora, um traço claro no topo = protegido;
 - **clicar** toca aquele instante e **arrastar** navega (se cair numa lacuna, vai para o próximo trecho); o player tem tocar/pausar
   (`Espaço`), ±10 s (`←` `→`), quadro a quadro, 0,5×–4×;
+- **Comparar**: o botão com o nome de outra câmera a põe ao lado (até 4), no mesmo instante; clicar na faixa de outra
+  câmera a torna a principal e a comparação continua; onde uma câmera não gravou aparece "sem gravação neste instante";
 - a **lista de eventos** ao lado (filtro "só movimento"); clicar num evento toca **5 s antes** dele;
 - **`I`** e **`O`** marcam início e fim, **`E`** exporta o clipe (`.mp4`, sem reencode) para `exports/` dentro da
   pasta de gravações; **`P`** protege o trecho (a retenção nunca o apaga);

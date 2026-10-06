@@ -123,6 +123,8 @@ pub struct App {
     pub open_recordings_on_connect: bool,
     /// `RRV_OPEN_RECORDINGS=play`: also play the latest finished segment (test aid).
     pub recordings_autoplay: bool,
+    /// `RRV_OPEN_RECORDINGS=compare`: with autoplay, put every other camera side by side too.
+    pub recordings_compare: bool,
 }
 
 /// A zone being drawn on one camera. Vertices are only committed to
@@ -355,7 +357,9 @@ pub fn new_app(
             recordings: None,
             recordings_dir: recording_config.dir.clone(),
             open_recordings_on_connect: std::env::var_os("RRV_OPEN_RECORDINGS").is_some(),
-            recordings_autoplay: std::env::var("RRV_OPEN_RECORDINGS").is_ok_and(|v| v == "play"),
+            recordings_autoplay: std::env::var("RRV_OPEN_RECORDINGS")
+                .is_ok_and(|v| v == "play" || v == "compare"),
+            recordings_compare: std::env::var("RRV_OPEN_RECORDINGS").is_ok_and(|v| v == "compare"),
         },
         // iced 0.13's `window::Settings` has no "start maximized" flag, so ask
         // the compositor to maximize the window as soon as it exists. `size`

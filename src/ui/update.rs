@@ -2632,6 +2632,217 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    fn seg_for(
+        id: i64,
+        camera: &str,
+        start: i64,
+        end: i64,
+        file: &str,
+    ) -> crate::ipc::protocol::SegmentInfo {
+        let mut s = seg(id, start, Some(end), file);
+        s.camera = camera.into();
+        s
+    }
+
+    /// Duas câmeras (Portão e Garagem) com um arquivo de 3 s cada, na pasta de gravações.
+    fn two_camera_app(tag: &str) -> (App, std::path::PathBuf, i64) {
+        let mut app = test_app();
+        connected(&mut app, false);
+        app.daemon.cameras.push(info("Garagem", false));
+        let dir = std::env::temp_dir().join(format!("rrv-ui-multi-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        tiny_mkv(&dir.join("portao.mkv"));
+        tiny_mkv(&dir.join("garagem.mkv"));
+        app.recordings_dir = dir.clone();
+        let _ = update(&mut app, Message::Recordings(RecMsg::Open));
+        let token = *app.pending.keys().next().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let start = now - 120_000;
+        // Portão: [start, start+3 s]; Garagem: começa 1 s depois e dura 3 s (cobre [start+1, start+4])
+        handle_reply(
+            &mut app,
+            token,
+            Ok(history_reply(vec![
+                seg_for(1, "Portão", start, start + 3_000, "portao.mkv"),
+                seg_for(2, "Garagem", start + 1_000, start + 4_000, "garagem.mkv"),
+            ])),
+        );
+        (app, dir, start)
+    }
+
+    #[test]
+    fn a_follower_channel_opens_the_matching_segment_and_reports_a_gap() {
+        let (mut app, dir, start) = two_camera_app("follow");
+        // principal: Portão em +2 s; liga a comparação com a Garagem
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::Clicked {
+                lane: 0,
+                t_ms: start + 2_000,
+            }),
+        );
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::ToggleCompare("Garagem".into())),
+        );
+        super::super::recordings::tick(&mut app);
+        let v = app.recordings.as_ref().unwrap();
+        assert_eq!(v.followers.len(), 1);
+        let f = v.followers[0]
+            .player
+            .as_ref()
+            .expect("o seguidor abriu o arquivo da Garagem");
+        assert_eq!(f.segment.id, 2);
+        assert!(!std::sync::Arc::ptr_eq(
+            &f.bridge,
+            &v.player.as_ref().unwrap().bridge
+        ));
+
+        // o principal vai para um instante em que a Garagem não gravava (antes de +1 s)
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::Clicked {
+                lane: 0,
+                t_ms: start + 100,
+            }),
+        );
+        super::super::recordings::tick(&mut app);
+        let f = &app.recordings.as_ref().unwrap().followers[0];
+        assert!(f.player.is_none(), "sem gravação da Garagem em +0,1 s");
+        assert_eq!(f.note.as_deref(), Some("Sem gravação neste instante"));
+
+        // e quando volta a haver gravação, o seguidor reabre sozinho
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::Clicked {
+                lane: 0,
+                t_ms: start + 2_500,
+            }),
+        );
+        super::super::recordings::tick(&mut app);
+        assert!(
+            app.recordings.as_ref().unwrap().followers[0]
+                .player
+                .is_some()
+        );
+        let _ = update(&mut app, Message::Recordings(RecMsg::Close));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn controls_reach_every_channel_and_a_new_follower_inherits_them() {
+        let (mut app, dir, start) = two_camera_app("controls");
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::Clicked {
+                lane: 0,
+                t_ms: start + 2_000,
+            }),
+        );
+        let _ = update(&mut app, Message::Recordings(RecMsg::Rate(2.0)));
+        let _ = update(&mut app, Message::Recordings(RecMsg::PlayPause)); // pausa
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::ToggleCompare("Garagem".into())),
+        );
+        super::super::recordings::tick(&mut app);
+        let v = app.recordings.as_ref().unwrap();
+        let f = v.followers[0].player.as_ref().unwrap();
+        assert!(f.paused, "o canal novo entra pausado como o principal");
+        assert_eq!(f.rate, 2.0, "e na mesma velocidade");
+        // retomar vale para os dois
+        let _ = update(&mut app, Message::Recordings(RecMsg::PlayPause));
+        let v = app.recordings.as_mut().unwrap();
+        assert!(v.players_mut().all(|p| !p.paused));
+        let _ = update(&mut app, Message::Recordings(RecMsg::Close));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clicking_a_followers_lane_makes_it_the_main_and_keeps_the_comparison() {
+        let (mut app, dir, start) = two_camera_app("swap");
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::Clicked {
+                lane: 0,
+                t_ms: start + 2_000,
+            }),
+        );
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::ToggleCompare("Garagem".into())),
+        );
+        super::super::recordings::tick(&mut app);
+        // clica na faixa da Garagem (lane 1): ela vira a principal; o Portão passa a seguidor
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::Clicked {
+                lane: 1,
+                t_ms: start + 2_000,
+            }),
+        );
+        let v = app.recordings.as_ref().unwrap();
+        assert_eq!(v.player.as_ref().unwrap().camera, "Garagem");
+        assert_eq!(v.followers.len(), 1);
+        assert_eq!(v.followers[0].camera, "Portão");
+        super::super::recordings::tick(&mut app);
+        assert!(
+            app.recordings.as_ref().unwrap().followers[0]
+                .player
+                .is_some()
+        );
+        // tirar da comparação; o principal não pode ser tirado
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::ToggleCompare("Garagem".into())),
+        );
+        assert_eq!(
+            app.recordings.as_ref().unwrap().followers.len(),
+            1,
+            "o principal fica"
+        );
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::ToggleCompare("Portão".into())),
+        );
+        assert!(app.recordings.as_ref().unwrap().followers.is_empty());
+        let _ = update(&mut app, Message::Recordings(RecMsg::Close));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_follower_with_a_missing_file_says_so_and_does_not_hammer_the_disk() {
+        let (mut app, dir, start) = two_camera_app("missing");
+        std::fs::remove_file(dir.join("garagem.mkv")).unwrap();
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::Clicked {
+                lane: 0,
+                t_ms: start + 2_000,
+            }),
+        );
+        let _ = update(
+            &mut app,
+            Message::Recordings(RecMsg::ToggleCompare("Garagem".into())),
+        );
+        super::super::recordings::tick(&mut app);
+        let f = &app.recordings.as_ref().unwrap().followers[0];
+        assert!(f.player.is_none());
+        assert!(
+            f.note
+                .as_deref()
+                .unwrap()
+                .contains("Arquivo não encontrado")
+        );
+        assert!(f.retry_at.is_some(), "a próxima tentativa fica para depois");
+        let _ = update(&mut app, Message::Recordings(RecMsg::Close));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn closing_without_local_recordings_does_not_ask() {
         let mut app = test_app();

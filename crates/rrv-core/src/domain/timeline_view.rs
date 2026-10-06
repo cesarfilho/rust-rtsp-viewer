@@ -153,6 +153,50 @@ pub fn next_after(segments: &[SegmentSpan], t: i64) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
+/// Quanto um canal seguidor pode estar fora do instante do principal antes de levar um seek.
+pub const FOLLOW_DRIFT_MS: i64 = 800;
+
+/// O que um canal que acompanha o principal (player com vários canais) precisa fazer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FollowAction {
+    /// Está certo: tocando o segmento que cobre o instante, sem desvio relevante.
+    Keep,
+    /// Abrir o segmento `index` na posição `offset_ms` (ainda não tocava, ou o trecho acabou).
+    Open { index: usize, offset_ms: u64 },
+    /// O segmento é o certo mas a posição desviou: levar para `offset_ms`.
+    Seek { offset_ms: u64 },
+    /// Não há gravação desta câmera neste instante.
+    Gap,
+}
+
+/// Decide o que o canal seguidor faz para estar em `t` (Unix ms), o instante do principal.
+/// `current` é o segmento que ele toca (índice em `segments`) e a posição, em ms, dentro dele.
+pub fn follow_action(
+    segments: &[SegmentSpan],
+    current: Option<(usize, i64)>,
+    t: i64,
+    now: i64,
+) -> FollowAction {
+    let Some(target) = segment_at(segments, t, now) else {
+        return FollowAction::Gap;
+    };
+    let offset_ms = (t - segments[target].start).max(0) as u64;
+    match current {
+        Some((idx, pos)) if idx == target => {
+            let at = segments[idx].start + pos;
+            if (at - t).abs() > FOLLOW_DRIFT_MS {
+                FollowAction::Seek { offset_ms }
+            } else {
+                FollowAction::Keep
+            }
+        }
+        _ => FollowAction::Open {
+            index: target,
+            offset_ms,
+        },
+    }
+}
+
 /// Os passos "redondos" das marcas, em ms.
 const TICK_STEPS_MS: [i64; 9] = [
     60_000,
@@ -344,6 +388,79 @@ mod tests {
         assert_eq!(segment_at(&segs, 300, 1_000), None, "na lacuna");
         assert_eq!(next_after(&segs, 300), Some(1));
         assert_eq!(next_after(&segs, 600), None);
+    }
+
+    #[test]
+    fn a_follower_opens_keeps_seeks_or_reports_a_gap() {
+        use FollowAction::*;
+        let segs = [
+            SegmentSpan {
+                start: 1_000,
+                end: Some(5_000),
+                motion: false,
+                protected: false,
+            },
+            SegmentSpan {
+                start: 8_000,
+                end: Some(12_000),
+                motion: false,
+                protected: false,
+            },
+        ];
+        // ainda não tocava: abre o segmento que cobre o instante, no ponto certo
+        assert_eq!(
+            follow_action(&segs, None, 3_000, 20_000),
+            Open {
+                index: 0,
+                offset_ms: 2_000
+            }
+        );
+        // tocando o certo e no lugar (folga de 800 ms): mantém
+        assert_eq!(follow_action(&segs, Some((0, 2_100)), 3_000, 20_000), Keep);
+        assert_eq!(
+            follow_action(&segs, Some((0, 2_800)), 3_000, 20_000),
+            Keep,
+            "desvio de 800 ms ainda vale"
+        );
+        // desvio maior: seek dentro do mesmo segmento
+        assert_eq!(
+            follow_action(&segs, Some((0, 500)), 3_000, 20_000),
+            Seek { offset_ms: 2_000 }
+        );
+        // o principal passou para o outro trecho: troca de segmento
+        assert_eq!(
+            follow_action(&segs, Some((0, 3_900)), 9_000, 20_000),
+            Open {
+                index: 1,
+                offset_ms: 1_000
+            }
+        );
+        // na lacuna entre os trechos: nada a mostrar
+        assert_eq!(follow_action(&segs, Some((0, 3_900)), 6_500, 20_000), Gap);
+        assert_eq!(
+            follow_action(&segs, None, 500, 20_000),
+            Gap,
+            "antes de qualquer gravação"
+        );
+        // segmento ainda aberto (gravando) cobre até agora
+        let live = [SegmentSpan {
+            start: 1_000,
+            end: None,
+            motion: false,
+            protected: false,
+        }];
+        assert_eq!(
+            follow_action(&live, None, 9_000, 10_000),
+            Open {
+                index: 0,
+                offset_ms: 8_000
+            }
+        );
+        assert_eq!(
+            follow_action(&live, None, 11_000, 10_000),
+            Gap,
+            "no futuro não há nada"
+        );
     }
 
     #[test]
