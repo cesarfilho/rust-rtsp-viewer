@@ -204,6 +204,11 @@ pub fn validate(config: &Config) -> Vec<Issue> {
             ));
         }
     }
+    if let Some(m) = &config.mqtt
+        && let Err(message) = m.clone().into_config()
+    {
+        issues.push(Issue::error("mqtt", message));
+    }
     if let Some(d) = &config.detect {
         match d.clone().into_config() {
             Err(message) => issues.push(Issue::error("detect", message)),

@@ -120,6 +120,11 @@ fn run(cli: &Cli) -> Result<(), String> {
         .map(|r| r.into_config())
         .transpose()?
         .unwrap_or_default();
+    let mqtt = config
+        .mqtt
+        .map(|m| m.into_config())
+        .transpose()?
+        .filter(|m| m.enabled);
     let detect = config
         .detect
         .map(|d| d.into_config())
@@ -178,6 +183,20 @@ fn run(cli: &Cli) -> Result<(), String> {
     ctrlc::set_handler(move || flag.store(true, Ordering::SeqCst))
         .map_err(|e| format!("could not install the signal handler: {e}"))?;
 
+    let mqtt = mqtt.and_then(|cfg| {
+        let target = rrv_core::mqtt::safe_target(&format!("mqtt://{}:{}", cfg.host, cfg.port));
+        match rrv_core::mqtt::MqttPublisher::spawn(cfg, &engine.names) {
+            Ok(p) => {
+                log::info!("MQTT ligado: {target}");
+                Some(p)
+            }
+            Err(e) => {
+                log::warn!("MQTT desligado: {e}");
+                None
+            }
+        }
+    });
+
     let period = Duration::from_millis(TICK_MS);
     let mut tick = 0u64;
     let mut disk_watch = rrv_core::domain::retention::DiskWatch::default();
@@ -221,6 +240,14 @@ fn run(cli: &Cli) -> Result<(), String> {
                 w.send(ev);
             }
         }
+        if let Some(m) = &mqtt {
+            for ev in &wire {
+                m.event(ev);
+            }
+            for i in 0..engine.camera_count() {
+                m.update(i, &mqtt_state(&engine, i));
+            }
+        }
         for event in &events {
             log_event(&engine, event);
         }
@@ -232,6 +259,9 @@ fn run(cli: &Cli) -> Result<(), String> {
         std::thread::sleep(period.saturating_sub(started.elapsed()));
     }
 
+    if let Some(m) = mqtt {
+        m.shutdown();
+    }
     let _ = std::fs::remove_file(&cli.health_file);
     log::info!("sinal de parada recebido: finalizando gravações");
     engine.shutdown();
@@ -391,5 +421,24 @@ fn start_detection(engine: &mut Engine, cfg: rrv_core::domain::detect::DetectCon
 fn start_detection(_engine: &mut Engine, cfg: rrv_core::domain::detect::DetectConfig) {
     if cfg.enabled {
         log::warn!("[detect] enabled, mas este binário foi feito sem a feature `detect`");
+    }
+}
+
+/// O que o MQTT publica de uma câmera, lido do motor.
+fn mqtt_state(engine: &Engine, i: usize) -> rrv_core::mqtt::CameraState {
+    use rrv_core::domain::camera_status::CameraStatus;
+    let status = &engine.status[i];
+    let mut objects: Vec<String> = engine.detections[i]
+        .iter()
+        .map(|d| d.label().to_string())
+        .collect();
+    objects.sort();
+    objects.dedup();
+    rrv_core::mqtt::CameraState {
+        status: rrv_core::ipc::handler::status_name(status).into(),
+        online: matches!(status, CameraStatus::Live | CameraStatus::Recording),
+        recording: *status == CameraStatus::Recording,
+        motion: engine.motion_active[i],
+        objects,
     }
 }

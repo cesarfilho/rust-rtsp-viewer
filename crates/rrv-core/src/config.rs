@@ -40,6 +40,8 @@ pub struct Config {
     /// `[motion]` — frame-difference detector tuning (`enabled`, `threshold`,
     /// `contour_area`, `sample_stride`).
     pub motion: Option<crate::domain::motion::MotionConfigFile>,
+    /// `[mqtt]` — the daemon publishes camera state and events to an MQTT broker (Home Assistant).
+    pub mqtt: Option<crate::mqtt::MqttFile>,
     /// `[detect]` — object detection (YOLO) on the frames where motion is seen.
     pub detect: Option<crate::domain::detect::DetectFile>,
     /// `[retention]` — how long the daemon keeps recordings (`motion_days`,

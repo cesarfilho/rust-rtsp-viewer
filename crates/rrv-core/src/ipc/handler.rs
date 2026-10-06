@@ -33,7 +33,7 @@ const MAX_CLIP_MS: i64 = 30 * 60 * 1000;
 /// Teto de linhas por resposta de histórico (cada lista).
 const HISTORY_LIMIT: usize = 5000;
 
-fn status_name(s: &CameraStatus) -> &'static str {
+pub fn status_name(s: &CameraStatus) -> &'static str {
     match s {
         CameraStatus::Live => "live",
         CameraStatus::Offline => "offline",

@@ -182,6 +182,17 @@ label = "Rio Jardim Sofia"
 # (cada detecção vira um evento "detection" no histórico: rótulo, confiança, caixa e zona;
 #  `rrvctl history --label person` filtra; avisos e webhook seguem [notifications]/[webhook])
 
+# ── MQTT / Home Assistant (só o daemon) ──────────────────────────────────────
+# Publica o estado de cada câmera (conectada, movimento, gravando, objetos vistos) e os eventos, e se
+# anuncia ao Home Assistant pela descoberta automática: as câmeras aparecem como dispositivos, com
+# sensores de movimento e de conexão. Só `mqtt://` (sem TLS): use um broker local ou uma VPN.
+# [mqtt]
+# enabled = true
+# url = "mqtt://usuario:${mqtt_password}@192.168.0.2:1883"   # a senha vem de um segredo, como nas câmeras
+# prefix = "rrv"                       # tópicos: rrv/status, rrv/<câmera>/state, rrv/<câmera>/event
+# discovery = true                     # anuncia ao Home Assistant
+# discovery_prefix = "homeassistant"
+
 # ── Retenção das gravações (só o daemon) ─────────────────────────────────────
 # Roda a cada minuto. Apaga o arquivo e depois o registro; nunca toca em
 # segmento que está sendo gravado nem em trecho protegido.

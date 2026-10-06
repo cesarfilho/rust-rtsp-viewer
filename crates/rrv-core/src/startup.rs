@@ -57,7 +57,7 @@ pub fn load_config_with(
     Ok((config, warnings))
 }
 
-/// Expande os `${SEGREDO}` das URLs (câmeras, sub-stream, webhook). Devolve uma
+/// Expande os `${SEGREDO}` das URLs (câmeras, sub-stream, webhook, broker MQTT). Devolve uma
 /// mensagem por campo com segredo ausente; os marcadores ausentes ficam no lugar.
 pub fn resolve_secrets(config: &mut Config) -> Vec<String> {
     use crate::secrets::{expand, lookup, missing_message};
@@ -81,6 +81,9 @@ pub fn resolve_secrets(config: &mut Config) -> Vec<String> {
     }
     if let Some(url) = config.webhook.as_mut().and_then(|w| w.url.as_mut()) {
         fix("webhook.url".into(), url);
+    }
+    if let Some(url) = config.mqtt.as_mut().and_then(|m| m.url.as_mut()) {
+        fix("mqtt.url".into(), url);
     }
     problems
 }
