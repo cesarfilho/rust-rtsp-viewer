@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use super::auth;
 use super::conn::Conn;
+use super::files::{self as file_server, FileServe};
 use super::handler::{self, Host};
 use super::protocol::{Request, Response, ServerMessage, WireEvent, decode_line, encode_line};
 
@@ -40,6 +41,8 @@ struct Pending {
 }
 
 type Subscribers = Arc<Mutex<Vec<Sender<WireEvent>>>>;
+/// O que o daemon sabe para assinar URLs de arquivos (`None` até `serve_files`).
+type Files = Arc<Mutex<Option<FileServe>>>;
 
 pub struct IpcServer {
     path: PathBuf,
@@ -47,6 +50,7 @@ pub struct IpcServer {
     /// Para as threads de conexão que o `listen_tcp` cria depois.
     requests: Sender<Pending>,
     subscribers: Subscribers,
+    files: Files,
     stop: Arc<AtomicBool>,
 }
 
@@ -79,19 +83,23 @@ impl IpcServer {
 
         let (tx, pending) = mpsc::channel();
         let subscribers: Subscribers = Arc::new(Mutex::new(Vec::new()));
+        let files: Files = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
         {
-            let (tx, subs, stop) = (tx.clone(), subscribers.clone(), stop.clone());
+            let (tx, subs, stop, files) =
+                (tx.clone(), subscribers.clone(), stop.clone(), files.clone());
             std::thread::Builder::new()
                 .name("rrv-ipc-accept".into())
                 .spawn(move || {
                     while !stop.load(Ordering::Relaxed) {
                         match listener.accept() {
                             Ok((stream, _)) => {
-                                let (tx, subs) = (tx.clone(), subs.clone());
+                                let (tx, subs, files) = (tx.clone(), subs.clone(), files.clone());
                                 let _ = std::thread::Builder::new()
                                     .name("rrv-ipc-conn".into())
-                                    .spawn(move || connection(Conn::Unix(stream), tx, subs, None));
+                                    .spawn(move || {
+                                        connection(Conn::Unix(stream), tx, subs, files, None)
+                                    });
                             }
                             Err(_) => std::thread::sleep(Duration::from_millis(50)),
                         }
@@ -103,8 +111,26 @@ impl IpcServer {
             pending,
             requests: tx,
             subscribers,
+            files,
             stop,
         })
+    }
+
+    /// Passa a servir os vídeos de `dir` por HTTP em `addr` (somente leitura, com `Range`), para uma
+    /// janela em outra máquina. O acesso é por URLs que o canal de controle entrega já assinadas
+    /// (`Request::FileUrl`, veja `ipc::files`). Devolve o endereço de fato.
+    pub fn serve_files(
+        &self,
+        addr: SocketAddr,
+        token: &str,
+        dir: PathBuf,
+    ) -> std::io::Result<SocketAddr> {
+        auth::validate_token(token)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+        let state = file_server::serve(addr, token, dir, self.stop.clone())?;
+        let port = state.port;
+        *self.files.lock().unwrap_or_else(|e| e.into_inner()) = Some(state);
+        Ok(SocketAddr::new(addr.ip(), port))
     }
 
     /// Passa a aceitar conexões **TCP** em `addr` (a janela em outra máquina), todas autenticadas por
@@ -117,10 +143,11 @@ impl IpcServer {
         listener.set_nonblocking(true)?;
         let local = listener.local_addr()?;
         let token: Arc<str> = Arc::from(token);
-        let (tx, subs, stop) = (
+        let (tx, subs, stop, files) = (
             self.requests.clone(),
             self.subscribers.clone(),
             self.stop.clone(),
+            self.files.clone(),
         );
         let open = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         std::thread::Builder::new()
@@ -133,15 +160,20 @@ impl IpcServer {
                                 continue; // fecha: o `stream` cai aqui
                             }
                             let _ = stream.set_nodelay(true);
-                            let (tx, subs, token, open) =
-                                (tx.clone(), subs.clone(), token.clone(), open.clone());
+                            let (tx, subs, token, open, files) = (
+                                tx.clone(),
+                                subs.clone(),
+                                token.clone(),
+                                open.clone(),
+                                files.clone(),
+                            );
                             open.fetch_add(1, Ordering::Relaxed);
                             let spawned = std::thread::Builder::new()
                                 .name("rrv-ipc-tcp-conn".into())
                                 .spawn({
                                     let open = open.clone();
                                     move || {
-                                        connection(Conn::Tcp(stream), tx, subs, Some(token));
+                                        connection(Conn::Tcp(stream), tx, subs, files, Some(token));
                                         open.fetch_sub(1, Ordering::Relaxed);
                                     }
                                 });
@@ -213,6 +245,7 @@ fn connection(
     stream: Conn,
     pending: Sender<Pending>,
     subscribers: Subscribers,
+    files: Files,
     token: Option<Arc<str>>,
 ) {
     let _ = stream.set_nonblocking(false);
@@ -312,6 +345,21 @@ fn connection(
                         }
                     });
                 Response::Subscribed
+            }
+            Request::FileUrl { file } => {
+                // não toca no motor: só assina um caminho
+                match files.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                    None => Response::Error {
+                        message: "este daemon não serve arquivos pela rede".into(),
+                    },
+                    Some(serve) => match serve.signed_path(&file) {
+                        Ok(path) => Response::FileUrl {
+                            port: serve.port,
+                            path,
+                        },
+                        Err(message) => Response::Error { message },
+                    },
+                }
             }
             other => {
                 let (reply, wait) = mpsc::channel();

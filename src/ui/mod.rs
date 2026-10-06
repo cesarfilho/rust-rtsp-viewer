@@ -12,6 +12,8 @@ pub mod recordings;
 pub mod sidebar;
 pub(crate) mod state;
 pub(crate) mod subscription;
+#[cfg(test)]
+pub mod test_support;
 pub mod theme;
 pub(crate) mod update;
 pub mod video_shader;

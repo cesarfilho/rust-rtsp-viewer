@@ -62,6 +62,9 @@ pub struct DaemonFile {
     /// Daemon side: where to listen for windows, e.g. `"0.0.0.0:7878"` (all interfaces) or
     /// `"192.168.1.10:7878"` (one). Requires `token`. Absent = the local socket only.
     pub listen: Option<String>,
+    /// Daemon side: where the recordings are served by HTTP to a window on another machine (read-only,
+    /// signed URLs). Default: the `listen` address with the port + 1.
+    pub files_listen: Option<String>,
     /// Window side: the daemon to connect to, `"tcp://192.168.1.10:7878"` (or a socket path). The
     /// `--daemon` flag wins. Absent = the local socket.
     pub address: Option<String>,
@@ -75,6 +78,7 @@ impl std::fmt::Debug for DaemonFile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DaemonFile")
             .field("listen", &self.listen)
+            .field("files_listen", &self.files_listen)
             .field("address", &self.address)
             .field("token", &self.token.as_ref().map(|_| "****"))
             .finish()

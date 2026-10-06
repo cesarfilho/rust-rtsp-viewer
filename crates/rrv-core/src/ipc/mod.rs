@@ -10,6 +10,7 @@
 pub mod auth;
 pub mod client;
 pub mod conn;
+pub mod files;
 pub mod handler;
 pub mod link;
 pub mod protocol;

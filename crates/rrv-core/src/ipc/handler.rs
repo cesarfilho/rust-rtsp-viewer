@@ -131,6 +131,7 @@ pub fn apply(host: &mut Host<'_>, request: &Request) -> Response {
     };
     match request {
         Request::Auth { .. } => error("Auth só vale no começo de uma conexão TCP"),
+        Request::FileUrl { .. } => error("FileUrl é tratado pela conexão"),
         Request::Hello { .. } | Request::Subscribe => {
             error("Hello e Subscribe são tratados pela conexão")
         }

@@ -11,6 +11,7 @@ use iced::widget::{button, canvas, column, container, row, text};
 use iced::{Element, Length, Point, Rectangle, Renderer, Size, Task, mouse};
 
 use crate::domain::timeline_view::{self, SegmentSpan, Span};
+use crate::ipc::client::IpcClient;
 use crate::ipc::protocol::{HistoryEvent, Request, Response, SegmentInfo, WireBox};
 use crate::ui::app::App;
 use crate::ui::bridge::GStreamerBridge;
@@ -385,6 +386,7 @@ pub(crate) fn dir_holding(
 
 /// A resposta de `History`.
 pub fn on_history(app: &mut App, result: Result<Response, String>) {
+    let remote_daemon = RemoteFiles::of(app).is_some();
     let Some(v) = app.recordings.as_mut() else {
         return;
     };
@@ -405,6 +407,7 @@ pub fn on_history(app: &mut App, result: Result<Response, String>) {
                 .find(|s| s.ts_end.is_some())
                 .map(|s| s.file.clone());
             if let Some(file) = sample
+                && !remote_daemon
                 && !app.recordings_dir.join(&file).is_file()
                 && let Some(found) = dir_holding(&file, &app.recordings_dir, &candidate_dirs())
                 && found != app.recordings_dir
@@ -512,6 +515,18 @@ pub fn on_protected(
 /// A resposta de `ExportClip`.
 pub fn on_exported(app: &mut App, result: Result<Response, String>) {
     match result {
+        Ok(Response::Exported { file, .. }) if RemoteFiles::of(app).is_some() => {
+            // O clipe ficou na máquina do daemon: baixa para a pasta de exportações da janela.
+            let Some(remote) = RemoteFiles::of(app) else {
+                return;
+            };
+            super::update::toast(app, t("Baixando o clipe do daemon…"));
+            let (sink, dir) = (app.downloads.clone(), app.recordings_dir.join("exports"));
+            std::thread::spawn(move || {
+                let result = download_clip(&remote, &file, &dir);
+                sink.lock().unwrap_or_else(|e| e.into_inner()).push(result);
+            });
+        }
         Ok(Response::Exported { file, bytes }) => {
             let path = app.recordings_dir.join(&file);
             super::update::toast_open_dir(
@@ -572,24 +587,98 @@ fn click(app: &mut App, lane: usize, t_ms: i64) {
     play(app, camera, segment, at);
 }
 
-/// Abre `segment` numa nova bridge, no ponto `at_ms` (Unix ms). Não mexe na vista.
+/// Os vídeos de um daemon em **outra máquina** (conexão `tcp://`): o daemon os serve por HTTP e a janela
+/// pede, pelo canal de controle, uma URL assinada de cada arquivo.
+#[derive(Clone)]
+pub struct RemoteFiles {
+    target: PathBuf,
+    token: Option<String>,
+}
+
+impl RemoteFiles {
+    /// `Some` quando a janela fala com o daemon pela rede.
+    pub fn of(app: &App) -> Option<Self> {
+        crate::ipc::client::tcp_address(&app.daemon.socket)?;
+        Some(Self {
+            target: app.daemon.socket.clone(),
+            token: app.daemon_token.clone(),
+        })
+    }
+
+    /// `http://host:porta/f/arquivo?exp=…&sig=…`. Abre uma conexão curta só para isto (a do heartbeat
+    /// é de outra thread).
+    pub fn url(&self, file: &str) -> Result<String, String> {
+        let host = crate::ipc::client::tcp_address(&self.target)
+            .and_then(|a| a.rsplit_once(':').map(|(h, _)| h.to_string()))
+            .ok_or(t("endereço do daemon sem host"))?;
+        let mut c = IpcClient::connect_target(&self.target, self.token.as_deref())
+            .map_err(|e| e.to_string())?;
+        match c.request_timeout(
+            &Request::FileUrl { file: file.into() },
+            std::time::Duration::from_secs(5),
+        )? {
+            Response::FileUrl { port, path } => Ok(format!("http://{host}:{port}{path}")),
+            Response::Error { message } => Err(message),
+            other => Err(format!("resposta inesperada: {other:?}")),
+        }
+    }
+}
+
+/// Baixa o clipe exportado do daemon para `dir` (numa thread; o resultado vai para `App.downloads`).
+fn download_clip(
+    remote: &RemoteFiles,
+    file: &str,
+    dir: &std::path::Path,
+) -> Result<PathBuf, String> {
+    let url = remote.url(file)?;
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let name = std::path::Path::new(file)
+        .file_name()
+        .ok_or(t("nome de arquivo inválido"))?;
+    let dest = dir.join(name);
+    let part = dest.with_extension("part");
+    let status = std::process::Command::new("curl")
+        .args(["-fsS", "--max-time", "3600", "-o"])
+        .arg(&part)
+        .arg(&url)
+        .status()
+        .map_err(|e| format!("curl: {e}"))?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&part);
+        return Err(format!("o download falhou (curl {status})"));
+    }
+    std::fs::rename(&part, &dest).map_err(|e| e.to_string())?;
+    Ok(dest)
+}
+
+/// Abre `segment` numa nova bridge, no ponto `at_ms` (Unix ms). Não mexe na vista. Com `remote`, o
+/// vídeo vem do daemon por HTTP; senão, do arquivo na pasta de gravações da janela.
 fn open_player(
     recordings_dir: &std::path::Path,
+    remote: Option<&RemoteFiles>,
     camera: String,
     segment: SegmentInfo,
     at_ms: i64,
 ) -> Result<Player, String> {
-    let path = recordings_dir.join(&segment.file);
-    if !path.exists() {
-        return Err(tf(
-            "Arquivo não encontrado: {}. Ajuste [recording] dir da janela para a pasta de gravações do daemon",
-            &[&path.display()],
-        ));
-    }
+    let source = match remote {
+        Some(r) => r
+            .url(&segment.file)
+            .map_err(|e| tf("O daemon não entregou o vídeo: {}", &[&e]))?,
+        None => {
+            let path = recordings_dir.join(&segment.file);
+            if !path.exists() {
+                return Err(tf(
+                    "Arquivo não encontrado: {}. Ajuste [recording] dir da janela para a pasta de gravações do daemon",
+                    &[&path.display()],
+                ));
+            }
+            path.to_string_lossy().into_owned()
+        }
+    };
     let mut bridge =
         GStreamerBridge::new(640, 360).map_err(|e| tf("Não consegui abrir o player: {}", &[&e]))?;
     bridge
-        .start_file(&path.to_string_lossy())
+        .start_file(&source)
         .map_err(|e| tf("Não consegui abrir a gravação: {}", &[&e]))?;
     let bridge = Arc::new(Mutex::new(bridge));
     let video = VideoWidget::new(bridge.clone());
@@ -614,7 +703,14 @@ fn stop_player(p: Player) {
 /// um canal de comparação (a comparação não se perde ao clicar em outra faixa), e a câmera
 /// clicada deixa de ser seguidora.
 fn play(app: &mut App, camera: String, segment: SegmentInfo, at_ms: i64) {
-    let opened = open_player(&app.recordings_dir, camera.clone(), segment, at_ms);
+    let remote = RemoteFiles::of(app);
+    let opened = open_player(
+        &app.recordings_dir,
+        remote.as_ref(),
+        camera.clone(),
+        segment,
+        at_ms,
+    );
     let player = match opened {
         Ok(p) => p,
         Err(e) => {
@@ -691,6 +787,7 @@ fn toggle_compare(app: &mut App, camera: String) {
 fn sync_followers(app: &mut App) {
     let now = now_ms();
     let dir = app.recordings_dir.clone();
+    let remote = RemoteFiles::of(app);
     let Some(v) = app.recordings.as_mut() else {
         return;
     };
@@ -797,7 +894,7 @@ fn sync_followers(app: &mut App) {
                 }
                 let segment = v.segments[spans[index].0].clone();
                 let at = segment.ts_start + offset_ms as i64;
-                match open_player(&dir, f.camera.clone(), segment, at) {
+                match open_player(&dir, remote.as_ref(), f.camera.clone(), segment, at) {
                     Ok(mut p) => {
                         log::debug!("follower {} opened {}", f.camera, p.segment.file);
                         // Entra com o mesmo estado do principal (pausa, velocidade).
@@ -910,6 +1007,18 @@ fn refresh_if_due(app: &mut App) {
 
 /// A cada tick: conclui um seek pendente e passa ao trecho seguinte quando um acaba.
 pub fn tick(app: &mut App) {
+    let finished: Vec<_> =
+        std::mem::take(&mut *app.downloads.lock().unwrap_or_else(|e| e.into_inner()));
+    for result in finished {
+        match result {
+            Ok(path) => super::update::toast_open_dir(
+                app,
+                tf("Clipe baixado: {}", &[&path.display()]),
+                path.parent().map(PathBuf::from),
+            ),
+            Err(e) => super::update::toast(app, tf("Não consegui baixar o clipe: {}", &[&e])),
+        }
+    }
     refresh_if_due(app);
     let mut next: Option<(String, SegmentInfo)> = None;
     if let Some(v) = app.recordings.as_mut()

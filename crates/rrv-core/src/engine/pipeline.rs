@@ -1547,8 +1547,15 @@ impl GStreamerBridge {
     pub fn start_file(&mut self, path: &str) -> Result<(), String> {
         self.stop();
 
+        // Um arquivo local, ou uma URL `http(s)://` do daemon em outra máquina (com `Range`, o
+        // `souphttpsrc` deixa o player pular no meio do arquivo sem baixá-lo todo).
+        let source = if path.starts_with("http://") || path.starts_with("https://") {
+            "souphttpsrc is-live=false"
+        } else {
+            "filesrc"
+        };
         let pipeline_str = format!(
-            "filesrc location={} \
+            "{source} location={} \
              ! decodebin name={} \
              ! {} \
              ! videoconvert name=converter \

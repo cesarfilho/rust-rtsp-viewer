@@ -38,6 +38,10 @@ pub enum Request {
         camera: usize,
         zones: Vec<MotionZoneFile>,
     },
+    /// A URL (assinada, de curta duração) de um arquivo gravado, relativo à pasta de gravações: o player da
+    /// janela a abre quando o daemon está em outra máquina. Só vale se o daemon serve arquivos
+    /// (`[daemon] listen`).
+    FileUrl { file: String },
     /// Segmentos gravados e eventos num intervalo (Unix ms). `camera` é o *nome*
     /// da câmera; sem ele, todas.
     History {
@@ -85,6 +89,11 @@ pub enum Response {
         /// Caminho do clipe relativo à pasta de gravações.
         file: String,
         bytes: u64,
+    },
+    /// A porta HTTP do daemon e o `caminho?exp=…&sig=…` do arquivo: a URL é `http://<host do daemon>:<porta><caminho>`.
+    FileUrl {
+        port: u16,
+        path: String,
     },
     Subscribed,
     Ok,

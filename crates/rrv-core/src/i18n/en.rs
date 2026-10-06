@@ -550,4 +550,27 @@ pub const EN: &[(&str, &str)] = &[
         "Paste this snippet into your config.toml and restart the window:",
     ),
     ("Copiar trecho", "Copy snippet"),
+    // vídeos de um daemon em outra máquina (recordings.rs)
+    (
+        "O daemon não entregou o vídeo: {}",
+        "The daemon did not deliver the video: {}",
+    ),
+    (
+        "Baixando o clipe do daemon…",
+        "Downloading the clip from the daemon…",
+    ),
+    ("Clipe baixado: {}", "Clip downloaded: {}"),
+    (
+        "Não consegui baixar o clipe: {}",
+        "Could not download the clip: {}",
+    ),
+    (
+        "O daemon pela rede recusou o acesso: confira o token (RRV_TOKEN ou o segredo rrv_token).",
+        "The daemon over the network refused access: check the token (RRV_TOKEN or the rrv_token secret).",
+    ),
+    (
+        "endereço do daemon sem host",
+        "daemon address without a host",
+    ),
+    ("nome de arquivo inválido", "invalid file name"),
 ];

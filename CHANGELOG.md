@@ -4,6 +4,15 @@ Todas as mudanças notáveis neste projeto serão documentadas neste arquivo.
 
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
+## [Não lançado]
+
+### ✨ Adicionado
+
+- **A janela em outra máquina, pela LAN (IP)**: o daemon escuta em TCP (`[daemon] listen`) e a janela / `rrvctl` conectam com
+  `tcp://host:porta` e um token (desafio-resposta HMAC-SHA256; o token não trafega). O daemon serve os vídeos gravados por HTTP
+  (`Range`, URLs assinadas e curtas) e a janela baixa os clipes exportados. **O tráfego não é criptografado**: só numa LAN de
+  confiança ou por VPN.
+
 ## [0.10.0] - 2026-10-06
 
 Detecção de objetos, ONVIF, chaveiro, idiomas e o vídeo na GPU (NV12), sobre o iced 0.14.

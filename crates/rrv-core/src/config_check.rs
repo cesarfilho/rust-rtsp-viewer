@@ -228,6 +228,14 @@ pub fn validate(config: &Config) -> Vec<Issue> {
                 }
             }
         }
+        if let Some(f) = &d.files_listen
+            && f.parse::<std::net::SocketAddr>().is_err()
+        {
+            issues.push(Issue::error(
+                "daemon.files_listen",
+                format!("'{f}' não é um endereço IP:porta"),
+            ));
+        }
         if let Some(a) = &d.address
             && let Some(hostport) = a.strip_prefix(crate::ipc::client::TCP_PREFIX)
         {

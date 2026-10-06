@@ -2625,6 +2625,7 @@ mod tests {
 
     #[test]
     fn clicking_inside_the_playing_segment_seeks_instead_of_reopening_it() {
+        let _media = crate::ui::test_support::media_gpu_lock();
         let mut app = test_app();
         connected(&mut app, false);
         let dir = std::env::temp_dir().join(format!("rrv-ui-drag-{}", std::process::id()));
@@ -2730,7 +2731,15 @@ mod tests {
     }
 
     /// Duas câmeras (Portão e Garagem) com um arquivo de 3 s cada, na pasta de gravações.
-    fn two_camera_app(tag: &str) -> (App, std::path::PathBuf, i64) {
+    fn two_camera_app(
+        tag: &str,
+    ) -> (
+        App,
+        std::path::PathBuf,
+        i64,
+        std::sync::MutexGuard<'static, ()>,
+    ) {
+        let media = crate::ui::test_support::media_gpu_lock();
         let mut app = test_app();
         connected(&mut app, false);
         app.daemon.cameras.push(info("Garagem", false));
@@ -2756,12 +2765,12 @@ mod tests {
                 seg_for(2, "Garagem", start + 1_000, start + 4_000, "garagem.mkv"),
             ])),
         );
-        (app, dir, start)
+        (app, dir, start, media)
     }
 
     #[test]
     fn a_follower_channel_opens_the_matching_segment_and_reports_a_gap() {
-        let (mut app, dir, start) = two_camera_app("follow");
+        let (mut app, dir, start, _media) = two_camera_app("follow");
         // principal: Portão em +2 s; liga a comparação com a Garagem
         let _ = update(
             &mut app,
@@ -2808,11 +2817,22 @@ mod tests {
                 t_ms: start + 2_500,
             }),
         );
-        super::super::recordings::tick(&mut app);
+        // Abrir um arquivo é do GStreamer; com a máquina carregada pode levar mais de um tick (e a
+        // tentativa seguinte espera um pouco): espera a reabertura em vez de exigi-la no primeiro tick.
+        let end = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < end
+            && app.recordings.as_ref().unwrap().followers[0]
+                .player
+                .is_none()
+        {
+            super::super::recordings::tick(&mut app);
+            std::thread::sleep(Duration::from_millis(100));
+        }
         assert!(
             app.recordings.as_ref().unwrap().followers[0]
                 .player
-                .is_some()
+                .is_some(),
+            "o seguidor não reabriu em 10 s"
         );
         let _ = update(&mut app, Message::Recordings(RecMsg::Close));
         let _ = std::fs::remove_dir_all(&dir);
@@ -2820,7 +2840,7 @@ mod tests {
 
     #[test]
     fn controls_reach_every_channel_and_a_new_follower_inherits_them() {
-        let (mut app, dir, start) = two_camera_app("controls");
+        let (mut app, dir, start, _media) = two_camera_app("controls");
         let _ = update(
             &mut app,
             Message::Recordings(RecMsg::Clicked {
@@ -2849,7 +2869,7 @@ mod tests {
 
     #[test]
     fn clicking_a_followers_lane_makes_it_the_main_and_keeps_the_comparison() {
-        let (mut app, dir, start) = two_camera_app("swap");
+        let (mut app, dir, start, _media) = two_camera_app("swap");
         let _ = update(
             &mut app,
             Message::Recordings(RecMsg::Clicked {
@@ -2901,7 +2921,7 @@ mod tests {
 
     #[test]
     fn a_follower_with_a_missing_file_says_so_and_does_not_hammer_the_disk() {
-        let (mut app, dir, start) = two_camera_app("missing");
+        let (mut app, dir, start, _media) = two_camera_app("missing");
         std::fs::remove_file(dir.join("garagem.mkv")).unwrap();
         let _ = update(
             &mut app,

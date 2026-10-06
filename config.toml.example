@@ -185,6 +185,17 @@ label = "Rio Jardim Sofia"
 # (cada detecção vira um evento "detection" no histórico: rótulo, confiança, caixa e zona;
 #  `rrvctl history --label person` filtra; avisos e webhook seguem [notifications]/[webhook])
 
+# ── A janela em outra máquina (rede) ─────────────────────────────────────────
+# O daemon (que grava) pode ficar numa máquina e a janela em outra, pela LAN. O canal é TCP com um
+# token compartilhado (a resposta a um desafio é provada, o token nunca trafega). ATENÇÃO: o tráfego
+# NÃO é criptografado (nomes das câmeras, eventos, os vídeos gravados): só numa LAN de confiança, ou por VPN.
+# Gere o token (16+ caracteres) e guarde-o como segredo, nunca aqui em texto:
+#   openssl rand -hex 24 | rrvctl secret set rrv_token     # na janela; no daemon, o arquivo secrets/rrv_token
+# [daemon]
+# listen  = "0.0.0.0:7878"            # DAEMON: onde escutar (a porta + 1, 7879, serve os vídeos gravados)
+# token   = "${rrv_token}"
+# address = "tcp://192.168.1.10:7878" # JANELA: onde está o daemon (ou `--daemon tcp://…`)
+
 # ── MQTT / Home Assistant (só o daemon) ──────────────────────────────────────
 # Publica o estado de cada câmera (conectada, movimento, gravando, objetos vistos) e os eventos, e se
 # anuncia ao Home Assistant pela descoberta automática: as câmeras aparecem como dispositivos, com

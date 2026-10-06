@@ -325,10 +325,19 @@ impl DaemonState {
                 .detail
                 .clone()
                 .unwrap_or_else(|| t("A versão do daemon não combina com a da janela.").into()),
+            // pela rede o problema é o token, e o link diz qual dos dois (faltou ou foi recusado)
+            Mode::NoPermission if self.over_network() => self.detail.clone().unwrap_or_else(|| {
+                t("O daemon pela rede recusou o acesso: confira o token (RRV_TOKEN ou o segredo rrv_token).").into()
+            }),
             Mode::NoPermission => {
                 t("Sem permissão para o socket do daemon (é de outro usuário?).").into()
             }
         }
+    }
+
+    /// A conexão é com um daemon em outra máquina (`tcp://host:porta`)?
+    fn over_network(&self) -> bool {
+        crate::ipc::client::tcp_address(&self.socket).is_some()
     }
 
     /// ` (motivo)` quando o link disse por que perdeu o contato (ex.: o caminho do
@@ -354,6 +363,10 @@ impl DaemonState {
             Mode::Incompatible => Some(Banner {
                 tone: Tone::Error,
                 text: t("A janela e o daemon falam versões diferentes do protocolo. Atualize um dos dois.").into(),
+            }),
+            Mode::NoPermission if self.over_network() => Some(Banner {
+                tone: Tone::Error,
+                text: self.summary(),
             }),
             Mode::NoPermission => Some(Banner {
                 tone: Tone::Error,
@@ -640,5 +653,23 @@ mod tests {
         })
         .collect();
         assert_eq!(labels.len(), 6);
+    }
+
+    #[test]
+    fn a_refused_token_over_the_network_names_the_token_not_the_socket() {
+        let mut s = DaemonState::connecting(PathBuf::from("tcp://192.168.1.10:7878"));
+        s.apply(LinkEvent::NoPermission {
+            message: "o daemon em 192.168.1.10:7878 recusou o token".into(),
+        });
+        assert_eq!(s.mode, Mode::NoPermission);
+        let banner = s.banner().unwrap().text;
+        assert!(banner.contains("recusou o token"), "{banner}");
+        assert!(!banner.contains("socket"), "{banner}");
+        // num socket local continua falando do socket
+        let mut local = DaemonState::connecting(PathBuf::from("/run/user/1000/rrv/rrv.sock"));
+        local.apply(LinkEvent::NoPermission {
+            message: "x".into(),
+        });
+        assert!(local.banner().unwrap().text.contains("socket"));
     }
 }

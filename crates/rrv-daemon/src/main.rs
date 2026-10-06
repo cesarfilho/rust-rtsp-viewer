@@ -190,6 +190,17 @@ fn run(cli: &Cli) -> Result<(), String> {
         log::info!(
             "canal pela rede em {bound} (autenticado por token; o tráfego NÃO é criptografado: só numa LAN de confiança)"
         );
+        // Os vídeos gravados, para o player da janela (URLs assinadas pelo canal acima).
+        let files_addr: std::net::SocketAddr = match &daemon_cfg.files_listen {
+            Some(f) => f
+                .parse()
+                .map_err(|e| format!("[daemon] files_listen '{f}' inválido: {e}"))?,
+            None => std::net::SocketAddr::new(addr.ip(), addr.port().wrapping_add(1)),
+        };
+        let files = server
+            .serve_files(files_addr, token, recording.dir.clone())
+            .map_err(|e| format!("não consegui servir os vídeos em {files_addr}: {e}"))?;
+        log::info!("vídeos servidos por HTTP em {files} (somente leitura, URLs assinadas)");
     }
 
     let stop = Arc::new(AtomicBool::new(false));

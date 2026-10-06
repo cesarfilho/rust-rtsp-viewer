@@ -120,6 +120,10 @@ pub struct App {
     pub recordings: Option<super::recordings::RecordingsView>,
     /// Where this window reads the daemon's recordings (`[recording] dir`).
     pub recordings_dir: std::path::PathBuf,
+    /// O token do daemon pela rede (para pedir a URL dos vídeos).
+    pub daemon_token: Option<String>,
+    /// Clipes baixados do daemon (uma thread por download deposita o resultado aqui; o `tick` o recolhe).
+    pub downloads: std::sync::Arc<std::sync::Mutex<Vec<Result<std::path::PathBuf, String>>>>,
     /// Test aid (`RRV_OPEN_RECORDINGS=1`): open the recordings view as soon as the
     /// daemon connects, so it can be checked without synthetic key presses.
     pub open_recordings_on_connect: bool,
@@ -371,6 +375,8 @@ pub fn new_app(
             zone_edit: None,
             recordings: None,
             recordings_dir: recording_config.dir.clone(),
+            daemon_token: daemon_options.token.clone(),
+            downloads: Default::default(),
             open_recordings_on_connect: std::env::var_os("RRV_OPEN_RECORDINGS").is_some(),
             recordings_autoplay: std::env::var("RRV_OPEN_RECORDINGS")
                 .is_ok_and(|v| v == "play" || v == "compare"),

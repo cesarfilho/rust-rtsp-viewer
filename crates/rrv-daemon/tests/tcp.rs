@@ -153,3 +153,59 @@ fn a_daemon_with_listen_but_a_weak_token_refuses_to_start() {
     }
     assert!(!status.unwrap().success());
 }
+
+#[test]
+fn the_daemon_serves_its_recordings_by_signed_url_to_a_client_on_the_network() {
+    use rrv_core::ipc::protocol::Request;
+    let tmp = TempDir::new("tcp-files");
+    std::fs::create_dir_all(tmp.path("rec/Portao")).unwrap();
+    let data: Vec<u8> = (0..5000u32).map(|i| (i % 199) as u8).collect();
+    std::fs::write(tmp.path("rec/Portao/seg 1.mkv"), &data).unwrap();
+    let port = free_port();
+    let (child, socket) = start(
+        &tmp,
+        &format!("[daemon]\nlisten = \"127.0.0.1:{port}\"\ntoken = \"{TOKEN}\"\n"),
+    );
+    wait_for(&socket);
+    let addr = format!("tcp://127.0.0.1:{port}");
+    let end = Instant::now() + Duration::from_secs(10);
+    let mut client = loop {
+        match IpcClient::connect_target(std::path::Path::new(&addr), Some(TOKEN)) {
+            Ok(c) => break c,
+            Err(e) if Instant::now() > end => panic!("não conectou: {e}"),
+            Err(_) => std::thread::sleep(Duration::from_millis(100)),
+        }
+    };
+    let Response::FileUrl {
+        port: files_port,
+        path,
+    } = client
+        .request(&Request::FileUrl {
+            file: "Portao/seg 1.mkv".into(),
+        })
+        .unwrap()
+    else {
+        panic!("sem FileUrl");
+    };
+    // por padrão, a porta dos vídeos é a do canal + 1
+    assert_eq!(files_port, port + 1);
+    let url = format!("http://127.0.0.1:{files_port}{path}");
+    // o `curl` de verdade, pedindo um trecho
+    let out = Command::new("curl")
+        .args(["-s", "-H", "Range: bytes=100-199", &url])
+        .output()
+        .unwrap();
+    assert_eq!(out.stdout, &data[100..200]);
+    let whole = Command::new("curl").args(["-s", &url]).output().unwrap();
+    assert_eq!(whole.stdout, data);
+    // fora da pasta: o daemon nem assina
+    let Response::Error { .. } = client
+        .request(&Request::FileUrl {
+            file: "../config.toml".into(),
+        })
+        .unwrap()
+    else {
+        panic!("devia recusar");
+    };
+    stop(child);
+}

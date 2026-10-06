@@ -760,8 +760,8 @@ mod tests {
     }
 
     fn gpu() -> Option<Gpu> {
-        static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        // o mesmo bloqueio dos testes que tocam arquivos com o GStreamer (veja `test_support`)
+        let serial = crate::ui::test_support::media_gpu_lock();
         let instance = wgpu::Instance::default();
         let adapter = iced::futures::executor::block_on(instance.request_adapter(
             &wgpu::RequestAdapterOptions {

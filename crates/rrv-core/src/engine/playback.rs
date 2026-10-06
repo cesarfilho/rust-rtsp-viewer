@@ -123,6 +123,60 @@ mod tests {
         false
     }
 
+    /// O que o daemon em outra máquina faz: serve o arquivo por HTTP com URL assinada, e o player da
+    /// janela toca, descobre a duração e pula no meio **sem baixar tudo** (pedidos `Range`).
+    #[test]
+    fn a_recording_plays_and_seeks_over_http_from_the_daemons_file_server() {
+        use crate::ipc::files;
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
+
+        let clip = make_clip("http");
+        let dir = clip.parent().unwrap().to_path_buf();
+        let name = clip.file_name().unwrap().to_string_lossy().into_owned();
+        let stop = Arc::new(AtomicBool::new(false));
+        let serve = files::serve(
+            "127.0.0.1:0".parse().unwrap(),
+            "token-de-teste-0123456789",
+            dir,
+            stop.clone(),
+        )
+        .unwrap();
+        let url = format!(
+            "http://127.0.0.1:{}{}",
+            serve.port,
+            serve.signed_path(&name).unwrap()
+        );
+
+        let mut b = GStreamerBridge::new(320, 240).unwrap();
+        b.start_file(&url).unwrap();
+        assert!(
+            wait_for(|| b.playback_duration_ms().is_some()),
+            "sem duração pela rede"
+        );
+        let dur = b.playback_duration_ms().unwrap();
+        assert!((2800..=3300).contains(&dur), "duração {dur} ms");
+        assert!(wait_for(|| b.read_frame().3 > 0), "nenhum quadro pela rede");
+        b.seek_ms(2000).unwrap();
+        assert!(
+            wait_for(|| b.playback_position_ms().is_some_and(|p| p >= 1900)),
+            "posição depois do seek: {:?}",
+            b.playback_position_ms()
+        );
+        b.stop();
+
+        // uma URL adulterada não toca
+        let mut bad = GStreamerBridge::new(320, 240).unwrap();
+        bad.start_file(&url.replace("sig=", "sig=00")).unwrap();
+        assert!(
+            !wait_for(|| bad.read_frame().3 > 0),
+            "tocou com a assinatura adulterada"
+        );
+        bad.stop();
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = std::fs::remove_file(clip);
+    }
+
     #[test]
     fn the_window_receives_nv12_and_snapshots_still_get_rgba() {
         use crate::engine::bridge::PixelFormat;
