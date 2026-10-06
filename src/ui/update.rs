@@ -1096,7 +1096,7 @@ fn desired_active_cameras(app: &App) -> Vec<usize> {
         if let super::app::ViewFocus::Spotlight(idx) = app.focus {
             hot = idx;
         }
-        let preview = app.preview_cam.map(|(i, _)| i);
+        let preview = app.preview_cam.map(|(i, ..)| i);
         return enabled_all
             .into_iter()
             .filter(|&i| i == hot || Some(i) == preview)
@@ -1196,16 +1196,21 @@ fn sync_active_streams(app: &mut App) {
 /// once the launch queue is empty so it never competes with the main stream.
 fn drive_previews(app: &mut App) {
     const PREVIEW_TIMEOUT_SECS: u64 = 10;
+    /// Each thumbnail's still is regrabbed this often.
+    const PREVIEW_REFRESH: std::time::Duration = std::time::Duration::from_secs(60);
     if app.layout_mode != LayoutMode::Flex || !app.engine.pause_hidden {
         return;
     }
-    if let Some((i, since)) = app.preview_cam {
+    if let Some((i, since, seen)) = app.preview_cam {
+        // A fresh frame: the generation moved past the one the old still had.
         let got = app.engine.bridges[i]
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .has_frame();
+            .read_frame()
+            .3
+            > seen;
         if got || since.elapsed().as_secs() >= PREVIEW_TIMEOUT_SECS {
-            app.preview_done[i] = true;
+            app.preview_done[i] = Some(Instant::now());
             app.preview_cam = None;
             if i != app.flex_main_idx {
                 pause_stream(app, i);
@@ -1219,14 +1224,15 @@ fn drive_previews(app: &mut App) {
     let next = (0..app.engine.bridges.len()).find(|&i| {
         app.engine.camera_enabled[i]
             && !app.engine.active_stream[i]
-            && !app.preview_done[i]
-            && !app.engine.bridges[i]
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .has_frame()
+            && app.preview_done[i].is_none_or(|at| at.elapsed() >= PREVIEW_REFRESH)
     });
     if let Some(i) = next {
-        app.preview_cam = Some((i, Instant::now()));
+        let seen = app.engine.bridges[i]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .read_frame()
+            .3;
+        app.preview_cam = Some((i, Instant::now(), seen));
         start_stream(app, i);
         app.engine.next_start_at = Instant::now() + app.engine.stagger;
     }

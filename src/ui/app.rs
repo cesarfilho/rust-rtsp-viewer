@@ -73,10 +73,10 @@ pub struct App {
     /// or camera pick.
     pub interaction_pause_until: Option<Instant>,
     /// Camera briefly connected only to grab one preview frame for the flex
-    /// thumbnail strip, and when it started.
-    pub preview_cam: Option<(usize, Instant)>,
+    /// thumbnail strip, when it started and the frame generation it must beat.
+    pub preview_cam: Option<(usize, Instant, u64)>,
     /// Cameras whose preview attempt is over (frame grabbed or timed out).
-    pub preview_done: Vec<bool>,
+    pub preview_done: Vec<Option<Instant>>,
     pub is_recording: bool,
     pub audio_states: Vec<AudioState>,
     pub audio_pipelines: Vec<Rc<RefCell<Option<gstreamer::Pipeline>>>>,
@@ -346,7 +346,7 @@ pub fn new_app(
             rotate_last_advance: Instant::now(),
             interaction_pause_until: None,
             preview_cam: None,
-            preview_done: vec![false; count],
+            preview_done: vec![None; count],
             is_recording: false,
             audio_states: vec![AudioState::Muted; count],
             audio_pipelines,

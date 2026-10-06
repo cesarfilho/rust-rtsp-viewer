@@ -354,33 +354,36 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
         };
 
         // Only the main camera streams in flex; the others show one grabbed frame.
+        // The main camera's own thumbnail stays a label: one video id drawn twice in a
+        // frame shares one GPU rect, so the live picture would land only in the thumbnail.
         let has_frame = app.engine.bridges[i]
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .has_frame();
-        let thumb_pic: Element<'_, Message> =
-            if has_frame || app.engine.active_stream.get(i).copied().unwrap_or(false) {
-                app.videos[i]
-                    .view()
-                    .map(move |_| Message::FlexMainSelected(i))
-            } else {
-                let name = app
-                    .sidebar
-                    .cameras
-                    .get(i)
-                    .map(|c| c.name.clone())
-                    .unwrap_or_default();
-                iced::widget::container(
-                    iced::widget::text(name)
-                        .size(Theme::TEXT_CAPTION)
-                        .color(Theme::color_from_hex(colors.text_secondary)),
-                )
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .center_x(Length::Fill)
-                .center_y(Length::Fill)
-                .into()
-            };
+        let thumb_pic: Element<'_, Message> = if !is_selected
+            && (has_frame || app.engine.active_stream.get(i).copied().unwrap_or(false))
+        {
+            app.videos[i]
+                .view()
+                .map(move |_| Message::FlexMainSelected(i))
+        } else {
+            let name = app
+                .sidebar
+                .cameras
+                .get(i)
+                .map(|c| c.name.clone())
+                .unwrap_or_default();
+            iced::widget::container(
+                iced::widget::text(name)
+                    .size(Theme::TEXT_CAPTION)
+                    .color(Theme::color_from_hex(colors.text_secondary)),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .into()
+        };
         let thumb_cell = iced::widget::container(thumb_pic)
             .width(160.0)
             .height(90.0)
