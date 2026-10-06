@@ -307,7 +307,7 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
                 app.focus = super::app::ViewFocus::Normal;
             }
             reveal_chrome(app);
-            iced::window::get_latest().and_then(move |id| iced::window::change_mode(id, new_mode))
+            iced::window::latest().and_then(move |id| iced::window::set_mode(id, new_mode))
         }
         Message::ExitFullscreen => {
             if app.is_fullscreen {
@@ -315,8 +315,8 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
                 if app.focus == super::app::ViewFocus::Immersive {
                     app.focus = super::app::ViewFocus::Normal;
                 }
-                return iced::window::get_latest()
-                    .and_then(|id| iced::window::change_mode(id, iced::window::Mode::Windowed));
+                return iced::window::latest()
+                    .and_then(|id| iced::window::set_mode(id, iced::window::Mode::Windowed));
             }
             Task::none()
         }
@@ -442,7 +442,7 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
         },
         Message::Quit => {
             shutdown(app);
-            iced::window::get_latest().and_then(iced::window::close)
+            iced::window::latest().and_then(iced::window::close)
         }
         Message::ShowHelp => {
             app.show_help = !app.show_help;
@@ -466,11 +466,11 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
             app.search_focused = true;
             app.sidebar.visible = true;
             app.sidebar.active_view = sidebar::SidebarView::Cameras;
-            iced::widget::text_input::focus(sidebar::cameras::search_input_id())
+            iced::widget::operation::focus(sidebar::cameras::search_input_id())
         }
         Message::BlurSearch => {
             app.search_focused = false;
-            iced::widget::text_input::focus(iced::widget::text_input::Id::new(BLUR_TARGET))
+            iced::widget::operation::focus(iced::widget::Id::new(BLUR_TARGET))
         }
     }
 }
@@ -1482,7 +1482,7 @@ fn png_compression(quality: u8) -> image::codecs::png::CompressionType {
 /// thread so the encode itself can run on a background task.
 struct SnapshotJob {
     /// Reference-counted RGBA pixels shared with the appsink — no copy.
-    rgba: iced::advanced::image::Bytes,
+    rgba: bytes::Bytes,
     width: u32,
     height: u32,
     dir: std::path::PathBuf,

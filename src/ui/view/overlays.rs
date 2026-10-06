@@ -84,7 +84,7 @@ pub fn help_overlay<'a>(app: &App, main_content: Element<'a, Message>) -> Elemen
 
     let help_content = iced::widget::column![
         iced::widget::text("Atalhos de teclado").color(primary).size(16),
-        iced::widget::horizontal_rule(1),
+        iced::widget::rule::horizontal(1),
         row("h", "Modo imersivo (esconde toda a interface)"),
         row("f / Enter", "Spotlight da câmera selecionada"),
         row("\u{2190} / \u{2192}", "Câmera anterior / próxima (no spotlight)"),
@@ -106,7 +106,7 @@ pub fn help_overlay<'a>(app: &App, main_content: Element<'a, Message>) -> Elemen
         row("Esc", "Voltar: ajuda \u{2192} spotlight \u{2192} imersivo \u{2192} menu \u{2192} busca"),
         row("?", "Mostrar / ocultar esta ajuda"),
         row("Ctrl+Q", "Sair"),
-        iced::widget::horizontal_rule(1),
+        iced::widget::rule::horizontal(1),
         iced::widget::text("Clique para selecionar \u{00B7} duplo-clique para spotlight \u{00B7} clique direito para ações")
             .color(secondary)
             .size(11),

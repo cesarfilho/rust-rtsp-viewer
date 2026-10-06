@@ -89,7 +89,7 @@ pub fn menu(app: &App) -> Element<'_, Message> {
             .padding(iced::Padding::from([0, 10])),
         );
     }
-    col = col.push(container(iced::widget::horizontal_rule(1)).padding([4, 0]));
+    col = col.push(container(iced::widget::rule::horizontal(1)).padding([4, 0]));
     if trouble {
         col = col.push(menu_row(
             theme,
@@ -201,7 +201,7 @@ pub fn modal<'a>(app: &'a App, modal: Modal) -> Element<'a, Message> {
             .color(hex(colors.text_secondary))
             .width(360),
         row![
-            iced::widget::horizontal_space(),
+            iced::widget::space::horizontal(),
             button(text("Cancelar").size(Theme::TEXT_BODY))
                 .on_press(Message::ModalCancel)
                 .padding([6, 14])

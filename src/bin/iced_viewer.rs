@@ -27,7 +27,23 @@ struct Cli {
     daemon: Option<std::path::PathBuf>,
 }
 
+/// Draw the UI on the integrated GPU unless the user chose otherwise.
+///
+/// With iced 0.14 the discrete NVIDIA adapter (Vulkan, Wayland) shows every
+/// colour too light, as if sRGB were applied twice (`#1b1b20` comes out as
+/// `#595961`); the Intel iGPU renders them correctly. It also leaves the
+/// discrete GPU free for decoding. `WGPU_POWER_PREF` set in the environment
+/// still wins. See `docs/spike-0.5-gstreamer-iced.md`.
+fn prefer_integrated_gpu() {
+    if std::env::var_os("WGPU_POWER_PREF").is_none() {
+        // SAFETY: called first thing in `main`, before any thread exists, so
+        // nothing can be reading the environment concurrently.
+        unsafe { std::env::set_var("WGPU_POWER_PREF", "low") };
+    }
+}
+
 fn main() -> ExitCode {
+    prefer_integrated_gpu();
     env_logger::init();
     let cli = Cli::parse();
 

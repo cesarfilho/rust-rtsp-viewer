@@ -1,4 +1,4 @@
-use iced::widget::{column, horizontal_rule, row, rule, scrollable, text};
+use iced::widget::{column, row, rule, scrollable, text};
 use iced::{Element, Length};
 
 use crate::domain::diagnostics::Severity;
@@ -7,10 +7,10 @@ use crate::ui::theme::{self, ThemeColors};
 use super::types::{Message, Sidebar};
 
 fn make_separator(border_color: iced::Color) -> Element<'static, Message> {
-    horizontal_rule(1)
+    rule::horizontal(1)
         .style(move |_: &iced::Theme| rule::Style {
             color: border_color,
-            width: 1,
+            snap: true,
             radius: 0.0.into(),
             fill_mode: rule::FillMode::Full,
         })

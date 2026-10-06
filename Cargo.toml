@@ -32,8 +32,9 @@ log = "0.4"
 env_logger = "0.10"
 clap = { version = "4", features = ["derive", "env"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
-iced = { version = "0.13", features = ["image", "tokio", "advanced", "canvas"] }
+iced = { version = "0.14", features = ["image", "tokio", "advanced", "canvas"] }
 chrono = { version = "0.4", features = ["clock"] }
+bytes = "1"
 
 [[bin]]
 name = "rust-rtsp-viewer"

@@ -283,7 +283,7 @@ pub fn name_chip(
     if let Some(f) = fps {
         r = r.push(
             text(format!("· {:.0} fps", f))
-                .size(Theme::TEXT_CAPTION - 1)
+                .size(Theme::TEXT_CAPTION - 1.0)
                 .color(iced::Color::from_rgb(0.72, 0.72, 0.76)),
         );
     }
@@ -363,7 +363,7 @@ pub fn placeholder_cell(
                 .size(Theme::TEXT_CAPTION)
                 .color(Theme::color_from_hex(colors.text_tertiary)),
             text(detail.unwrap_or_default())
-                .size(Theme::TEXT_CAPTION - 1)
+                .size(Theme::TEXT_CAPTION - 1.0)
                 .color(Theme::color_from_hex(colors.text_tertiary)),
         ]
         .spacing(Theme::SPACE_2)

@@ -364,6 +364,6 @@ pub fn new_app(
         // iced 0.13's `window::Settings` has no "start maximized" flag, so ask
         // the compositor to maximize the window as soon as it exists. `size`
         // above stays as the restore size for when the user un-maximizes.
-        iced::window::get_latest().and_then(|id| iced::window::maximize(id, true)),
+        iced::window::latest().and_then(|id| iced::window::maximize(id, true)),
     )
 }

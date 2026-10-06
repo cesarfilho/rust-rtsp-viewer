@@ -45,10 +45,10 @@ impl Theme {
 
     /// Type scale. One ramp for the whole app so `size(8)` / `size(14)` magic
     /// numbers stop drifting apart.
-    pub const TEXT_CAPTION: u16 = 11;
-    pub const TEXT_BODY: u16 = 12;
-    pub const TEXT_EMPHASIS: u16 = 13;
-    pub const TEXT_TITLE: u16 = 15;
+    pub const TEXT_CAPTION: f32 = 11.0;
+    pub const TEXT_BODY: f32 = 12.0;
+    pub const TEXT_EMPHASIS: f32 = 13.0;
+    pub const TEXT_TITLE: f32 = 15.0;
 
     /// Spacing scale (px). Use for `spacing(..)` / `padding(..)` instead of ad-hoc values.
     pub const SPACE_1: f32 = 4.0;
@@ -229,6 +229,7 @@ impl Theme {
             text: Self::color_from_hex(c.text),
             primary: Self::color_from_hex(c.accent_blue),
             success: Self::color_from_hex(c.accent_green),
+            warning: Self::color_from_hex(c.accent_amber),
             danger: Self::color_from_hex(c.accent_red),
         }
     }

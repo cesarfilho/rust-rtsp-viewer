@@ -12,8 +12,12 @@ pub fn subscription(_state: &App) -> iced::Subscription<Message> {
     // current focus state is known. Capturing state in this closure would not
     // work: iced identifies a subscription by the closure's type, so a
     // captured flag would go stale the moment it changed.
-    let keyboard =
-        iced::keyboard::on_key_press(|key, modifiers| Some(Message::KeyPressed(key, modifiers)));
+    let keyboard = iced::keyboard::listen().filter_map(|event| match event {
+        iced::keyboard::Event::KeyPressed { key, modifiers, .. } => {
+            Some(Message::KeyPressed(key, modifiers))
+        }
+        _ => None,
+    });
 
     let frame_tick =
         iced::time::every(std::time::Duration::from_millis(TICK_MS)).map(|_| Message::FrameUpdate);

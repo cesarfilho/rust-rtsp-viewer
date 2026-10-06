@@ -26,6 +26,7 @@ allow = [
     "0BSD",
     "CC0-1.0",
     "BSL-1.0",
+    "NCSA", # permissiva (tipo BSD); libfuzzer-sys, transitiva de rav1e via iced 0.14 → image
     "Unicode-3.0",
     "AGPL-3.0-or-later", # o próprio crate
 ]

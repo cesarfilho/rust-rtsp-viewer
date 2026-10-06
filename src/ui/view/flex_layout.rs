@@ -64,9 +64,9 @@ pub fn spotlight_view(app: &App, idx: usize) -> Element<'_, Message> {
             iced::widget::text(right)
                 .size(Theme::TEXT_CAPTION)
                 .color(iced::Color::from_rgb(0.7, 0.7, 0.75)),
-            iced::widget::horizontal_space(),
+            iced::widget::space::horizontal(),
             cell_overlay::feature_actions(app, idx),
-            iced::widget::horizontal_space().width(Theme::SPACE_3),
+            iced::widget::space::horizontal().width(Theme::SPACE_3),
             nav_btn("\u{2039}", Message::SpotlightStep(false)),
             nav_btn("\u{203A}", Message::SpotlightStep(true)),
             nav_btn("\u{2715}", Message::ExitFocus),

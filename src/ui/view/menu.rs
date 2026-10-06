@@ -43,7 +43,7 @@ pub(super) fn menu_row<'a>(
         )
         .width(18),
         text(label).size(Theme::TEXT_BODY),
-        iced::widget::horizontal_space(),
+        iced::widget::space::horizontal(),
     ]
     .spacing(Theme::SPACE_2)
     .align_y(iced::Alignment::Center);
@@ -51,7 +51,7 @@ pub(super) fn menu_row<'a>(
         r = r.push(
             container(
                 text(k)
-                    .size(Theme::TEXT_CAPTION - 1)
+                    .size(Theme::TEXT_CAPTION - 1.0)
                     .color(Theme::color_from_hex(colors.text_tertiary)),
             )
             .padding(iced::Padding::from([1, 5]))
@@ -69,7 +69,7 @@ pub(super) fn menu_row<'a>(
 fn section_header(theme: Theme, title: impl Into<String>) -> Element<'static, Message> {
     container(
         text(title.into().to_uppercase())
-            .size(Theme::TEXT_CAPTION - 1)
+            .size(Theme::TEXT_CAPTION - 1.0)
             .color(Theme::color_from_hex(theme.colors().text_tertiary)),
     )
     .padding(iced::Padding {
@@ -174,10 +174,10 @@ fn theme_row(app: &App) -> Element<'_, Message> {
 }
 
 fn hairline(theme: Theme) -> Element<'static, Message> {
-    iced::widget::horizontal_rule(1)
+    iced::widget::rule::horizontal(1)
         .style(move |_: &iced::Theme| iced::widget::rule::Style {
             color: Theme::color_from_hex(theme.colors().border),
-            width: 1,
+            snap: true,
             radius: 0.0.into(),
             fill_mode: iced::widget::rule::FillMode::Full,
         })

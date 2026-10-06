@@ -32,7 +32,7 @@ fn metric<'a>(
         text(label)
             .size(Theme::TEXT_BODY)
             .color(Theme::color_from_hex(colors.text_secondary)),
-        iced::widget::horizontal_space(),
+        iced::widget::space::horizontal(),
         text(value).size(Theme::TEXT_BODY).color(vcolor),
     ]
     .align_y(iced::Alignment::Center)
@@ -43,7 +43,7 @@ fn card<'a>(theme: Theme, title: &'a str, rows: Vec<Element<'a, Message>>) -> El
     let colors = theme.colors();
     let mut col = column![
         text(title)
-            .size(Theme::TEXT_CAPTION - 1)
+            .size(Theme::TEXT_CAPTION - 1.0)
             .color(Theme::color_from_hex(colors.text_tertiary))
     ]
     .spacing(Theme::SPACE_2);
@@ -101,7 +101,7 @@ pub(super) fn info_view(
     };
     let badge = container(
         text(cam.status.label_pt())
-            .size(Theme::TEXT_CAPTION - 1)
+            .size(Theme::TEXT_CAPTION - 1.0)
             .color(Theme::readable_on(status_c)),
     )
     .padding(iced::Padding::from([1, 6]))
@@ -118,7 +118,7 @@ pub(super) fn info_view(
             text(&cam.name)
                 .size(Theme::TEXT_TITLE)
                 .color(Theme::color_from_hex(colors.text)),
-            iced::widget::horizontal_space(),
+            iced::widget::space::horizontal(),
             badge,
         ]
         .align_y(iced::Alignment::Center),
@@ -171,7 +171,7 @@ pub(super) fn info_view(
     };
     let fps_row = row![
         text("FPS").size(Theme::TEXT_BODY).color(secondary),
-        iced::widget::horizontal_space(),
+        iced::widget::space::horizontal(),
         super::sparkline(
             &m.fps_history,
             48.0,

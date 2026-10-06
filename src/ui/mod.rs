@@ -66,25 +66,30 @@ pub fn run(
         ..Default::default()
     };
 
-    iced::application("StreamView", update, view)
-        .window(window)
-        .font(icons::FONT_BYTES)
-        .centered()
-        .theme(|app: &App| app.theme.to_iced())
-        .subscription(subscription)
-        .run_with(move || {
+    iced::application(
+        move || {
             new_app(
-                cameras,
-                recording_config,
-                snapshot_config,
-                audio_config,
-                theme_name,
-                logs_config,
-                groups,
-                view_config,
-                notify_config,
-                motion_config,
-                daemon,
+                cameras.clone(),
+                recording_config.clone(),
+                snapshot_config.clone(),
+                audio_config.clone(),
+                theme_name.clone(),
+                logs_config.clone(),
+                groups.clone(),
+                view_config.clone(),
+                notify_config.clone(),
+                motion_config.clone(),
+                daemon.clone(),
             )
-        })
+        },
+        update,
+        view,
+    )
+    .title("StreamView")
+    .window(window)
+    .font(icons::FONT_BYTES)
+    .centered()
+    .theme(|app: &App| app.theme.to_iced())
+    .subscription(subscription)
+    .run()
 }

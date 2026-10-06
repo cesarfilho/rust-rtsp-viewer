@@ -6,8 +6,8 @@ use crate::ui::theme::{self, ThemeColors};
 use super::types::{CameraInfo, CameraStatus, Message, Sidebar};
 
 /// Stable id for the search field so the `/` shortcut can focus it.
-pub fn search_input_id() -> text_input::Id {
-    text_input::Id::new("sidebar-search")
+pub fn search_input_id() -> iced::widget::Id {
+    iced::widget::Id::new("sidebar-search")
 }
 
 pub(super) fn cameras_view(sidebar: &Sidebar, colors: ThemeColors) -> Element<'_, Message> {
@@ -29,11 +29,11 @@ pub(super) fn cameras_view(sidebar: &Sidebar, colors: ThemeColors) -> Element<'_
             background: iced::Background::Color(surface_color),
             border: iced::Border {
                 color: match status {
-                    iced::widget::text_input::Status::Focused => accent,
+                    iced::widget::text_input::Status::Focused { .. } => accent,
                     _ => border_color,
                 },
                 width: match status {
-                    iced::widget::text_input::Status::Focused => 1.0,
+                    iced::widget::text_input::Status::Focused { .. } => 1.0,
                     _ => 0.5,
                 },
                 radius: theme::Theme::RADIUS_SM.into(),
@@ -144,7 +144,7 @@ pub(super) fn cameras_view(sidebar: &Sidebar, colors: ThemeColors) -> Element<'_
             lines = lines.push(
                 text(cam.status.label_pt())
                     .color(theme::Theme::color_from_hex(colors.accent_amber))
-                    .size(theme::Theme::TEXT_CAPTION - 1),
+                    .size(theme::Theme::TEXT_CAPTION - 1.0),
             );
         }
 
@@ -224,7 +224,7 @@ fn group_chip_row<'a>(sidebar: &'a Sidebar, colors: ThemeColors) -> Option<Eleme
 
     let chip = |label: String, selected: bool, target: Option<usize>| -> Element<'a, Message> {
         let fg = if selected { accent } else { text_secondary };
-        button(text(label).size(theme::Theme::TEXT_CAPTION - 1).color(fg))
+        button(text(label).size(theme::Theme::TEXT_CAPTION - 1.0).color(fg))
             .padding(iced::Padding::from([2, 7]))
             .on_press(Message::GroupSelected(target))
             .style(move |_, status| button::Style {

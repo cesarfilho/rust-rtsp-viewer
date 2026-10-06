@@ -348,7 +348,7 @@ pub fn toolbar(app: &App) -> Element<'_, Message> {
         })
         .into()
     } else {
-        iced::widget::horizontal_space().width(0).into()
+        iced::widget::space::horizontal().width(0).into()
     };
 
     let overflow = pill(
@@ -373,7 +373,7 @@ pub fn toolbar(app: &App) -> Element<'_, Message> {
     .spacing(Theme::SPACE_2)
     .align_y(iced::Alignment::Center);
 
-    let bar = iced::widget::row![left, iced::widget::horizontal_space(), right]
+    let bar = iced::widget::row![left, iced::widget::space::horizontal(), right]
         .padding([4, Theme::SPACE_3 as u16])
         .spacing(Theme::SPACE_2)
         .align_y(iced::Alignment::Center);
@@ -436,7 +436,7 @@ pub fn chrome_rail(app: &App) -> Element<'_, Message> {
                 theme,
             ));
     }
-    r = r.push(iced::widget::horizontal_space()).push(
+    r = r.push(iced::widget::space::horizontal()).push(
         iced::widget::row![
             dot,
             iced::widget::text(format!("{live}/{total}"))

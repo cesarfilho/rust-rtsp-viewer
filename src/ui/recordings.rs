@@ -1051,11 +1051,11 @@ impl canvas::Program<Message> for TimelineProgram<'_> {
     fn update(
         &self,
         dragging: &mut bool,
-        event: canvas::Event,
+        event: &canvas::Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-    ) -> (canvas::event::Status, Option<Message>) {
-        use canvas::event::Status::{Captured, Ignored};
+    ) -> Option<canvas::Action<Message>> {
+        use canvas::Action;
         let plot_w = (bounds.width - GUTTER).max(1.0);
         let lanes = self.view.lanes.len();
         // Where the pointer is on the plot, even a little outside it while dragging.
@@ -1064,55 +1064,51 @@ impl canvas::Program<Message> for TimelineProgram<'_> {
             let lane = ((p.y / LANE_H).max(0.0) as usize).min(lanes.saturating_sub(1));
             (lane, self.view.span.time_at(frac), frac)
         };
-        let clicked = |lane, t_ms| Some(Message::Recordings(RecMsg::Clicked { lane, t_ms }));
+        let clicked = |lane, t_ms| {
+            Some(Action::publish(Message::Recordings(RecMsg::Clicked { lane, t_ms })).and_capture())
+        };
         match event {
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                let Some(pos) = cursor.position_in(bounds) else {
-                    return (Ignored, None);
-                };
+                let pos = cursor.position_in(bounds)?;
                 if pos.x < GUTTER || (pos.y / LANE_H) as usize >= lanes {
-                    return (Ignored, None);
+                    return None;
                 }
                 *dragging = true;
                 let (lane, t_ms, _) = at(pos);
-                (Captured, clicked(lane, t_ms))
+                clicked(lane, t_ms)
             }
             canvas::Event::Mouse(mouse::Event::CursorMoved { .. }) if *dragging => {
-                match cursor.position_from(bounds.position()) {
-                    Some(pos) => {
-                        let (lane, t_ms, _) = at(pos);
-                        (Captured, clicked(lane, t_ms))
-                    }
-                    None => (Ignored, None),
-                }
+                let pos = cursor.position_from(bounds.position())?;
+                let (lane, t_ms, _) = at(pos);
+                clicked(lane, t_ms)
             }
             canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
                 if *dragging =>
             {
                 *dragging = false;
-                (Captured, None)
+                Some(Action::capture())
             }
             canvas::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
-                let Some(pos) = cursor.position_in(bounds) else {
-                    return (Ignored, None);
-                };
+                let pos = cursor.position_in(bounds)?;
                 let y = match delta {
-                    mouse::ScrollDelta::Lines { y, .. } | mouse::ScrollDelta::Pixels { y, .. } => y,
+                    mouse::ScrollDelta::Lines { y, .. } | mouse::ScrollDelta::Pixels { y, .. } => {
+                        *y
+                    }
                 };
                 if y == 0.0 {
-                    return (Ignored, None);
+                    return None;
                 }
                 let (_, _, frac) = at(pos);
                 let factor = if y > 0.0 { 0.8 } else { 1.25 };
-                (
-                    Captured,
-                    Some(Message::Recordings(RecMsg::Zoom {
+                Some(
+                    Action::publish(Message::Recordings(RecMsg::Zoom {
                         factor,
                         anchor: frac,
-                    })),
+                    }))
+                    .and_capture(),
                 )
             }
-            _ => (Ignored, None),
+            _ => None,
         }
     }
 }
@@ -1140,7 +1136,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     let span_hours = (v.span.len() / 3_600_000).max(1);
     let header = row![
         text("Gravações").size(15).color(text_color),
-        iced::widget::horizontal_space(),
+        iced::widget::space::horizontal(),
         pill_button(app, "1 h", RecMsg::SetSpan(1), sel(span_hours == 1)),
         pill_button(app, "6 h", RecMsg::SetSpan(6), sel(span_hours == 6)),
         pill_button(app, "24 h", RecMsg::SetSpan(24), sel(span_hours == 24)),
@@ -1219,7 +1215,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
                 ))
                 .size(12)
                 .color(dim),
-                iced::widget::horizontal_space(),
+                iced::widget::space::horizontal(),
                 pill_button(app, "Início  I", RecMsg::MarkIn, sel(v.mark_in.is_some())),
                 pill_button(app, "Fim  O", RecMsg::MarkOut, sel(v.mark_out.is_some())),
                 pill_button(
@@ -1318,9 +1314,12 @@ fn channels_stage<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Messag
     let mut grid = column![].spacing(4).height(Length::Fill);
     let mut it = tiles.into_iter();
     while let Some(first) = it.next() {
-        let second = it
-            .next()
-            .unwrap_or_else(|| iced::widget::Space::new(Length::Fill, Length::Fill).into());
+        let second = it.next().unwrap_or_else(|| {
+            iced::widget::Space::new()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        });
         grid = grid.push(row![first, second].spacing(4).height(Length::Fill));
     }
     grid.into()
@@ -1335,7 +1334,7 @@ fn compare_row<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message> 
         .filter(|l| Some(l.as_str()) != master)
         .collect();
     if v.player.is_none() || others.is_empty() {
-        return iced::widget::Space::new(Length::Shrink, Length::Shrink).into();
+        return iced::widget::Space::new().into();
     }
     let dim = Theme::color_from_hex(app.theme.colors().text_secondary);
     let mut r = row![text("Comparar:").size(12).color(dim)]
@@ -1415,7 +1414,7 @@ fn events_column<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message
     column![
         row![
             text("Eventos").size(13).color(text_color),
-            iced::widget::horizontal_space(),
+            iced::widget::space::horizontal(),
             pill_button(
                 app,
                 "Só movimento",

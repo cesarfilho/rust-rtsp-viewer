@@ -144,10 +144,10 @@ impl canvas::Program<ZoneEditorMessage> for ZoneEditorProgram {
     fn update(
         &self,
         _state: &mut (),
-        event: canvas::Event,
+        event: &canvas::Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-    ) -> (canvas::event::Status, Option<ZoneEditorMessage>) {
+    ) -> Option<canvas::Action<ZoneEditorMessage>> {
         match event {
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let area = fitted_rect(bounds.size(), self.video_width, self.video_height);
@@ -158,20 +158,23 @@ impl canvas::Program<ZoneEditorMessage> for ZoneEditorProgram {
                         && cursor_pos.distance(normalized_to_pixel(self.temp_vertices[0], area))
                             <= CLOSE_RADIUS
                     {
-                        return (
-                            canvas::event::Status::Captured,
-                            Some(ZoneEditorMessage::CloseRequested),
+                        return Some(
+                            canvas::Action::publish(ZoneEditorMessage::CloseRequested)
+                                .and_capture(),
                         );
                     }
                     let normalized = pixel_to_normalized(cursor_pos, area);
-                    return (
-                        canvas::event::Status::Captured,
-                        Some(ZoneEditorMessage::VertexAdded(normalized.x, normalized.y)),
+                    return Some(
+                        canvas::Action::publish(ZoneEditorMessage::VertexAdded(
+                            normalized.x,
+                            normalized.y,
+                        ))
+                        .and_capture(),
                     );
                 }
-                (canvas::event::Status::Ignored, None)
+                None
             }
-            _ => (canvas::event::Status::Ignored, None),
+            _ => None,
         }
     }
 
