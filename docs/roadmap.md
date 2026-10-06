@@ -1,77 +1,49 @@
 # Roadmap
 
-Baseado em: `docs/gap_analysis.md`, `docs/status.md`, `docs/libraries.md`, `docs/adr/`.
-Revisado em 2026-10-05 (v0.8.0). Legenda: `[x]` feito · `[ ]` aberto.
-Decisões do dono (2026-09-24): **só Linux** (decidido em 2026-10-06; antes: Windows/macOS melhor esforço) · 16 câmeras + GPU NVIDIA · ML é meta principal · app desktop pessoal · licença livre (AGPL-3.0).
-Estimativas **não** foram feitas: exigem spikes e baseline. Cada marco tem critério de saída.
+Revisado em 2026-10-06. Legenda: `[x]` feito · `[ ]` aberto. O **plano executável do que resta** está em
+`docs/plano-restante.md`; o histórico das tarefas está em `docs/plano-de-execucao.md`.
 
-## Decisão em aberto: posicionamento
-A pesquisa de mercado (ver `docs/gap_analysis.md`) mostra que NVRs com IA (Frigate, UniFi,
-Milestone) são maduros e caros de alcançar. Duas direções:
-- **Video wall nativo e leve**, com IA opcional ou consumida de fora (ex.: eventos do Frigate via MQTT).
-- **NVR completo** com detecção própria (M3 e M4 abaixo).
+Decisões do dono: **NVR completo**, que **grava e detecta com a janela fechada** (daemon no Docker) · **só Linux**
+(ADR 0001) · **sem PTZ** · 16 câmeras · IA com o **YOLO da Ultralytics** (AGPL, compatível com a AGPL-3.0 do projeto) ·
+licença livre. Estimativas só existem no plano.
 
-A meta declarada é ML (ADR 0003), então M4 segue no plano, mas vale confirmar antes de investir nele.
+## M0 — Fundação e medição — feito
+- [x] CI (fmt, clippy `-D warnings`, testes, `cargo deny`, MSRV 1.92), LICENSE AGPL-3.0, `rust-toolchain.toml`.
+- [x] Baselines com câmeras reais e sintéticas: 1/4/16 câmeras, CPU × iGPU (`docs/baseline.md`); limite de sessões da Intelbras.
+- [x] GStreamer 0.25 na master. **iced 0.14**: spike pronto, falta o rebase e a validação na tela (plano fase B).
 
-## M0 — Fundação e medição
-- [x] CI em Linux (clippy `-D warnings` + testes). Windows/macOS não são suportados (ADR 0001).
-- [x] LICENSE (AGPL-3.0), `license` e `rust-version` no `Cargo.toml` (ADR 0009; 1.92 desde o GStreamer 0.25).
-- [x] `cargo build && cargo test` registrados: 387 testes passando, clippy limpo.
-- [ ] `cargo fmt --check` no CI; `deny.toml`; `rust-toolchain.toml`.
-- [ ] Rodar `scripts/check_rtsp_sessions.sh` em cada modelo de câmera (limite de sessões, ADR 0008).
-- [ ] Spike: `gstreamer` 0.20→0.25 e `iced` 0.13→0.14 em branch (ver `docs/libraries.md`).
-- [ ] Baseline com `scripts/baseline.sh` (1, 4, 16 câmeras **reais**): CPU, RSS, fps, banda, VRAM.
-  Já existe uma medição de decode em GPU × CPU (`docs/gap_analysis.md`), só com vídeo sintético.
-- [ ] Spikes: `ort` (ms/inferência 320x320 na GTX 1650), gravação direta sem transcode (ADR 0007).
-- **Saída:** baseline com câmeras reais, decisões dos ADRs "Proposta" promovidas ou rejeitadas.
+## M1 — Movimento e zonas — feito
+- [x] Detecção em ramo reduzido, zonas com editor visual (por nome da câmera), filtro de mudança global, notificação com cooldown,
+  gravação por movimento.
 
-## M1 — Movimento + zonas (spec: `docs/specs/motion-zones.md`) — entregue
-- [x] `[motion]` configurável, detecção por diferença de luma (~2 Hz) filtrada por zonas.
-- [x] Editor de zonas visual; zonas por câmera em `zones.toml` (chave = nome da câmera, nunca a URL).
-- [x] Evento Motion, notificação de desktop com cooldown, gravação por movimento com pós-roll.
-- [ ] Detect stream separado (ADR 0005) e `[[cameras.zones]]` no `config.toml` (hoje as zonas vivem no `zones.toml`).
+## M2 — Escala de câmeras — feito, salvo a janela
+- [x] Sub/main stream; decoder visível no Inspector; daemon sem RGBA (CPU −57%); decodificação por iGPU Intel (−47% a mais);
+  limite de threads do decodificador; estresse de 1 h sem vazamento.
+- [ ] **2.3: caminho NV12 + shader na janela** (a janela ainda converte para RGBA) — fase B.
 
-## M2 — Escala de câmeras
-- [x] Sub/main stream por câmera (`sub_url`): grade no sub; spotlight, flex e gravação no principal.
-- [x] Diagnóstico mostra o decoder em uso e se roda em CPU ou GPU; bitrate passa a medir o stream comprimido.
-- [ ] `streaming` (pausa em cena estática) — o módulo existe, falta ligar (`docs/status.md`).
-- [ ] **Decoder por hardware.** Medido: hoje é 100% CPU, e trocar para `nvh264dec` mantendo o caminho RGBA atual
-  **dobra** a CPU. Opções, da mais barata à mais cara:
-  1. `gst-plugin-va` e decodificar na iGPU Intel (deixa a NVIDIA para IA);
-  2. baixar o frame em NV12 e converter em shader (widget wgpu próprio no iced);
-  3. zero-copy (neste notebook híbrido exigiria renderizar na NVIDIA).
-- [x] ~~Encoder por hardware (`hw_encoder`)~~ — removido: a gravação RTSP deixou de reencodar (ADR 0007, plano 3.1).
-- [ ] Áudio usa a URL principal mesmo com a câmera no sub (sessão extra na câmera).
-- **Saída:** 16 câmeras dentro do orçamento de CPU/GPU definido no baseline.
+## M2.5 — O motor sem janela — feito
+- [x] Workspace `rrv-core` / `rrv-daemon`; `Engine`; canal de controle por socket Unix; a janela com o daemon (chip, banner,
+  confirmações); segredos; webhook; Docker + healthcheck; GPU Intel.
+- [ ] 2.5.4 (vídeo do daemon para a janela): adiada, a sessão própria basta.
 
-## M3 — Gravação inteligente e histórico
-- [x] Gravação por evento (`on_motion`) com pós-roll; segmentação por tempo/tamanho; arquivo tocável (EOS).
-- [ ] Persistência SQLite (ADR 0006), timeline persistente, playback/seek, export de clipe.
-- [ ] Pré-captura (ADR 0007) e gravação sem reencode.
-- [ ] Retenção por modo (contínuo × movimento, como no Frigate 0.17) e limpeza por espaço em disco.
-- **Saída:** gravar por evento e reproduzir pelo histórico; disco nunca enche além do limite configurado.
+## M3 — Gravação inteligente e histórico — feito
+- [x] Gravação sem reencode, pré-roll, áudio opcional; SQLite; retenção; aviso de disco; vista Gravações (linha do tempo, player,
+  vários canais, eventos, proteger, exportar clipe).
+- Falta só fechar arestas (fase A do plano): pré-roll curto em câmera de GOP longo, revisão com mouse, release v0.9.
 
-## M4 — Detecção de objetos (ADR 0003)
-`ort` atrás de `feature = "detect"`, thread de inferência, recorte da região de movimento, eventos por label/zona/score, review items (Alerts × Detections).
-- Ambiente: GTX 1650 de 4 GB; ONNX Runtime, CUDA e cuDNN **ainda não instalados**.
-- **Saída:** precisão/recall em conjunto de teste definido; latência de inferência dentro do orçamento; degrada sem GPU.
+## M4 — Detecção de objetos (ADR 0003) — aberto
+- [ ] Spike do `ort` (CPU/OpenVINO/CUDA), módulo `detect`, fila limitada, gatilho por movimento e zona, eventos por rótulo,
+  interface, avaliação, ONNX Runtime na imagem. Detalhes: `plano-restante.md`, fase C.
 
-## M5 — Acabamento
-- [ ] ONVIF: descoberta de câmeras (Profile T é a base de 2026). PTZ **removido** do plano (2026-10-06).
-- [ ] Credenciais no keyring; validação de config com erro por campo e `--check`.
-- [ ] i18n, acessibilidade, empacotamento (só Linux: AUR, AppImage/Flatpak).
-- [x] ~~Áudio bidirecional, timelapse~~ — removidos (não eram usados).
-
-## Dependências
-M0 → M1 → M2 → M3 → M4. M2 pode andar em paralelo a M3 no que não usa movimento. M5 é independente após M0.
+## M5 — Acabamento — aberto
+- [ ] ONVIF (só descoberta), chaveiro para as senhas da janela, MQTT/Home Assistant, i18n pt-BR/en, empacotamento Linux
+  (AUR, AppImage/Flatpak, `cargo-dist`). Fase D.
 
 ## Riscos
 | Risco | Mitigação |
 |---|---|
-| Upgrade `gstreamer`/`iced` maior que o esperado | spike em M0 com limite de tempo; branch isolada |
-| Decoder de GPU piora a CPU se o frame voltar em RGBA | medido; só adotar com caminho NV12/shader ou zero-copy |
-| 4 GB de VRAM com muitos streams NVDEC | sub-stream na grade; medir VRAM no baseline |
-| `ort` é release candidate; providers diferem por SO | fixar versão; fallback `tract-onnx`/CPU |
-| Pré-captura sem transcode pode não servir para HLS/arquivo | tratar por tipo de fonte; documentar limitação |
-| Vários SOs multiplicariam os testes de GStreamer | só Linux (ADR 0001, 2026-10-06) |
-| Escopo (ML + 3 SOs + 16 câmeras) | respeitar a ordem; não iniciar M4 antes do baseline real e de M2 |
+| NV12 + shader (2.3) é um widget wgpu dentro do iced | plano B: reduzir a resolução decodificada no grid (já há sub-stream) |
+| iced 0.14 clareia as cores na GTX 1650 | `WGPU_POWER_PREF=low` (iGPU); validar na tela antes do merge |
+| 4 GB de VRAM com YOLO e NVDEC juntos | iGPU Intel decodifica; a NVIDIA fica para a IA; medir no spike 0.6 |
+| `ort` ainda é release candidate | fixar a versão; fallback em CPU |
+| GOP esticado (Smart Codec) alonga o pré-roll | teto de 30 s no ring; reduzir o quadro-I na câmera |
