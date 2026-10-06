@@ -122,7 +122,6 @@ pub fn popover(theme: Theme) -> impl Fn(&iced::Theme) -> container::Style {
 /// Button intent, mapped to a fill + text color pair. `Primary`/`Danger` are
 /// part of the vocabulary even when no current call site uses them.
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 pub enum Intent {
     /// Low-emphasis: transparent until hovered.
     Ghost,

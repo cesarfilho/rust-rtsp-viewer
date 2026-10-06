@@ -32,7 +32,6 @@
 // wiring (item 9 final wiring, which is done in the
 // same commit). Silencing at the module level is
 // the cleanest way to keep the warnings down.
-#![allow(dead_code)]
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};

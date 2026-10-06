@@ -412,7 +412,7 @@ src/
 │   ├── timeline.rs             — EventTimeline, TimelineEvent
 │   └── zones.rs                — zonas poligonais de detecção
 ├── infrastructure/             — GStreamer, I/O
-│   ├── audio.rs                — AudioController, build_audio_pipeline
+│   ├── audio.rs                — build_audio_pipeline_for_url, medidor VU
 │   ├── notify.rs               — notify-send / xdg-open
 │   ├── reconnect.rs            — watchdog de FPS + lógica de backoff
 │   ├── recording_paths.rs      — criação de diretórios

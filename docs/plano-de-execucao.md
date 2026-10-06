@@ -128,7 +128,7 @@ entra só como integração de saída (5.4).
 | 5.5 | i18n (pt-BR + en) e acessibilidade | G |
 | 5.6 | Empacotamento: AUR, AppImage/Flatpak, releases automáticas (`cargo-dist`) (**D4**) | M |
 | 5.7 | Decidir `timelapse` e `bidirectional_audio`: ligar ou remover | P cada | [x] removidos `timelapse` e `bidirectional_audio` em 2026-10-05, por decisão do dono (não eram usados; voltam do histórico do git se algum dia fizerem sentido)
-| 5.8 | Remover os 10 `allow(dead_code)` restantes e os módulos descartados | P |
+| 5.8 | Remover os 10 `allow(dead_code)` restantes e os módulos descartados | P | [x] zero `allow(dead_code)` (2026-10-05): dos 10 só 1 escondia algo (`AudioController`, usado apenas pelos próprios testes, removido com eles); os outros 9 não escondiam nada
 
 ## Princípio de UX/UI (decorre de D1)
 O produto é um NVR completo **e** precisa de UX/UI muito bem definida: cada tela nova do M3/M4

@@ -49,7 +49,6 @@ pub struct Hint {
 impl Hint {
     /// Convenience constructor mirroring the field order used by the
     /// `diagnose` functions below.
-    #[allow(dead_code)]
     pub fn new(metric: &'static str, severity: Severity, cause: &'static str) -> Self {
         Self {
             metric,

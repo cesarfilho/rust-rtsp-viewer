@@ -12,8 +12,6 @@
 //! in this module — everything is pure data transformation
 //! and `Result` returning.
 
-#![allow(dead_code)]
-
 use std::fmt;
 use std::path::{Path, PathBuf};
 use thiserror::Error;

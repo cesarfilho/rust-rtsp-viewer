@@ -38,7 +38,6 @@
 // done in the same commit). Silencing at the
 // module level is the cleanest way to keep the
 // warnings down.
-#![allow(dead_code)]
 
 use thiserror::Error;
 

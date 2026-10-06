@@ -78,7 +78,6 @@ pub(crate) struct RecordingBranch {
     pub(crate) started_at: Instant,
 }
 
-#[allow(dead_code)]
 pub struct GStreamerBridge {
     pub(crate) pipeline: Option<gst::Pipeline>,
     pub(crate) frame: Arc<Mutex<FrameState>>,
@@ -149,7 +148,6 @@ pub(crate) struct FpsCalc {
     pub bitrate_kbps: u64,
 }
 
-#[allow(dead_code)]
 impl GStreamerBridge {
     pub fn new(width: u32, height: u32) -> Result<Self, String> {
         gst::init().map_err(|e| format!("GStreamer init failed: {e}"))?;

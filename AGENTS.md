@@ -156,7 +156,7 @@ keyring is plan 5.3.
 
 | File | Responsibility |
 |------|---------------|
-| `audio.rs` | `AudioController`, `build_audio_pipeline_for_url`, level bus watch |
+| `audio.rs` | `build_audio_pipeline_for_url`, `AudioLevelState` / `poll_level_bus` (VU meter) |
 | `notify.rs` | `notify-send` / `xdg-open` (best-effort, child reaped on a thread) |
 | `reconnect.rs` | `ReconnectState` (FPS watchdog + backoff decision) |
 | `recording_paths.rs` | directory creation helpers |

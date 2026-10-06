@@ -35,12 +35,10 @@ contado nesta revisão (só os módulos que mudaram de situação foram contados
 Todos têm testes unitários, então o risco está na integração (threads, mutexes,
 pipeline), não no cálculo.
 
-## `allow(dead_code)` restantes (10)
+## `allow(dead_code)`
 
-`domain/audio.rs`, `domain/codec.rs`, `domain/recording.rs`, `domain/snapshot.rs`,
-`infrastructure/audio.rs` (todos com `#![allow(dead_code)]` no arquivo inteiro, ou seja,
-parte da API dentro deles também não é usada), mais `ui/bridge.rs` (2), `ui/pipeline.rs`,
-`ui/view/style.rs` e `domain/diagnostics.rs` (1 cada).
+Zero. Os 10 que existiam foram removidos em 2026-10-05: só um escondia código morto de verdade
+(`AudioController`, usado apenas pelos próprios testes), e saiu junto com eles.
 
 ## Observações
 - Fora de testes não há `unwrap()`/`expect()` nem `unsafe`; há 1 `TODO` no código.

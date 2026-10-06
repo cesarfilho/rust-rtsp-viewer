@@ -9,8 +9,6 @@
 //! `tests` module at the bottom of this file. Run them with
 //! `cargo test domain::codec::tests`.
 
-#![allow(dead_code)]
-
 use std::fmt;
 
 use gstreamer as gst;

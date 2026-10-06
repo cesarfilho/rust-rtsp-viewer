@@ -583,7 +583,6 @@ fn segment_location_pattern(now_unix: u64, container: Container) -> String {
     }
 }
 
-#[allow(dead_code)]
 impl GStreamerBridge {
     /// Build the encoder chain and attach it to the `tee`, starting a new
     /// recording. Segments roll over automatically at the configured
