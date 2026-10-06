@@ -42,11 +42,11 @@ A janela é o último lugar que converte cada quadro para RGBA. No daemon a conv
 
 | # | Tarefa | Tam. | Quem | Critério de saída |
 |---|---|---|---|---|
-| B1 | **Rebase de `spike/deps-upgrade` na master** (iced 0.14, 84 ajustes de API já conhecidos + tudo o que entrou desde: vista Gravações, canvas, vários canais). Branch nova `iced-0.14`, sem tocar a master | G | eu | `cargo build/clippy/test --workspace` verdes na branch |
-| B2 | **Validação na tela** das cores (o 0.14 clareava as cores com a GTX 1650; `WGPU_POWER_PREF=low` na iGPU resolvia): 5 temas × grade, spotlight, vista Gravações, menus. Eu capturo a região da janela; você olha | P | eu + você | você aprova ou lista as diferenças |
-| B3 | **Decisão do merge**: o 0.14 entra na master, ou a master fica no 0.13 até a 2.3 | P | você | decisão registrada |
+| B1 | ✅ **feito** na branch `iced-0.14` (commit `4afcc99`; 104 erros → 0; fmt, clippy, deny e todos os testes verdes; a master não foi tocada) — **Rebase de `spike/deps-upgrade` na master** (iced 0.14, 84 ajustes de API já conhecidos + tudo o que entrou desde: vista Gravações, canvas, vários canais). Branch nova `iced-0.14`, sem tocar a master | G | eu | `cargo build/clippy/test --workspace` verdes na branch |
+| B2 | 🟡 **checagem objetiva feita** (os 5 temas saem com as cores exatas na iGPU; forçando a NVIDIA o defeito reaparece: `#1b1b20` vira `#595961`). **Falta o seu olho** (roteiro no fim da B) — **Validação na tela** das cores (o 0.14 clareava as cores com a GTX 1650; `WGPU_POWER_PREF=low` na iGPU resolvia): 5 temas × grade, spotlight, vista Gravações, menus. Eu capturo a região da janela; você olha | P | eu + você | você aprova ou lista as diferenças |
+| B3 | ⛔ **bloqueada pela B5**: o iced 0.14 **pisca** vídeo (ver abaixo); só entra depois do widget de vídeo — **Decisão do merge**: o 0.14 entra na master, ou a master fica no 0.13 até a 2.3 | P | você | decisão registrada |
 | B4 | **Script de medição da janela** (`scripts/baseline-window.sh`): CPU/RSS do processo da janela, com N câmeras, grade e spotlight | P | eu | número de referência *antes* da 2.3 |
-| B5 | **2.3, NV12 + shader**: `appsink` em NV12; widget wgpu próprio (texturas Y e UV, conversão na GPU); o RGBA fica como fallback e para snapshots/detecção; a vista Gravações usa o mesmo widget | G–XG | eu + você | janela com 16 × 1080p dentro do orçamento medido em B4; imagem idêntica ao RGBA (comparação por captura); sem regressão nos testes |
+| B5 | 🟡 **parte 1 feita (RGBA)**: `ui/video_shader.rs`, um widget `shader` com uma textura por vídeo atualizada no lugar; `VideoWidget` já o usa (master, iced 0.13); 13 testes, 7 deles renderizam de verdade fora da tela e passam na Intel e na GTX 1650. Falta: medir a janela (precisa abrir uma janela de teste, **com o seu aval**), o NV12 e a volta do iced 0.14 — **2.3, NV12 + shader**: `appsink` em NV12; widget wgpu próprio (texturas Y e UV, conversão na GPU); o RGBA fica como fallback e para snapshots/detecção; a vista Gravações usa o mesmo widget | G–XG | eu + você | janela com 16 × 1080p dentro do orçamento medido em B4; imagem idêntica ao RGBA (comparação por captura); sem regressão nos testes |
 | B6 | **2.4 zero-copy / PRIME** (renderizar na NVIDIA) | XG | — | **só se a B5 não bastar**; hoje não planejada |
 
 Riscos: B5 é o item de maior risco do projeto (widget wgpu próprio dentro do iced). Se B1 mostrar que o 0.14 muda
@@ -106,3 +106,26 @@ sintético como referência.
   Reabrir só se algum modelo de câmera limitar a 1–2 sessões.
 - **2.4** (zero-copy): só se a B5 não bastar.
 - **Vários servidores**: fora do escopo (o canal de controle é um socket Unix, só local).
+
+## Por que o iced 0.14 não pode entrar ainda: o vídeo pisca (achado em 2026-10-06)
+Medido (captura da janela 16× em sequência, brilho médio da área de vídeo, 4 câmeras HLS): **iced 0.13 (master) variação 4**
+(estável); **iced 0.14 variação 45** (o brilho cai de 56 para 13–26 em várias capturas). Causa, lida no `iced_wgpu` 0.14
+(`image/cache.rs`, `upload_raster`): imagem com mais de **2 MiB** (`MAX_SYNC_SIZE`) não é enviada na hora, vai para uma thread
+(`pending`) e **não é desenhada até carregar**. O `VideoWidget` cria um `Handle` novo por quadro (um RGBA de 1080p tem 8 MiB), então
+a cada quadro há uma janela sem imagem. No 0.13 o envio era síncrono.
+Consequência: o vídeo no 0.14 precisa de um **widget `shader` próprio** (a textura é atualizada no lugar, sem `Handle` por
+quadro). Isso é exatamente a B5; então a ordem muda: **B5 primeiro, na master (iced 0.13, que também tem o widget `shader`)**,
+depois a B3. Quem testar a branch `iced-0.14` vê o piscar até lá. Mitigação descartada: reduzir o quadro para < 2 MiB só
+serviria para a grade (o spotlight e o player de gravações são 1080p).
+
+## B2: o que olhar no iced 0.14 (≈ 5 min, você)
+```bash
+git switch iced-0.14 && make release       # (a branch; a master continua no 0.13)
+make a8                                    # daemon de demonstração
+make a8-window                             # a janela no 0.14
+```
+Confira: (1) os 5 temas (`⋯` → Aparência): nada lavado nem ilegível; (2) a grade, o menu `⋯` e a barra lateral; (3) o editor de
+zonas (clique direito numa câmera → Zonas: clicar pontos, Enter fecha, Esc sai); (4) digitar na busca (`/`) **sem** disparar
+atalhos (um `t` digitado ali não pode abrir a vista); (5) a vista Gravações: arrastar a barra e a roda do mouse (o canvas mudou de
+API); (6) `Ctrl+Q`. Se algo estiver diferente da master, me diga qual passo. Se estiver igual, a decisão é a **B3**:
+`git merge iced-0.14` na master (e a B5, o NV12 + shader, parte dali).

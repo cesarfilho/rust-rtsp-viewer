@@ -1,69 +1,55 @@
-use std::cell::{Cell, RefCell};
 use std::sync::{Arc, Mutex};
 
-use iced::widget::image::Handle;
 use iced::{Element, Length};
 
 use crate::ui::bridge::GStreamerBridge;
+use crate::ui::video_shader::{self, Frame, VideoProgram};
 
 #[derive(Debug, Clone)]
 pub enum Message {
     FrameUpdate,
 }
 
+/// Mostra o vídeo de uma `GStreamerBridge` (câmera ao vivo ou gravação). O desenho é do widget
+/// `shader` em `video_shader`: uma textura na GPU por vídeo, atualizada no lugar a cada quadro
+/// novo (sem um `Handle` de imagem por quadro, que no iced 0.14 faz o vídeo piscar).
 pub struct VideoWidget {
     bridge: Arc<Mutex<GStreamerBridge>>,
-    last_gen: Cell<u64>,
-    cached_handle: RefCell<Option<Handle>>,
-    width: u32,
-    height: u32,
+    /// Identifica a textura deste vídeo na GPU.
+    id: u64,
+    /// Vive enquanto este widget vive: a GPU libera a textura quando ele morre.
+    alive: Arc<()>,
 }
 
 impl VideoWidget {
     pub fn new(bridge: Arc<Mutex<GStreamerBridge>>) -> Self {
-        let (_, w, h, _) = bridge
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .read_frame();
         Self {
             bridge,
-            last_gen: Cell::new(0),
-            cached_handle: RefCell::new(None),
-            width: w,
-            height: h,
+            id: video_shader::next_video_id(),
+            alive: video_shader::new_alive_token(),
         }
     }
 
     pub fn view(&self) -> Element<'static, Message> {
-        let (rgba, w, h, frame_gen) = self
+        let (rgba, width, height, generation) = self
             .bridge
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .read_frame();
-
-        // The handle is built here, on the UI side, and only when the engine
-        // produced a new frame: a fresh handle per `view()` would re-upload the
-        // texture on every redraw.
-        if frame_gen != self.last_gen.get() {
-            self.last_gen.set(frame_gen);
-            if let Some(rgba) = rgba
-                && w > 0
-                && h > 0
-            {
-                *self.cached_handle.borrow_mut() = Some(Handle::from_rgba(w, h, rgba));
-            }
-        }
-
-        let handle = self.cached_handle.borrow().clone().unwrap_or_else(|| {
-            let size = (self.width * self.height * 4) as usize;
-            Handle::from_rgba(self.width, self.height, vec![20u8; size])
+        let frame = rgba.map(|rgba| Frame {
+            rgba,
+            width,
+            height,
+            generation,
         });
-
-        iced::widget::image(handle)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .content_fit(iced::ContentFit::Contain)
-            .into()
+        iced::widget::shader(VideoProgram {
+            id: self.id,
+            frame,
+            alive: Arc::downgrade(&self.alive),
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 }
 
@@ -71,26 +57,34 @@ impl VideoWidget {
 mod tests {
     use super::*;
 
-    #[test]
-    fn video_widget_creation() {
-        let bridge = Arc::new(Mutex::new(GStreamerBridge::new(640, 480).unwrap()));
-        let widget = VideoWidget::new(bridge);
-        assert_eq!(widget.width, 640);
-        assert_eq!(widget.height, 480);
+    fn bridge(w: u32, h: u32) -> Arc<Mutex<GStreamerBridge>> {
+        Arc::new(Mutex::new(GStreamerBridge::new(w, h).unwrap()))
     }
 
     #[test]
-    fn video_widget_view_no_frame() {
-        let bridge = Arc::new(Mutex::new(GStreamerBridge::new(320, 240).unwrap()));
-        let widget = VideoWidget::new(bridge);
-        let _ = widget.view();
+    fn each_widget_has_its_own_gpu_identity() {
+        let a = VideoWidget::new(bridge(640, 480));
+        let b = VideoWidget::new(bridge(640, 480));
+        assert_ne!(a.id, b.id, "duas câmeras nunca dividem a mesma textura");
     }
 
     #[test]
-    fn video_widget_sizes() {
-        let bridge = Arc::new(Mutex::new(GStreamerBridge::new(1920, 1080).unwrap()));
-        let widget = VideoWidget::new(bridge);
-        assert_eq!(widget.width, 1920);
-        assert_eq!(widget.height, 1080);
+    fn the_view_builds_with_and_without_a_frame() {
+        // sem quadro ainda: o widget existe e não desenha nada
+        let w = VideoWidget::new(bridge(320, 240));
+        let _ = w.view();
+        let _ = w.view();
+    }
+
+    #[test]
+    fn the_gpu_texture_is_released_when_the_widget_dies() {
+        let w = VideoWidget::new(bridge(320, 240));
+        let weak = Arc::downgrade(&w.alive);
+        assert!(weak.upgrade().is_some());
+        drop(w);
+        assert!(
+            weak.upgrade().is_none(),
+            "o token morre com o widget: a GPU recolhe a textura no próximo quadro"
+        );
     }
 }
