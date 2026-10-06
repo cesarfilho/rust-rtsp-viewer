@@ -18,3 +18,5 @@ label,cams,live,cpu_avg_pct,cpu_max_pct,rss_mib,net_mbps,stream_mbps,fps_avg,res
 "Intelbras 1080p, pré-roll 30s",1,1,9.2,45.2,80,2.06,0.03,0.0,1920x1080,avdec_h264
 "11 HLS, daemon headless, decodificação CPU (referência)",11,11,87.7,124.9,625,33.08,24.62,26.0,1280x720/1920x1080,avdec_h264
 "11 HLS, daemon headless, iGPU Intel (VA-API)",11,11,47.2,70.3,709,35.00,22.50,26.3,1280x720/1920x1080,vah264dec GPU
+"16 câmeras (4 Intelbras + 12 HLS), CPU",16,14,65.5,89.2,1043,36.47,15.45,24.0,1280x720/1920x1080,avdec_h264
+"16 câmeras (4 Intelbras + 12 HLS), iGPU Intel (VA-API)",16,14,38.6,55.0,1176,34.46,15.10,24.0,1280x720/1920x1080,vah264dec GPU

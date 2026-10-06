@@ -59,3 +59,17 @@ Ferramenta: `RRV_PROBE_URL=... cargo test -p rrv-core --test headless probe_keyf
   `[recording] keyframe_every_secs`; refazer o spike numa noite sem movimento antes de decidir.
 - Consequência para o pré-roll: ele sempre começa no keyframe anterior ao pedido, então com cena parada pode passar de 5 s
   (até o teto de 30 s), e com movimento fica perto do pedido.
+
+## 16 câmeras (A3, 2026-10-06)
+4 sessões da Intelbras (1080p, Wi-Fi) + 12 fluxos HLS (os 11 públicos e o primeiro repetido), daemon sem janela e sem
+detecção de movimento, 45 s de aquecimento e 45 s de amostra:
+
+| decodificador | ao vivo | CPU média | CPU máx | RSS | fluxo | fps |
+|---|---|---|---|---|---|---|
+| CPU (`avdec_h264`) | 14/16 | **65%** | 89% | 1043 MiB | 15,5 Mb/s | 24 |
+| iGPU Intel (`vah264dec`, VA-API) | 14/16 | **39%** | 55% | 1176 MiB | 15,1 Mb/s | 24 |
+
+100% = 1 núcleo, então **16 câmeras cabem em menos de um núcleo** (CPU) e em ~0,4 núcleo com a iGPU. Ressalva: nunca
+chegaram todas as 16 ao vivo. Numa rodada de conferência, a 4ª sessão da Intelbras (no Wi-Fi) ainda estava
+"conectando" e `hls2` e `hls7` (HLS públicas de terceiros) estavam em reconexão: é rede e fonte, não o motor. O orçamento
+do plano (0.4) está confirmado com folga.
