@@ -8,6 +8,10 @@ Plataforma-alvo: **Linux** (Wayland/X11; integração com COSMIC/GNOME).
 
 ---
 
+## Executáveis
+
+`make bin` compila e deixa `./bin/rust-rtsp-viewer` (a janela), `./bin/rrv-daemon` e `./bin/rrvctl` no diretório do projeto; basta rodá-los de lá (`./bin/rust-rtsp-viewer config.toml`). `make bin FEATURES=detect` liga a detecção de objetos no daemon.
+
 ## Instalação
 
 ### Pré-requisitos

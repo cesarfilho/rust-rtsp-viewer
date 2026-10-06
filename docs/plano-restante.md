@@ -85,7 +85,7 @@ Decididos em 2026-10-06: **só Linux** (ADR 0001) e **sem PTZ**. O ONVIF fica s�
 | D2 ✅ | **5.3 chaveiro** (`secret-service`) para as senhas da janela (o daemon já usa `${NOME}`/Docker secrets) | M | eu | senha fora do `config.toml` na janela, com fallback documentado |
 | D3 ✅ | **5.4 MQTT/Home Assistant** (`rumqttc`): eventos, saúde por câmera, descoberta automática do Home Assistant | M | eu | câmeras e sensores de movimento aparecem no Home Assistant (teste com um broker local) |
 | D4 ✅/⏳ | **5.5 i18n e acessibilidade** (feito: pt-BR/en com troca no menu e teste que varre `src/ui` e os textos do núcleo que a janela mostra; leitor de tela não existe no iced; falta você conferir o inglês na tela): extrair os textos (hoje em português dentro do código), pt-BR + en, foco por teclado e rótulos legíveis por leitor de tela | G | eu | alternar o idioma sem reiniciar; nenhum texto fixo fora do catálogo (teste que varre) |
-| D5 | **5.6 empacotamento (só Linux)**: AUR, AppImage/Flatpak, releases automáticas (`cargo-dist`) e a imagem Docker publicada | M | eu + você (contas/chaves) | `pkgbuild` instala e roda; release de teste no GitHub |
+| D5 ❌ dispensada | **5.6 empacotamento (só Linux)** — decidido em 2026-10-06: basta o executável no diretório do projeto (`make bin` → `./bin/`): AUR, AppImage/Flatpak, releases automáticas (`cargo-dist`) e a imagem Docker publicada | M | eu + você (contas/chaves) | `pkgbuild` instala e roda; release de teste no GitHub |
 
 ---
 

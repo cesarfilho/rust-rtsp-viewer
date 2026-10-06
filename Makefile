@@ -8,7 +8,7 @@
 #   DE       início do `make clip` (ex.: -30m, -2h)       (padrão: -5m)
 
 .DEFAULT_GOAL := help
-.PHONY: help all build release run run-embedded run-daemon-local run-with-daemon check ci fmt fmt-check lint test test-lib \
+.PHONY: help all build release bin run run-embedded run-daemon-local run-with-daemon check ci fmt fmt-check lint test test-lib \
         deny clean watch config-check install uninstall \
         docker-build up up-vaapi up-nvidia down restart logs ps init-docker \
         status history record enable disable clip events \
@@ -43,6 +43,12 @@ build: ## Compila tudo (debug)
 
 release: ## Compila tudo otimizado (janela, daemon e rrvctl em target/release/)
 	cargo build --release --workspace
+
+bin: ## Compila e deixa os executáveis em ./bin/ (rust-rtsp-viewer, rrv-daemon, rrvctl); `make bin FEATURES=detect` liga a detecção de objetos
+	cargo build --release --workspace $(if $(FEATURES),--features rrv-daemon/$(FEATURES),)
+	mkdir -p bin
+	cp target/release/rust-rtsp-viewer target/release/rrv-daemon target/release/rrvctl bin/
+	@echo "pronto: ./bin/rust-rtsp-viewer  ./bin/rrv-daemon  ./bin/rrvctl"
 
 check: fmt-check lint deny ## fmt + clippy + cargo deny (rápido, sem testes)
 
