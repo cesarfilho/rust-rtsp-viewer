@@ -11,6 +11,7 @@ pub mod engine;
 pub mod infrastructure;
 pub mod ipc;
 pub mod mqtt;
+pub mod onvif;
 pub mod secrets;
 pub mod startup;
 pub mod webhook;

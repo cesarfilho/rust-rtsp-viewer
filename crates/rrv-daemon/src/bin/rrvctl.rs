@@ -5,6 +5,7 @@
 //!   rrvctl enable 2 / disable 2
 //!   rrvctl zones "Portão"
 //!   rrvctl events               # acompanha os eventos até Ctrl+C
+//!   rrvctl discover             # câmeras ONVIF na rede (não precisa do daemon)
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -43,6 +44,20 @@ enum Command {
     Zones { camera: String },
     /// Acompanha os eventos (movimento, gravação, online/offline)
     Events,
+    /// Procura câmeras ONVIF na rede (não precisa do daemon). Com `--user` (e a senha na variável de
+    /// ambiente `--password-env`) pergunta a cada câmera os streams e imprime o trecho do `config.toml`;
+    /// a senha nunca é impressa nem vai para o trecho (ele traz `${SEGREDO}`).
+    Discover {
+        /// Usuário da câmera
+        #[arg(long)]
+        user: Option<String>,
+        /// Variável de ambiente que guarda a senha (padrão: ONVIF_PASSWORD)
+        #[arg(long, default_value = "ONVIF_PASSWORD")]
+        password_env: String,
+        /// Quantos segundos esperar as respostas
+        #[arg(long, default_value_t = 4)]
+        wait: u64,
+    },
     /// Exporta um clipe (.mp4, sem reencode) para a pasta exports/ das gravações
     Export {
         /// Nome da câmera
@@ -154,13 +169,82 @@ fn expect_ok(r: Response) -> Result<(), String> {
     }
 }
 
+fn discover(user: Option<&str>, password_env: &str, wait: u64, json: bool) -> Result<(), String> {
+    use rrv_core::onvif;
+    let found = onvif::discover(Duration::from_secs(wait.clamp(1, 30)));
+    if found.is_empty() {
+        println!("nenhuma câmera ONVIF respondeu (ONVIF ligado na câmera? mesma rede?)");
+        return Ok(());
+    }
+    let password = user.map(|_| std::env::var(password_env).unwrap_or_default());
+    let mut report = Vec::new();
+    for f in &found {
+        let label = format!(
+            "{}  {}  {}",
+            f.ip,
+            f.name.as_deref().unwrap_or("?"),
+            f.hardware.as_deref().unwrap_or("")
+        );
+        let (Some(u), Some(p)) = (user, password.as_deref()) else {
+            report.push((label, None, f.xaddr.clone()));
+            continue;
+        };
+        if p.is_empty() {
+            return Err(format!(
+                "a variável {password_env} está vazia ou não existe"
+            ));
+        }
+        let outcome = onvif::inspect(f, u, p).map(|i| onvif::config_snippet(f, u, &i));
+        report.push((label, Some(outcome), f.xaddr.clone()));
+    }
+    if json {
+        let v: Vec<_> = report
+            .iter()
+            .map(|(l, o, x)| {
+                serde_json::json!({
+                    "camera": l,
+                    "xaddr": x,
+                    "config": o.as_ref().and_then(|r| r.as_ref().ok()),
+                    "error": o.as_ref().and_then(|r| r.as_ref().err()),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&v).unwrap());
+        return Ok(());
+    }
+    println!("# {} câmera(s) ONVIF", report.len());
+    for (label, outcome, xaddr) in report {
+        println!("\n{label}\n  {xaddr}");
+        match outcome {
+            None => {}
+            Some(Ok(snippet)) => println!("\n{snippet}"),
+            Some(Err(e)) => println!("  não consegui ler os streams: {e}"),
+        }
+    }
+    if user.is_none() {
+        println!(
+            "\nPara ver os streams e gerar o trecho do config.toml:\n  ONVIF_PASSWORD=… rrvctl discover --user admin"
+        );
+    }
+    Ok(())
+}
+
 fn run(cli: &Cli) -> Result<(), String> {
+    if let Command::Discover {
+        user,
+        password_env,
+        wait,
+    } = &cli.command
+    {
+        return discover(user.as_deref(), password_env, *wait, cli.json);
+    }
     let socket = cli
         .socket
         .clone()
         .unwrap_or_else(rrv_core::ipc::default_socket_path);
     let mut c = IpcClient::connect(&socket)?;
     match &cli.command {
+        Command::Discover { .. } => unreachable!("tratado antes de conectar"),
         Command::Status => {
             let all = cameras(&mut c)?;
             if cli.json {
