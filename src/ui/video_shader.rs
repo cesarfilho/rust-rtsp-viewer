@@ -14,7 +14,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
 use bytes::Bytes;
-use iced::widget::shader::{self, Viewport, wgpu};
+use iced::wgpu;
+use iced::widget::shader::{self, Viewport};
 use iced::{Rectangle, mouse};
 
 /// Identificador único de um vídeo na GPU (um por `VideoWidget`).
@@ -95,7 +96,7 @@ pub struct VideoPrimitive {
 }
 
 /// O que fica na GPU de cada vídeo.
-struct VideoGpu {
+pub struct VideoGpu {
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
     uniform: wgpu::Buffer,
@@ -107,7 +108,7 @@ struct VideoGpu {
 }
 
 /// Pipeline compartilhado por todos os vídeos + as texturas de cada um.
-struct VideoPipeline {
+pub struct VideoPipeline {
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
@@ -145,8 +146,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
+impl shader::Pipeline for VideoPipeline {
+    fn new(device: &wgpu::Device, _queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+        Self::build(device, format)
+    }
+}
+
 impl VideoPipeline {
-    fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    fn build(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rrv video shader"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
@@ -192,12 +199,14 @@ impl VideoPipeline {
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &module,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &module,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
                     blend: Some(wgpu::BlendState::REPLACE),
@@ -208,6 +217,7 @@ impl VideoPipeline {
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
+            cache: None,
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("rrv video sampler"),
@@ -285,21 +295,16 @@ impl VideoPipeline {
 }
 
 impl shader::Primitive for VideoPrimitive {
+    type Pipeline = VideoPipeline;
+
     fn prepare(
         &self,
+        state: &mut VideoPipeline,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        format: wgpu::TextureFormat,
-        storage: &mut shader::Storage,
         bounds: &Rectangle,
         viewport: &Viewport,
     ) {
-        if !storage.has::<VideoPipeline>() {
-            storage.store(VideoPipeline::new(device, format));
-        }
-        let Some(state) = storage.get_mut::<VideoPipeline>() else {
-            return;
-        };
         // Libera as texturas dos vídeos que deixaram de existir (ex.: o player de gravações).
         state.videos.retain(|_, v| v.alive.strong_count() > 0);
 
@@ -321,14 +326,14 @@ impl shader::Primitive for VideoPrimitive {
 
         if video.generation != frame.generation {
             queue.write_texture(
-                wgpu::ImageCopyTexture {
+                wgpu::TexelCopyTextureInfo {
                     texture: &video.texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
                 &frame.rgba,
-                wgpu::ImageDataLayout {
+                wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(4 * frame.width),
                     rows_per_image: Some(frame.height),
@@ -343,7 +348,7 @@ impl shader::Primitive for VideoPrimitive {
         }
 
         // Onde o quadro cai, em pixels físicos, e daí em coordenadas normalizadas.
-        let scale = viewport.scale_factor() as f32;
+        let scale = viewport.scale_factor();
         let (fx, fy, fw, fh) = fit_rect(
             bounds.width * scale,
             bounds.height * scale,
@@ -368,14 +373,11 @@ impl shader::Primitive for VideoPrimitive {
 
     fn render(
         &self,
+        state: &VideoPipeline,
         encoder: &mut wgpu::CommandEncoder,
-        storage: &shader::Storage,
         target: &wgpu::TextureView,
         clip_bounds: &Rectangle<u32>,
     ) {
-        let Some(state) = storage.get::<VideoPipeline>() else {
-            return;
-        };
         let Some(video) = state.videos.get(&self.id) else {
             return;
         };
@@ -387,6 +389,7 @@ impl shader::Primitive for VideoPrimitive {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
@@ -511,18 +514,19 @@ mod tests {
 
     fn gpu() -> Option<Gpu> {
         let instance = wgpu::Instance::default();
-        let adapter = iced::futures::executor::block_on(
-            instance.request_adapter(&wgpu::RequestAdapterOptions {
+        let adapter = iced::futures::executor::block_on(instance.request_adapter(
+            &wgpu::RequestAdapterOptions {
                 // WGPU_POWER_PREF=high roda os testes na GPU discreta
-                power_preference: wgpu::util::power_preference_from_env()
-                    .unwrap_or(wgpu::PowerPreference::LowPower),
+                power_preference:
+                    wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower),
                 force_fallback_adapter: false,
                 compatible_surface: None,
-            }),
-        )?;
+            },
+        ))
+        .ok()?;
         eprintln!("adaptador de teste: {:?}", adapter.get_info().name);
         let (device, queue) = iced::futures::executor::block_on(
-            adapter.request_device(&wgpu::DeviceDescriptor::default(), None),
+            adapter.request_device(&wgpu::DeviceDescriptor::default()),
         )
         .ok()?;
         Some(Gpu { device, queue })
@@ -541,7 +545,7 @@ mod tests {
     /// Desenha `primitive` sobre um alvo preto de `SIDE`×`SIDE` e devolve os pixels RGBA.
     fn draw(
         gpu: &Gpu,
-        storage: &mut shader::Storage,
+        pipeline: &mut VideoPipeline,
         primitive: &VideoPrimitive,
         bounds: Rectangle,
     ) -> Vec<u8> {
@@ -561,7 +565,7 @@ mod tests {
         });
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
         let viewport = Viewport::with_physical_size(Size::new(SIDE, SIDE), 1.0);
-        primitive.prepare(&gpu.device, &gpu.queue, FORMAT, storage, &bounds, &viewport);
+        primitive.prepare(pipeline, &gpu.device, &gpu.queue, &bounds, &viewport);
 
         let mut encoder = gpu
             .device
@@ -571,6 +575,7 @@ mod tests {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &view,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                     store: wgpu::StoreOp::Store,
@@ -581,8 +586,8 @@ mod tests {
             occlusion_query_set: None,
         }));
         primitive.render(
+            pipeline,
             &mut encoder,
-            storage,
             &view,
             &Rectangle {
                 x: 0,
@@ -599,15 +604,15 @@ mod tests {
             mapped_at_creation: false,
         });
         encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &target,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &readback,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(SIDE * 4), // 256: já alinhado
                     rows_per_image: Some(SIDE),
@@ -622,7 +627,7 @@ mod tests {
         let _ = gpu.queue.submit(Some(encoder.finish()));
         let slice = readback.slice(..);
         slice.map_async(wgpu::MapMode::Read, |r| r.expect("mapear o buffer"));
-        gpu.device.poll(wgpu::Maintain::Wait);
+        let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
         let data = slice.get_mapped_range().to_vec();
         readback.unmap();
         data
@@ -659,7 +664,7 @@ mod tests {
             return;
         };
         let alive = new_alive_token();
-        let mut storage = shader::Storage::default();
+        let mut storage = <VideoPipeline as shader::Pipeline>::new(&gpu.device, &gpu.queue, FORMAT);
         // 2×1 (proporção 2:1) numa caixa 64×64: ocupa y de 16 a 48; esquerda vermelha, direita azul
         let p = primitive(
             1,
@@ -697,7 +702,7 @@ mod tests {
             return;
         };
         let alive = new_alive_token();
-        let mut storage = shader::Storage::default();
+        let mut storage = <VideoPipeline as shader::Pipeline>::new(&gpu.device, &gpu.queue, FORMAT);
         // sem isto o sRGB seria aplicado duas vezes (o defeito do iced 0.14 na NVIDIA): 100/150/200 têm
         // de sair 100/150/200, não mais claros
         let p = primitive(1, Some(frame(1, 1, 1, &[[100, 150, 200, 255]])), &alive);
@@ -716,7 +721,7 @@ mod tests {
             return;
         };
         let alive = new_alive_token();
-        let mut storage = shader::Storage::default();
+        let mut storage = <VideoPipeline as shader::Pipeline>::new(&gpu.device, &gpu.queue, FORMAT);
         let p1 = primitive(1, Some(frame(1, 1, 1, &[[255, 0, 0, 255]])), &alive);
         let img = draw(&gpu, &mut storage, &p1, FULL);
         assert!(near(pixel(&img, 32, 32), [255, 0, 0], 2));
@@ -728,11 +733,7 @@ mod tests {
             "{:?}",
             pixel(&img, 32, 32)
         );
-        assert_eq!(
-            storage.get::<VideoPipeline>().unwrap().videos.len(),
-            1,
-            "uma textura só"
-        );
+        assert_eq!(storage.videos.len(), 1, "uma textura só");
         // a mesma geração de novo: continua o mesmo desenho
         let img = draw(&gpu, &mut storage, &p2, FULL);
         assert!(near(pixel(&img, 32, 32), [0, 255, 0], 2));
@@ -745,7 +746,7 @@ mod tests {
             return;
         };
         let alive = new_alive_token();
-        let mut storage = shader::Storage::default();
+        let mut storage = <VideoPipeline as shader::Pipeline>::new(&gpu.device, &gpu.queue, FORMAT);
         let _ = draw(
             &gpu,
             &mut storage,
@@ -760,10 +761,7 @@ mod tests {
             "{:?}",
             pixel(&img, 32, 32)
         );
-        assert_eq!(
-            storage.get::<VideoPipeline>().unwrap().videos[&1].size,
-            (2, 2)
-        );
+        assert_eq!(storage.videos[&1].size, (2, 2));
     }
 
     #[test]
@@ -773,7 +771,7 @@ mod tests {
             return;
         };
         let (a, b) = (new_alive_token(), new_alive_token());
-        let mut storage = shader::Storage::default();
+        let mut storage = <VideoPipeline as shader::Pipeline>::new(&gpu.device, &gpu.queue, FORMAT);
         let red = primitive(1, Some(frame(1, 1, 1, &[[255, 0, 0, 255]])), &a);
         let blue = primitive(2, Some(frame(1, 1, 1, &[[0, 0, 255, 255]])), &b);
         let img = draw(&gpu, &mut storage, &red, FULL);
@@ -783,11 +781,11 @@ mod tests {
             near(pixel(&img, 32, 32), [0, 0, 255], 2),
             "o segundo vídeo tem a sua textura"
         );
-        assert_eq!(storage.get::<VideoPipeline>().unwrap().videos.len(), 2);
+        assert_eq!(storage.videos.len(), 2);
         // o primeiro widget morre; o próximo quadro de qualquer vídeo recolhe a textura dele
         drop(a);
         let _ = draw(&gpu, &mut storage, &blue, FULL);
-        let videos = &storage.get::<VideoPipeline>().unwrap().videos;
+        let videos = &storage.videos;
         assert_eq!(videos.len(), 1, "a textura do vídeo morto foi liberada");
         assert!(videos.contains_key(&2));
     }
@@ -799,7 +797,7 @@ mod tests {
             return;
         };
         let alive = new_alive_token();
-        let mut storage = shader::Storage::default();
+        let mut storage = <VideoPipeline as shader::Pipeline>::new(&gpu.device, &gpu.queue, FORMAT);
         let img = draw(&gpu, &mut storage, &primitive(1, None, &alive), FULL);
         assert!(
             near(pixel(&img, 32, 32), [0, 0, 0], 0),
@@ -814,7 +812,7 @@ mod tests {
             return;
         };
         let alive = new_alive_token();
-        let mut storage = shader::Storage::default();
+        let mut storage = <VideoPipeline as shader::Pipeline>::new(&gpu.device, &gpu.queue, FORMAT);
         // o widget ocupa o quadrante inferior direito (32..64); o quadro vermelho 1×1 o preenche
         let bounds = Rectangle {
             x: 32.0,
