@@ -486,8 +486,8 @@ fn probe_keyframes() {
             }
         }
         let _ = pipeline.set_state(gst::State::Null);
-        let v = keys.lock().unwrap().clone();
-        v
+        let guard = keys.lock().unwrap();
+        guard.clone()
     };
 
     for (label, ask) in [("sem pedir", false), ("pedindo a cada poucos s", true)] {
