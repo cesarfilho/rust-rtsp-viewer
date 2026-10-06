@@ -144,7 +144,6 @@ keyring is plan 5.3.
 | `motion.rs` | frame-difference motion detection |
 | `multi_stream.rs` | `StreamQuality`, `desired_quality`, `stream_url_for_quality` — wired to `sub_url` |
 | `notify.rs` | `NotifyConfig`, `message_for`, `cooldown_elapsed` — desktop-notification policy |
-| `ptz.rs` | `PtzCommand` |
 | `recording.rs` | `RecordingConfig`, `RecordingState`, `generate_filename` |
 | `redact.rs` | `mask_credentials` — strip passwords before logging |
 | `snapshot.rs` | `SnapshotConfig`, `generate_filename`, `BURST_INTERVAL_MS` |

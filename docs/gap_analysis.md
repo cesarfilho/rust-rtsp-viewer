@@ -38,13 +38,13 @@ Legenda: ✅ feito · 🟡 parcial · ❌ aberto.
 ### C. Funcionalidade
 | # | Item | Estado |
 |---|---|---|
-| 11 | Módulos desligados | 🟡 ligados: `motion`, `zones` + editor, `multi_stream`. Faltam `streaming`, `ptz`, `timelapse`, `hw_encoder`, `bidirectional_audio` |
+| 11 | Módulos desligados | 🟡 ligados: `motion`, `zones` + editor, `multi_stream`. Faltam `streaming`, `timelapse`, `hw_encoder`, `bidirectional_audio` |
 | 12 | Gravação por evento | ✅ `[recording] on_motion` com pós-roll. ❌ sem pré-roll (ADR 0007) |
 | 12 | Notificações | ✅ `notify-send` com cooldown |
 | 12 | Retenção e limpeza de disco | ❌ (só os logs têm retenção) |
 | 12 | Timeline persistente, busca e reprodução | ❌ o timeline é só memória; não há player embutido |
 | 12 | Detecção de objetos/pessoas | ❌ (ADR 0003) |
-| 12 | PTZ real, ONVIF, re-streaming, API/MQTT | ❌ |
+| 12 | ONVIF (descoberta), re-streaming, API/MQTT | ❌ (PTZ removido do plano em 2026-10-06) |
 | 12 | Sub/main stream | ✅ `sub_url` (0.8.0) |
 
 ### D. Desempenho e robustez
@@ -129,7 +129,7 @@ defensável é ser o melhor **video wall nativo e leve**, consumindo eventos de 
 3. Medir com câmeras RTSP reais (decode, sub/main, reconexão) antes de otimizar.
 4. Decoder de hardware: `gst-plugin-va` (simples) ou NV12 + shader (grande).
 5. SQLite de eventos + reprodução (ADR 0006), depois detecção de objetos (ADR 0003).
-6. ONVIF (descoberta e PTZ), credenciais no keyring, validação de config.
+6. ONVIF (descoberta), credenciais no keyring, validação de config.
 7. Upgrade `gstreamer`/`iced` em branch própria.
 
 ## Verificação

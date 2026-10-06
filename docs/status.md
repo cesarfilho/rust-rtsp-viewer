@@ -30,7 +30,6 @@ contado nesta revisão (só os módulos que mudaram de situação foram contados
 
 | Módulo | Testes | O que existe | O que falta |
 |---|---|---|---|
-| `ptz.rs` | 6 | `PtzCommand`, `PtzConfig`, presets | cliente ONVIF (não existe), UI de controle, atalhos |
 
 Todos têm testes unitários, então o risco está na integração (threads, mutexes,
 pipeline), não no cálculo.
@@ -43,5 +42,5 @@ Zero. Os 10 que existiam foram removidos em 2026-10-05: só um escondia código 
 ## Observações
 - Fora de testes não há `unwrap()`/`expect()` nem `unsafe`; há 1 `TODO` no código.
 - `clap` continua sendo usado só para o caminho do config (argumento posicional).
-- Dos módulos que não eram usados, sobrou `ptz` (a base do PTZ via ONVIF, plano 5.2). `streaming`, `timelapse`,
-  `bidirectional_audio` e `hw_encoder` foram removidos (voltam do histórico do git, se preciso).
+- Módulos que ninguém usava foram removidos (`streaming`, `timelapse`, `bidirectional_audio`, `hw_encoder`, `ptz`);
+  voltam do histórico do git, se preciso.

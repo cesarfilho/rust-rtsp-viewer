@@ -26,24 +26,25 @@ docker exec rrv vainfo          # diagnóstico do driver
 - Só iGPU Intel/AMD por VA-API. Para a NVIDIA, veja a seção abaixo (`compose.nvidia.yaml`).
 
 ## GPU NVIDIA (D6): o que falta no host
-O driver do host está pronto (GTX 1650, 610.57), mas **o contêiner só enxerga a GPU com o `nvidia-container-toolkit`**,
-e instalá-lo precisa de `sudo` (não faço isso por você). A imagem já traz o plugin `nvcodec` do GStreamer; o toolkit
+O driver do host está pronto (GTX 1650, 610.57), mas **o contêiner só enxerga a GPU com o `nvidia-container-toolkit`**, e
+instalá-lo precisa de `sudo` (não faço isso por você). A imagem já traz o plugin `nvcodec` do GStreamer; o toolkit
 injeta as bibliotecas do driver (`libcuda`, `libnvcuvid`) e então o plugin registra `nvh264dec`/`nvh265dec`.
+
+O caminho usado é o **CDI** (o Docker 25+ lê as especificações de `/etc/cdi`): **não é preciso reiniciar o Docker**, o
+que derrubaria os outros contêineres que estiverem rodando (o Docker deste host está sem `live-restore`).
 
 ```bash
 scripts/check-nvidia-host.sh      # só lê; diz o que falta e o comando de cada passo
-# no Arch/Omarchy, o que costuma faltar (rode você, com sudo):
+# no Arch/Omarchy (rode você, com sudo):
 sudo pacman -S nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
+sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml     # refaça depois de atualizar o driver
 scripts/check-nvidia-host.sh      # agora deve terminar com "o contêiner enxerga a GPU"
 docker compose -f compose.yaml -f compose.nvidia.yaml up -d
 docker exec rrv rrvctl status     # decodificador: nvh264dec (GPU)
 ```
-**Não testado:** o `compose.nvidia.yaml` valida (`docker compose config`), mas ninguém o rodou com o toolkit. Com a
-GPU de 4 GB o ganho esperado é parecido com o da iGPU Intel (a decodificação sai da CPU); a vantagem da NVIDIA seria a
-inferência de IA (M4), que depende do spike do `ort` com CUDA/cuDNN (0.6). Se a iGPU Intel já resolve a decodificação,
-a NVIDIA só vale a pena para a IA.
+**Não testado:** o `compose.nvidia.yaml` valida (`docker compose config`, com `driver: cdi`), mas ninguém o rodou com o
+toolkit. A decodificação sai da CPU como na iGPU Intel; a vantagem da NVIDIA é a inferência de IA (M4), que depende do
+spike do `ort` com CUDA/cuDNN (0.6).
 
 ## O que descobri no caminho
 1. **O nó de renderização não é fixo.** Neste host a iGPU Intel é a `renderD129` e a NVIDIA é a

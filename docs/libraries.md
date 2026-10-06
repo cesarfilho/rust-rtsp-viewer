@@ -25,7 +25,7 @@ qualquer feature nova, para não misturar refatoração com funcionalidade.
 | Detecção de objetos | `ort` 2.0.0-rc.13 (ONNX Runtime) | Padrão de fato para YOLO/ONNX, com aceleração (CUDA/OpenVINO/TensorRT via execution providers). Ainda é *release candidate*. Alternativa 100% Rust: `tract-onnx` 0.23 (sem dependência nativa, mais lento). `ndarray` para pré/pós-processamento |
 | Modelos prontos | `usls` 0.2.0-alpha | Coleção de modelos sobre ONNX Runtime; é *alpha* — avaliar só como referência |
 | Movimento mais robusto (subtração de fundo, contornos) | `opencv` 0.100 | Poderoso, mas exige OpenCV instalado e compilação lenta. Só se a diferença de luma atual (`motion.rs`) não bastar; para o caso simples, **manter o código próprio** |
-| PTZ ONVIF | `oxvif` 0.17 | Cliente ONVIF assíncrono. Maturidade não avaliada. Evitar `onvif-rs` (o próprio README diz "WIP, DO NOT USE YET") |
+| Descoberta ONVIF | `oxvif` 0.17 | Cliente ONVIF assíncrono (só descoberta e cadastro; PTZ foi removido do plano). Maturidade não avaliada. Evitar `onvif-rs`. |
 | Timeline/eventos persistentes | `rusqlite` 0.40 | Consultas por câmera/intervalo, relação evento → segmento gravado. Alternativa mais simples: JSONL append-only, sem dependência |
 | MQTT (Home Assistant) | `rumqttc` 0.25 | Cliente MQTT assíncrono, o mais usado |
 | API HTTP / eventos | `axum` 0.8 | Sobre `tokio`, que já é dependência via iced |
@@ -48,5 +48,5 @@ qualquer feature nova, para não misturar refatoração com funcionalidade.
 2. Persistência de eventos: começar com JSONL; migrar para `rusqlite` se as consultas pedirem.
 3. `sysinfo`/`rustix` para limpeza por espaço.
 4. `ort` em um spike isolado: rodar YOLO 320x320 num frame estático e medir tempo por inferência.
-5. `oxvif` para PTZ manual; depois autotracking.
+5. `oxvif` para a descoberta ONVIF (sem PTZ).
 6. `rumqttc`/`axum`/`gstreamer-rtsp-server` só com demanda de integração real.

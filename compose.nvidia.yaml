@@ -4,23 +4,29 @@
 #   docker compose -f compose.yaml -f compose.nvidia.yaml up -d
 #   docker exec rrv rrvctl status                      # a coluna "decodificador" mostra nvh264dec (GPU)
 #
-# Requer o `nvidia-container-toolkit` no HOST (precisa de sudo; ver docs/gpu-container.md). A imagem já traz o
-# plugin `nvcodec` do GStreamer: o toolkit injeta no contêiner as bibliotecas do driver (libcuda, libnvcuvid)
-# quando a capacidade `video` é pedida, e só então o plugin registra `nvh264dec` / `nvh265dec`.
+# Usa CDI (Container Device Interface), que o Docker 25+ lê direto de /etc/cdi: **não precisa reiniciar o
+# Docker** (nem derrubar os outros contêineres). No host, só:
+#   sudo pacman -S nvidia-container-toolkit
+#   sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+# (Refaça o `cdi generate` depois de atualizar o driver NVIDIA.)
+#
+# A imagem já traz o plugin `nvcodec` do GStreamer: o CDI injeta as bibliotecas do driver (libcuda, libnvcuvid) e
+# só então o plugin registra `nvh264dec` / `nvh265dec`.
 #
 # Pode ser combinado com o VA-API (`-f compose.vaapi.yaml`), mas os dois disputam o mesmo `decodebin`: o
 # `GST_PLUGIN_FEATURE_RANK` abaixo põe o NVDEC na frente.
 services:
   rrv:
-    environment:
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
-      # No GStreamer 1.22 o rank do NVDEC depende da versão; acima do avdec_h264 (256) ele é sempre escolhido.
-      GST_PLUGIN_FEATURE_RANK: "nvh264dec:260,nvh265dec:260"
+    # `driver: cdi` pede o dispositivo CDI pelo nome (Docker 28.3+ / Compose recente); o `devices:` simples
+    # seria lido como um caminho em /dev.
     deploy:
       resources:
         reservations:
           devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu, video, utility]
+            - driver: cdi
+              capabilities: [gpu]   # o esquema do Compose exige; com CDI não muda o que é injetado
+              device_ids:
+                - nvidia.com/gpu=all
+    environment:
+      # Acima do avdec_h264 (256) o NVDEC é sempre escolhido.
+      GST_PLUGIN_FEATURE_RANK: "nvh264dec:260,nvh265dec:260"

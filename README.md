@@ -12,6 +12,7 @@ Plataforma-alvo: **Linux** (Wayland/X11; integração com COSMIC/GNOME).
 
 ### Pré-requisitos
 
+- **Linux** (o único sistema suportado: Ubuntu/Debian, Arch/Omarchy; Wayland ou X11)
 - Rust 1.92+ (edition 2024)
 - GStreamer 1.20+ com os seguintes plugins:
 
@@ -29,9 +30,6 @@ sudo apt install \
 
 # Arch Linux
 sudo pacman -S gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly gst-libav
-
-# macOS
-brew install gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav
 ```
 
 ### Compilar
@@ -332,8 +330,9 @@ docker compose logs -f rrv
 **GPU Intel (VA-API):** `docker compose -f compose.yaml -f compose.vaapi.yaml up -d`; o `rrvctl status` mostra
 `vah264dec (GPU)` ou `avdec_h264 (CPU)`. **No daemon ela corta a CPU quase pela metade** (medido: 88% → 47% de um núcleo com
 11 câmeras HLS); para a janela o ganho espera o caminho NV12 (plano 2.3). Veja `docs/gpu-container.md`.
-**GPU NVIDIA:** `compose.nvidia.yaml`; precisa do `nvidia-container-toolkit` no host (`scripts/check-nvidia-host.sh` diz o que
-falta; ainda não testada). O aviso de movimento com a janela fechada é o `[webhook]` (abaixo); os eventos também vão para
+**GPU NVIDIA:** `compose.nvidia.yaml` (via CDI: sem reiniciar o Docker); precisa do `nvidia-container-toolkit` no host
+(`sudo pacman -S nvidia-container-toolkit` e `sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`;
+`scripts/check-nvidia-host.sh` confere; ainda não testada). O aviso de movimento com a janela fechada é o `[webhook]` (abaixo); os eventos também vão para
 `docker compose logs`. A imagem tem ~1 GB (plugins
 `bad`/`ugly`/`libav` do GStreamer).
 
@@ -446,7 +445,6 @@ src/
 │   ├── motion.rs               — detecção de movimento por diferença de frames
 │   ├── multi_stream.rs         — seleção main/sub stream
 │   ├── notify.rs               — política de notificações (cooldown, textos)
-│   ├── ptz.rs                  — comandos PTZ
 │   ├── recording.rs            — RecordingConfig, RecordingState
 │   ├── redact.rs               — mascaramento de credenciais em logs
 │   ├── snapshot.rs             — SnapshotConfig, nomes de arquivo, burst

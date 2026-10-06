@@ -1,4 +1,7 @@
 # 0010 — Motor sem janela: daemon + cliente
+
+> **Nota (2026-10-06):** só Linux (ADR 0001); a linha de Windows/macOS da tabela de plataformas é histórico.
+
 **Status:** Aceita (decisão do dono, 2026-10-05: o NVR continua gravando e detectando sem a janela aberta).
 O **desenho técnico** abaixo é **Proposta** e depende da medição de sessões RTSP (D2, tarefa 0.3).
 

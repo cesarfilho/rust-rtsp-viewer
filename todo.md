@@ -25,6 +25,6 @@ persistente. Módulos de domínio existentes mas **não ligados**: `motion`, `zo
 
 ## Fase 4 — avançado
 - [ ] Detecção de objetos (ONNX/YOLO 320x320 sobre região recortada do movimento)
-- [ ] PTZ ONVIF + autotracking (`domain/ptz.rs`)
+- [x] ~~PTZ ONVIF + autotracking~~ — removido do plano (2026-10-06)
 - [ ] Áudio bidirecional (two-way talk) e detecção de áudio
 - [ ] Re-streaming (RTSP/HLS de saída, estilo go2rtc), MQTT/notificações, API HTTP

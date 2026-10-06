@@ -75,16 +75,17 @@ Dependências: C1→C2→C3→C4→C5; C6 e C7 em paralelo com a C5. A C0 decide
 
 ---
 
-## Fase D — Acabamento para a 1.0 (≈ 5–7 semanas, M5)
+## Fase D — Acabamento para a 1.0 (≈ 4–6 semanas, M5)
+
+Decididos em 2026-10-06: **só Linux** (ADR 0001) e **sem PTZ**. O ONVIF fica só para descoberta e cadastro.
 
 | # | Tarefa | Tam. | Quem | Critério de saída |
 |---|---|---|---|---|
-| D1 | **5.1 ONVIF**: descoberta (WS-Discovery) e assistente de cadastro; Profile T como base. Teste na Intelbras (a maioria suporta ONVIF) | G | eu | "Adicionar câmera" lista as da rede e preenche a URL e o sub-stream |
-| D2 | **5.2 PTZ** via `oxvif`, ligando `ptz.rs`: setas e zoom no spotlight, presets. **Preciso saber se alguma câmera sua é PTZ** (a Intelbras de teste é?) | M | eu + você | comando move a câmera; sem câmera PTZ, só testes com simulador |
-| D3 | **5.3 chaveiro** (`secret-service`) para as senhas da janela (o daemon já usa `${NOME}`/Docker secrets) | M | eu | senha fora do `config.toml` na janela, com fallback documentado |
-| D4 | **5.4 MQTT/Home Assistant** (`rumqttc`): eventos, saúde por câmera, descoberta automática do Home Assistant | M | eu | câmeras e sensores de movimento aparecem no Home Assistant (teste com um broker local) |
-| D5 | **5.5 i18n e acessibilidade**: extrair os textos (hoje em português dentro do código), pt-BR + en, foco por teclado e rótulos legíveis por leitor de tela | G | eu | alternar o idioma sem reiniciar; nenhum texto fixo fora do catálogo (teste que varre) |
-| D6 | **5.6 empacotamento**: AUR, AppImage/Flatpak, releases automáticas (`cargo-dist`) e a imagem Docker publicada. **Depende da decisão D4 abaixo** | M | eu + você (contas/chaves) | `pkgbuild` instala e roda; release de teste no GitHub |
+| D1 | **5.1 ONVIF**: descoberta (WS-Discovery) e assistente de cadastro; Profile T como base, sem PTZ. Teste na Intelbras (a maioria suporta ONVIF) | G | eu | "Adicionar câmera" lista as da rede e preenche a URL e o sub-stream |
+| D2 | **5.3 chaveiro** (`secret-service`) para as senhas da janela (o daemon já usa `${NOME}`/Docker secrets) | M | eu | senha fora do `config.toml` na janela, com fallback documentado |
+| D3 | **5.4 MQTT/Home Assistant** (`rumqttc`): eventos, saúde por câmera, descoberta automática do Home Assistant | M | eu | câmeras e sensores de movimento aparecem no Home Assistant (teste com um broker local) |
+| D4 | **5.5 i18n e acessibilidade**: extrair os textos (hoje em português dentro do código), pt-BR + en, foco por teclado e rótulos legíveis por leitor de tela | G | eu | alternar o idioma sem reiniciar; nenhum texto fixo fora do catálogo (teste que varre) |
+| D5 | **5.6 empacotamento (só Linux)**: AUR, AppImage/Flatpak, releases automáticas (`cargo-dist`) e a imagem Docker publicada | M | eu + você (contas/chaves) | `pkgbuild` instala e roda; release de teste no GitHub |
 
 ---
 
@@ -92,15 +93,16 @@ Dependências: C1→C2→C3→C4→C5; C6 e C7 em paralelo com a C5. A C0 decide
 
 | # | O quê | Libera |
 |---|---|---|
-| **D4** | Windows/macOS: manter só "compila" (ADR 0001) ou subir o nível | D6 (empacotamento) |
-| **D6-sudo** | Rodar `sudo pacman -S nvidia-container-toolkit`, `sudo nvidia-ctk runtime configure --runtime=docker`, `sudo systemctl restart docker` e depois `scripts/check-nvidia-host.sh`. Só vale se quiser a GTX 1650 para a IA; a iGPU Intel já corta a CPU do daemon | C0 (backend CUDA) |
-| **B3** | Merge do iced 0.14 | B5 |
+| **GPU NVIDIA** (você quer) | Rodar no host, **sem reiniciar o Docker** (o `restart` derrubaria os seus outros contêineres): `sudo pacman -S nvidia-container-toolkit` e `sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`; depois `scripts/check-nvidia-host.sh`. Você pode rodar aqui com `! sudo ...` | C0 (backend CUDA) e a decodificação NVDEC |
+| **B3** | Merge do iced 0.14, depois da validação na tela | B5 |
 | **Push** | Quando enviar a master (~90 commits) e a tag v0.9.0 | A7 |
-| **PTZ** | Alguma das suas câmeras é PTZ? | D2 |
-| **Rede** | A Intelbras perde ~25% dos pacotes: cabo, Wi-Fi ou switch | qualidade das medições |
+
+**Decididas (2026-10-06):** só Linux (D4, ADR 0001 revisada) · sem PTZ (5.2 removida) · a rede da Intelbras (Wi-Fi, ~25% de
+perda) fica como está: é o motivo de ela ter pouco fps e os testes dela saem ruidosos; use as medições das câmeras HLS e do
+sintético como referência.
 
 ## Adiado de propósito
 - **2.5.4** (vídeo do daemon redistribuído para a janela): a janela abre sessão própria, e a Intelbras aceitou 4.
   Reabrir só se algum modelo de câmera limitar a 1–2 sessões.
 - **2.4** (zero-copy): só se a B5 não bastar.
-- **Vários servidores** e **Windows/macOS no daemon** (o canal de controle é um socket Unix): fora do escopo.
+- **Vários servidores**: fora do escopo (o canal de controle é um socket Unix, só local).

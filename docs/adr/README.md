@@ -5,7 +5,7 @@ Status: `Aceita` (respondida pelo dono do projeto em 2026-09-24) ou `Proposta` (
 
 | # | Decisão | Status |
 |---|---------|--------|
-| 0001 | Plataformas: Linux completo; Windows/macOS melhor esforço | Aceita |
+| 0001 | Plataformas: somente Linux (revisada em 2026-10-06) | Aceita |
 | 0002 | Hardware de referência: 16 câmeras, GPU NVIDIA | Aceita |
 | 0003 | Detecção de objetos é meta principal | Aceita |
 | 0004 | Uso: app desktop pessoal (Iced) | Aceita (parcialmente substituída pela 0010) |

@@ -1,4 +1,7 @@
 # 0002 — Hardware de referência: muitas câmeras + GPU NVIDIA
+
+> **Nota (2026-10-06):** o projeto é só Linux (ADR 0001); as menções a Windows e macOS abaixo são histórico.
+
 **Status:** Aceita (número exato de câmeras ainda a definir; ver "Em aberto")
 
 ## Contexto

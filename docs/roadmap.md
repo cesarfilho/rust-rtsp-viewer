@@ -2,7 +2,7 @@
 
 Baseado em: `docs/gap_analysis.md`, `docs/status.md`, `docs/libraries.md`, `docs/adr/`.
 Revisado em 2026-10-05 (v0.8.0). Legenda: `[x]` feito · `[ ]` aberto.
-Decisões do dono (2026-09-24): Linux completo, Windows/macOS melhor esforço (mínimo) · 16 câmeras + GPU NVIDIA · ML é meta principal · app desktop pessoal · licença livre (AGPL-3.0).
+Decisões do dono (2026-09-24): **só Linux** (decidido em 2026-10-06; antes: Windows/macOS melhor esforço) · 16 câmeras + GPU NVIDIA · ML é meta principal · app desktop pessoal · licença livre (AGPL-3.0).
 Estimativas **não** foram feitas: exigem spikes e baseline. Cada marco tem critério de saída.
 
 ## Decisão em aberto: posicionamento
@@ -14,7 +14,7 @@ Milestone) são maduros e caros de alcançar. Duas direções:
 A meta declarada é ML (ADR 0003), então M4 segue no plano, mas vale confirmar antes de investir nele.
 
 ## M0 — Fundação e medição
-- [x] CI em Linux (clippy `-D warnings` + testes). Windows/macOS: ainda sem build no CI (ADR 0001).
+- [x] CI em Linux (clippy `-D warnings` + testes). Windows/macOS não são suportados (ADR 0001).
 - [x] LICENSE (AGPL-3.0), `license` e `rust-version` no `Cargo.toml` (ADR 0009; 1.92 desde o GStreamer 0.25).
 - [x] `cargo build && cargo test` registrados: 387 testes passando, clippy limpo.
 - [ ] `cargo fmt --check` no CI; `deny.toml`; `rust-toolchain.toml`.
@@ -57,9 +57,9 @@ A meta declarada é ML (ADR 0003), então M4 segue no plano, mas vale confirmar 
 - **Saída:** precisão/recall em conjunto de teste definido; latência de inferência dentro do orçamento; degrada sem GPU.
 
 ## M5 — Acabamento
-- [ ] ONVIF: descoberta de câmeras e PTZ (`oxvif`); Profile T é a base de 2026.
+- [ ] ONVIF: descoberta de câmeras (Profile T é a base de 2026). PTZ **removido** do plano (2026-10-06).
 - [ ] Credenciais no keyring; validação de config com erro por campo e `--check`.
-- [ ] i18n, acessibilidade, empacotamento (Linux: Flatpak/AppImage; Windows/macOS: só zip/binário).
+- [ ] i18n, acessibilidade, empacotamento (só Linux: AUR, AppImage/Flatpak).
 - [x] ~~Áudio bidirecional, timelapse~~ — removidos (não eram usados).
 
 ## Dependências
@@ -73,5 +73,5 @@ M0 → M1 → M2 → M3 → M4. M2 pode andar em paralelo a M3 no que não usa m
 | 4 GB de VRAM com muitos streams NVDEC | sub-stream na grade; medir VRAM no baseline |
 | `ort` é release candidate; providers diferem por SO | fixar versão; fallback `tract-onnx`/CPU |
 | Pré-captura sem transcode pode não servir para HLS/arquivo | tratar por tipo de fonte; documentar limitação |
-| Três SOs multiplicam testes de GStreamer | Linux completo; Windows/macOS só build (ADR 0001) |
+| Vários SOs multiplicariam os testes de GStreamer | só Linux (ADR 0001, 2026-10-06) |
 | Escopo (ML + 3 SOs + 16 câmeras) | respeitar a ordem; não iniciar M4 antes do baseline real e de M2 |

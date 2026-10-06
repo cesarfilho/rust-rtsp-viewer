@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Confere se o host está pronto para o contêiner usar a GPU NVIDIA (decisão D6) e diz o que falta.
-# Só LÊ: não instala nada nem usa sudo. Cada passo que falta vem com o comando para você rodar.
+# Só LÊ (e roda um contêiner descartável de teste): não instala nada nem usa sudo. Cada passo que falta vem com o
+# comando para você rodar. O caminho é o CDI: não reinicia o Docker.
 #   scripts/check-nvidia-host.sh [imagem]      # imagem padrão: rust-rtsp-viewer/rrv-daemon:local
 set -u
 IMG="${1:-rust-rtsp-viewer/rrv-daemon:local}"
@@ -16,24 +17,23 @@ fi
 
 if command -v nvidia-ctk >/dev/null 2>&1; then
   say "✓ nvidia-container-toolkit instalado ($(nvidia-ctk --version 2>/dev/null | head -1))"
+  if nvidia-ctk cdi list 2>/dev/null | grep -q 'nvidia.com/gpu=all'; then
+    say "✓ especificação CDI da GPU gerada (nvidia.com/gpu=all)"
+  else
+    bad "falta a especificação CDI da GPU (sem reiniciar o Docker)" \
+        "sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml"
+  fi
 else
   bad "nvidia-container-toolkit não instalado" \
       "sudo pacman -S nvidia-container-toolkit        # Arch/Omarchy" \
+      "sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml" \
       "(Debian/Ubuntu: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)"
-fi
-
-if docker info 2>/dev/null | grep -qi 'runtimes:.*nvidia'; then
-  say "✓ o Docker conhece o runtime nvidia"
-else
-  bad "o Docker ainda não tem o runtime nvidia" \
-      "sudo nvidia-ctk runtime configure --runtime=docker" \
-      "sudo systemctl restart docker"
 fi
 
 if ! docker image inspect "$IMG" >/dev/null 2>&1; then
   bad "a imagem $IMG não existe" "docker compose build   (ou: docker build -t $IMG .)"
 elif [ "$ok" = 1 ]; then
-  if out="$(docker run --rm --gpus all -e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility --entrypoint nvidia-smi "$IMG" --query-gpu=name --format=csv,noheader 2>&1)"; then
+  if out="$(docker run --rm --device nvidia.com/gpu=all --entrypoint nvidia-smi "$IMG" --query-gpu=name --format=csv,noheader 2>&1)"; then
     say "✓ o contêiner enxerga a GPU: $out"
   else
     bad "o contêiner NÃO enxerga a GPU" "$out"

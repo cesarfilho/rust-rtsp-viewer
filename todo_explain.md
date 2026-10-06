@@ -110,12 +110,8 @@ e onde encaixa neste projeto. Referência: https://docs.frigate.video/
 - **Aqui:** é o maior esforço: nova dependência (por exemplo `ort`), thread de inferência,
   fila compartilhada entre câmeras e decisão de hardware. Só vale depois de movimento e zonas.
 
-### PTZ ONVIF + autotracking (`domain/ptz.rs`)
-- **O que é:** controlar câmeras PTZ e fazê-las seguir um objeto.
-- **No Frigate:** exige ONVIF com movimento relativo; zoom desligado/absoluto/relativo,
-  `return_preset` ao terminar e calibração da velocidade dos motores.
-- **Aqui:** existe `PtzCommand`, mas sem cliente ONVIF. O controle manual (setas/zoom na
-  UI) é um bom primeiro passo antes do autotracking.
+### PTZ ONVIF + autotracking
+- **Removido do plano em 2026-10-06** (decisão do dono); o módulo `domain/ptz.rs` foi apagado.
 
 ### Áudio bidirecional e detecção de áudio
 - **O que é:** falar pela câmera (two-way talk) e disparar eventos por som.

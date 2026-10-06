@@ -1,4 +1,7 @@
 # 0003 — Detecção de objetos é meta principal
+
+> **Nota (2026-10-06):** o projeto é só Linux (ADR 0001); os providers de Windows (DirectML) e macOS (CoreML) abaixo não se aplicam.
+
 **Status:** Aceita
 
 ## Contexto

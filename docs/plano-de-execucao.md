@@ -29,7 +29,7 @@ de saída, tamanhos e decisões pendentes (o como e o quando). Estado real do c�
 | D3 | ~~Licença do modelo de detecção~~ → **decidido em 2026-10-05: usar o YOLO da Ultralytics** (AGPL, compatível com a AGPL-3.0 do projeto, ADR 0009); conferir a licença do peso exato ao baixá-lo | (liberou 4.1) |
 | D5 | Vídeo ao vivo no cliente: sessão própria (A), redistribuição pelo daemon (B, recomendada) ou memória compartilhada (C) — ADR 0010 | M2.5 (2.5.4), 2.5 |
 | D6 | Instalar `nvidia-container-toolkit` para o container usar a GTX 1650 (decodificação/YOLO em CUDA). Sem isso: VA-API na iGPU ou CPU | 2.5.10, M4 em GPU | **2026-10-05:** o dono pediu que eu prepare o contêiner: `compose.nvidia.yaml` e `scripts/check-nvidia-host.sh` prontos; falta só o `sudo` do host (nvidia-container-toolkit) e o teste. A iGPU Intel já corta a CPU do daemon em ~47%.
-| D4 | Windows/macOS: manter só "compila" (ADR 0001) ou subir o nível | 5.6 |
+| D4 | ~~Windows/macOS~~ → **decidido em 2026-10-06: só Linux** (ADR 0001 revisada) | (liberou 5.6) |
 
 ## M0 — Fundação e medição (0.8.x)
 | # | Tarefa | Critério de saída | Tam. | Estado |
@@ -125,7 +125,7 @@ entra só como integração de saída (5.4).
 | # | Tarefa | Tam. |
 |---|---|---|
 | 5.1 | ONVIF: descoberta (WS-Discovery) e assistente de cadastro; Profile T como base | G |
-| 5.2 | PTZ via `oxvif`, ligando `ptz.rs` (depende de 5.1) | M |
+| 5.2 | PTZ via `oxvif`, ligando `ptz.rs` (depende de 5.1) | M | [x] **removida** em 2026-10-06 por decisão do dono (sem PTZ; `domain/ptz.rs` apagado) |
 | 5.3 | Credenciais no keyring (`secret-service`) — antecipada para 2.5.8 | M |
 | 5.4 | MQTT/Home Assistant (`rumqttc`) para eventos e saúde por câmera | M |
 | 5.5 | i18n (pt-BR + en) e acessibilidade | G |
