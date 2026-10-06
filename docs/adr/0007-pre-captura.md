@@ -25,3 +25,15 @@ Opção A, com início do clipe no keyframe anterior ao evento. Spike necessári
 - **Memória:** ≈ bitrate × N s por câmera (ex.: 4 Mbps × 10 s ≈ 5 MB; ×16 câmeras ≈ 80 MB) — aceitável, mas medir.
 - Áudio: a captura direta precisa incluir a faixa de áudio se ela existir (hoje o áudio é pipeline separado).
 - Depende de ADR 0008 (onde fica o pipeline sempre ligado).
+
+## Implementação e decisão final (2026-10-06)
+Feito para **RTSP H.264/H.265**: `rtspsrc ! parsebin ! tee(enc_tee)`; a gravação não reencoda, começa no keyframe
+anterior e usa um ring de GOPs para o pré-roll (`domain::preroll`, teto de 30 s por GOP). O áudio opcional
+(`record_audio`) usa um ring próprio.
+
+**HLS/HTTP, arquivo e MJPEG continuam reencodando** (`videoconvert ! x264enc`), e isso é **aceito**:
+- as fontes HLS do projeto são câmeras públicas de terceiros, vistas e não gravadas em produção;
+- `uridecodebin3` não expõe o fluxo codificado sem mexer no seu grafo interno (custo alto, ganho baixo);
+- MJPEG já é intra-quadro: reencodá-lo para H.264 até economiza disco, e não tem GOP para esperar.
+O caminho antigo é escolhido pelos caps do `enc_tee` (`start_recording`) e tem testes. Reabrir se alguém precisar gravar
+HLS em escala.
