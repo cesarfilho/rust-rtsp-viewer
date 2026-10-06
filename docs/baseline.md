@@ -73,3 +73,10 @@ detecção de movimento, 45 s de aquecimento e 45 s de amostra:
 chegaram todas as 16 ao vivo. Numa rodada de conferência, a 4ª sessão da Intelbras (no Wi-Fi) ainda estava
 "conectando" e `hls2` e `hls7` (HLS públicas de terceiros) estavam em reconexão: é rede e fonte, não o motor. O orçamento
 do plano (0.4) está confirmado com folga.
+
+## Janela (iced 0.14 + NV12 na GPU), medida em 2026-10-06 com a janela de verdade
+12 câmeras (a Intelbras por RTSP + 11 HLS públicas), motor local (`--embedded`), grade Auto, release, 25 s de amostra
+depois de 22 s de aquecimento (todas ao vivo, "12/12"): **CPU ≈ 49% de um núcleo** (42–58%), **RSS ≈ 1,7 GiB**.
+Conferência do piscar: 16 capturas da região da janela; nas 11 capturas em que a janela não estava coberta por outra, **nenhum**
+dos 12 quadros de vídeo teve queda de brilho (com o `image` do iced 0.14 era 45 de variação). Nas outras 5 a barra superior e a
+lateral também mudaram, ou seja, havia outra janela por cima: não é defeito do vídeo.
