@@ -2159,7 +2159,11 @@ mod tests {
         let mut app = test_app();
         let _ = update(&mut app, Message::Recordings(RecMsg::Open));
         assert!(app.recordings.is_none(), "sem daemon não há histórico");
-        assert!(app.toasts.iter().any(|t| t.message.contains("daemon")));
+        assert!(
+            app.toasts
+                .iter()
+                .any(|t| t.message.contains("motor local") && t.message.contains("RRV_SOCKET"))
+        );
     }
 
     #[test]

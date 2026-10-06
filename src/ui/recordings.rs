@@ -13,7 +13,7 @@ use crate::domain::timeline_view::{self, SegmentSpan, Span};
 use crate::ipc::protocol::{HistoryEvent, Request, Response, SegmentInfo};
 use crate::ui::app::App;
 use crate::ui::bridge::GStreamerBridge;
-use crate::ui::daemon::PendingRequest;
+use crate::ui::daemon::{DaemonState, PendingRequest};
 use crate::ui::message::Message;
 use crate::ui::theme::{Theme, ThemeColors};
 use crate::ui::video_widget::VideoWidget;
@@ -273,12 +273,33 @@ pub fn update(app: &mut App, msg: RecMsg) -> Task<Message> {
     Task::none()
 }
 
+/// Why the recordings view cannot open now, and what to do about it. `None` when it can.
+/// The history lives in the daemon, so this depends on the mode the window is in.
+pub(crate) fn unavailable_reason(daemon: &DaemonState) -> Option<String> {
+    use super::daemon::Mode;
+    match daemon.mode {
+        Mode::Connected => None,
+        Mode::Embedded => Some(format!(
+            "A vista Gravações precisa do daemon, e esta janela está no motor local (o chip da barra diz \
+             \"Motor local\"). Abra a janela ligada ao daemon: RRV_SOCKET={} ou --daemon <socket>",
+            daemon.socket.display()
+        )),
+        Mode::Connecting => Some("Conectando ao daemon… tente de novo em instantes".into()),
+        Mode::Lost => Some(
+            "Sem contato com o daemon agora (veja o aviso sob a barra); a vista Gravações volta quando ele responder".into(),
+        ),
+        Mode::Incompatible => Some(
+            "A janela e o daemon falam versões diferentes do protocolo; atualize um dos dois".into(),
+        ),
+        Mode::NoPermission => Some(
+            "Sem permissão para o socket do daemon (é de outro usuário?); a vista Gravações precisa dele".into(),
+        ),
+    }
+}
+
 fn open(app: &mut App) {
-    if !app.daemon.is_connected() {
-        super::update::toast(
-            app,
-            "O histórico vem do daemon: conecte-se a ele (rrv-daemon) para ver as gravações",
-        );
+    if let Some(why) = unavailable_reason(&app.daemon) {
+        super::update::toast(app, why);
         return;
     }
     let lanes: Vec<String> = app.daemon.cameras.iter().map(|c| c.name.clone()).collect();
@@ -1505,6 +1526,33 @@ mod tests {
         // uma pasta que só existe (sem o arquivo) não conta
         assert_eq!(dir_holding("a.mkv", &wrong, &[other]), None);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_refusal_explains_the_mode_and_what_to_do() {
+        use crate::ui::daemon::Mode;
+        let mut d = DaemonState::embedded("/run/user/1000/rrv/rrv.sock".into());
+        let embedded = unavailable_reason(&d).unwrap();
+        assert!(
+            embedded.contains("motor local") && embedded.contains("RRV_SOCKET"),
+            "{embedded}"
+        );
+        assert!(
+            embedded.contains("/run/user/1000/rrv/rrv.sock"),
+            "diz onde procurou: {embedded}"
+        );
+        for (mode, word) in [
+            (Mode::Connecting, "Conectando"),
+            (Mode::Lost, "Sem contato"),
+            (Mode::Incompatible, "versões diferentes"),
+            (Mode::NoPermission, "permissão"),
+        ] {
+            d.mode = mode;
+            let why = unavailable_reason(&d).unwrap_or_default();
+            assert!(why.contains(word), "{mode:?}: {why}");
+        }
+        d.mode = Mode::Connected;
+        assert_eq!(unavailable_reason(&d), None, "conectado: abre");
     }
 
     #[test]
