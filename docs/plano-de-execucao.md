@@ -66,7 +66,7 @@ Depende de 0.4 e 0.5.
 | 2.5 | Topologia B (ADR 0008): pipeline *detect* sempre ligado no sub + *display* só para o visível | decidido com 0.3, 0.4 (**D1**, **D2**) | G |
 | 2.6 | Ligar `streaming` (pausa em cena estática) | só se o baseline mostrar ganho; senão remover o módulo | M | [x] módulo `streaming` removido em 2026-10-05 por decisão do dono (nunca foi ligado; o baseline não pedia pausa em cena estática)
 | 2.7 | Decidir `hw_encoder`: provavelmente **remover**, pois 3.1 elimina o reencode | módulo removido ou ligado | P | [x] módulo removido em 2026-10-05: ninguém o usava e a gravação RTSP H.264/H.265 já não reencoda (3.1); HLS/arquivo seguem com `x264enc` fixo
-| 2.8 | Teste de estresse: 16 fontes sintéticas + tempestade de reconexões | sem vazamento de threads/memória em 1 h | M | [~] `tests/stress.rs`: 5 min OK (7.482 ciclos, sem vazamento de threads/fds, RSS em platô); falta a corrida de 1 h (`RRV_STRESS_SECS=3600`) |
+| 2.8 | Teste de estresse: 16 fontes sintéticas + tempestade de reconexões | sem vazamento de threads/memória em 1 h | M | [x] corrida de 1 h (2026-10-05): 3604 s, 91.174 ciclos de reconexão, 4.881 gravações, **0 falhas**; threads 137–179 (início 142, fim 137) e fds 49–57 sem tendência; RSS 1,03 → 1,13 GB, platô (média 1,130 → 1,147 GB entre as metades, +1,5%); ao fim do teste threads=10, fds=4. `RRV_STRESS_SECS=3600 cargo test --release --test stress -- --ignored --nocapture`
 
 Gate M2: 16 câmeras dentro do orçamento do baseline. Risco principal: 2.3.
 
