@@ -82,6 +82,9 @@ pub fn resolve_secrets(config: &mut Config) -> Vec<String> {
     if let Some(url) = config.webhook.as_mut().and_then(|w| w.url.as_mut()) {
         fix("webhook.url".into(), url);
     }
+    if let Some(token) = config.daemon.as_mut().and_then(|d| d.token.as_mut()) {
+        fix("daemon.token".into(), token);
+    }
     if let Some(url) = config.mqtt.as_mut().and_then(|m| m.url.as_mut()) {
         fix("mqtt.url".into(), url);
     }

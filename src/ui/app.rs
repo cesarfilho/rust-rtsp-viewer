@@ -201,12 +201,17 @@ pub fn new_app(
         .socket
         .clone()
         .unwrap_or_else(crate::ipc::default_socket_path);
-    let mode = super::daemon::initial_mode(daemon_options.embedded, socket.exists());
+    // Um endereço de rede foi pedido de propósito: não há arquivo para olhar, vai direto ao daemon.
+    let reachable = crate::ipc::client::tcp_address(&socket).is_some() || socket.exists();
+    let mode = super::daemon::initial_mode(daemon_options.embedded, reachable);
     let (daemon, link) = if mode == super::daemon::Mode::Embedded {
         (super::daemon::DaemonState::embedded(socket), None)
     } else {
         log::info!("rrv-daemon found at {}: connecting", socket.display());
-        let link = crate::ipc::link::DaemonLink::spawn(socket.clone());
+        let link = crate::ipc::link::DaemonLink::spawn_with_token(
+            socket.clone(),
+            daemon_options.token.clone(),
+        );
         (super::daemon::DaemonState::connecting(socket), Some(link))
     };
     engine.set_display_only(daemon.is_daemon_mode());

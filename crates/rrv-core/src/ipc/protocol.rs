@@ -18,7 +18,10 @@ pub const PROTOCOL_VERSION: u32 = 1;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Request {
-    /// Primeira mensagem de toda conexão.
+    /// Só nas conexões TCP: a resposta ao desafio do daemon (`ServerMessage::Challenge`),
+    /// `HMAC-SHA256(token, nonce)` em hexadecimal (veja `ipc::auth`). Vem antes do `Hello`.
+    Auth { response: String },
+    /// Primeira mensagem de toda conexão (depois do `Auth`, no TCP).
     Hello { protocol: u32 },
     /// Estado de todas as câmeras.
     Status,
@@ -96,6 +99,10 @@ pub enum Response {
 pub enum ServerMessage {
     Response(Response),
     Event(WireEvent),
+    /// Só nas conexões TCP, a primeira mensagem do daemon: o desafio que o cliente responde com `Auth`.
+    Challenge {
+        nonce: String,
+    },
 }
 
 /// Um segmento gravado. O caminho do arquivo é do daemon e não sai dele.

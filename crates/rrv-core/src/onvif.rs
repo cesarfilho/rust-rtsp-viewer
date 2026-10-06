@@ -438,19 +438,7 @@ fn new_uuid() -> String {
 }
 
 fn fill_random(buf: &mut [u8]) {
-    use std::io::Read;
-    if std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(buf))
-        .is_err()
-    {
-        // sem /dev/urandom (não deveria acontecer no Linux): a hora e o pid bastam para um nonce
-        let t = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        for (i, b) in buf.iter_mut().enumerate() {
-            *b = ((t >> ((i % 16) * 8)) as u8) ^ (std::process::id() as u8).wrapping_add(i as u8);
-        }
-    }
+    crate::random::fill(buf);
 }
 
 /// POST de um envelope SOAP; a resposta é o corpo, mesmo num `Fault` (que traz o motivo).

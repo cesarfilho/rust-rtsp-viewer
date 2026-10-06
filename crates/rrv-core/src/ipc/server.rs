@@ -7,6 +7,7 @@
 //! eventos novos.
 
 use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{SocketAddr, TcpListener};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -15,6 +16,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use super::auth;
+use super::conn::Conn;
 use super::handler::{self, Host};
 use super::protocol::{Request, Response, ServerMessage, WireEvent, decode_line, encode_line};
 
@@ -24,6 +27,12 @@ const MAX_LINE: u64 = 1 << 20;
 const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Um cliente que não lê não pode prender o servidor.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Quanto uma conexão TCP tem para se autenticar; sem isso, quem só abre a conexão prenderia uma thread.
+const AUTH_TIMEOUT: Duration = Duration::from_secs(5);
+/// Depois de uma autenticação recusada: o atraso que torna inútil tentar tokens em sequência.
+const AUTH_FAIL_DELAY: Duration = Duration::from_millis(700);
+/// Conexões TCP ao mesmo tempo (a janela usa uma; sobra para o `rrvctl` e para testes).
+const MAX_TCP_CONNECTIONS: usize = 16;
 
 struct Pending {
     request: Request,
@@ -35,6 +44,8 @@ type Subscribers = Arc<Mutex<Vec<Sender<WireEvent>>>>;
 pub struct IpcServer {
     path: PathBuf,
     pending: Receiver<Pending>,
+    /// Para as threads de conexão que o `listen_tcp` cria depois.
+    requests: Sender<Pending>,
     subscribers: Subscribers,
     stop: Arc<AtomicBool>,
 }
@@ -70,7 +81,7 @@ impl IpcServer {
         let subscribers: Subscribers = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
         {
-            let (tx, subs, stop) = (tx, subscribers.clone(), stop.clone());
+            let (tx, subs, stop) = (tx.clone(), subscribers.clone(), stop.clone());
             std::thread::Builder::new()
                 .name("rrv-ipc-accept".into())
                 .spawn(move || {
@@ -80,7 +91,7 @@ impl IpcServer {
                                 let (tx, subs) = (tx.clone(), subs.clone());
                                 let _ = std::thread::Builder::new()
                                     .name("rrv-ipc-conn".into())
-                                    .spawn(move || connection(stream, tx, subs));
+                                    .spawn(move || connection(Conn::Unix(stream), tx, subs, None));
                             }
                             Err(_) => std::thread::sleep(Duration::from_millis(50)),
                         }
@@ -90,9 +101,59 @@ impl IpcServer {
         Ok(Self {
             path: path.to_path_buf(),
             pending,
+            requests: tx,
             subscribers,
             stop,
         })
+    }
+
+    /// Passa a aceitar conexões **TCP** em `addr` (a janela em outra máquina), todas autenticadas por
+    /// `token` (desafio-resposta, veja `ipc::auth`). Devolve o endereço de fato (útil com a porta 0).
+    /// O tráfego depois da autenticação não é criptografado: só para uma LAN de confiança.
+    pub fn listen_tcp(&self, addr: SocketAddr, token: &str) -> std::io::Result<SocketAddr> {
+        auth::validate_token(token)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+        let listener = TcpListener::bind(addr)?;
+        listener.set_nonblocking(true)?;
+        let local = listener.local_addr()?;
+        let token: Arc<str> = Arc::from(token);
+        let (tx, subs, stop) = (
+            self.requests.clone(),
+            self.subscribers.clone(),
+            self.stop.clone(),
+        );
+        let open = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        std::thread::Builder::new()
+            .name("rrv-ipc-tcp".into())
+            .spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((stream, _)) => {
+                            if open.load(Ordering::Relaxed) >= MAX_TCP_CONNECTIONS {
+                                continue; // fecha: o `stream` cai aqui
+                            }
+                            let _ = stream.set_nodelay(true);
+                            let (tx, subs, token, open) =
+                                (tx.clone(), subs.clone(), token.clone(), open.clone());
+                            open.fetch_add(1, Ordering::Relaxed);
+                            let spawned = std::thread::Builder::new()
+                                .name("rrv-ipc-tcp-conn".into())
+                                .spawn({
+                                    let open = open.clone();
+                                    move || {
+                                        connection(Conn::Tcp(stream), tx, subs, Some(token));
+                                        open.fetch_sub(1, Ordering::Relaxed);
+                                    }
+                                });
+                            if spawned.is_err() {
+                                open.fetch_sub(1, Ordering::Relaxed);
+                            }
+                        }
+                        Err(_) => std::thread::sleep(Duration::from_millis(50)),
+                    }
+                }
+            })?;
+        Ok(local)
     }
 
     /// Executa os pedidos que chegaram desde o último tick. Retorna quantos.
@@ -127,7 +188,7 @@ impl Drop for IpcServer {
     }
 }
 
-fn send(writer: &Mutex<UnixStream>, message: &ServerMessage) -> std::io::Result<()> {
+fn send(writer: &Mutex<Conn>, message: &ServerMessage) -> std::io::Result<()> {
     let line = encode_line(message);
     writer
         .lock()
@@ -137,7 +198,7 @@ fn send(writer: &Mutex<UnixStream>, message: &ServerMessage) -> std::io::Result<
 
 /// Lê uma linha de no máximo `MAX_LINE` bytes. `None` = conexão fechada ou
 /// linha grande demais.
-fn read_line(reader: &mut BufReader<UnixStream>) -> Option<String> {
+fn read_line(reader: &mut BufReader<Conn>) -> Option<String> {
     let mut buf = String::new();
     match reader.by_ref().take(MAX_LINE).read_line(&mut buf) {
         Ok(0) | Err(_) => None,
@@ -146,14 +207,57 @@ fn read_line(reader: &mut BufReader<UnixStream>) -> Option<String> {
     }
 }
 
-fn connection(stream: UnixStream, pending: Sender<Pending>, subscribers: Subscribers) {
+/// Uma conexão. `token` é `Some` nas conexões TCP: elas começam com o desafio e só seguem para o
+/// `Hello` depois de uma resposta certa.
+fn connection(
+    stream: Conn,
+    pending: Sender<Pending>,
+    subscribers: Subscribers,
+    token: Option<Arc<str>>,
+) {
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
     let Ok(write_half) = stream.try_clone() else {
         return;
     };
+    let peer = stream.peer();
     let writer = Arc::new(Mutex::new(write_half));
     let mut reader = BufReader::new(stream);
+
+    // 0. TCP: desafio e resposta (sem isso, nada do que vem depois é aceito).
+    if let Some(token) = &token {
+        let _ = reader.get_ref().set_read_timeout(Some(AUTH_TIMEOUT));
+        let nonce = auth::new_challenge();
+        if send(
+            &writer,
+            &ServerMessage::Challenge {
+                nonce: nonce.clone(),
+            },
+        )
+        .is_err()
+        {
+            return;
+        }
+        let proven = read_line(&mut reader)
+            .and_then(|l| decode_line::<Request>(&l).ok())
+            .is_some_and(|r| matches!(r, Request::Auth { response } if auth::verify(token, &nonce, &response)));
+        if !proven {
+            log::warn!("conexão TCP recusada de {peer}: autenticação inválida");
+            std::thread::sleep(AUTH_FAIL_DELAY);
+            let _ = send(
+                &writer,
+                &ServerMessage::Response(Response::Error {
+                    message: "autenticação recusada".into(),
+                }),
+            );
+            return;
+        }
+        let _ = reader.get_ref().set_read_timeout(None);
+        if send(&writer, &ServerMessage::Response(Response::Ok)).is_err() {
+            return;
+        }
+        log::info!("conexão TCP autenticada de {peer}");
+    }
 
     // 1. A primeira mensagem tem de ser Hello com a versão certa.
     let Some(first) = read_line(&mut reader) else {

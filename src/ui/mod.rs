@@ -37,8 +37,11 @@ pub const APP_ID: &str = "rust-rtsp-viewer";
 pub struct DaemonOptions {
     /// Força o motor local, mesmo que haja um daemon.
     pub embedded: bool,
-    /// Socket do daemon; padrão: `$RRV_SOCKET` ou `$XDG_RUNTIME_DIR/rrv/rrv.sock`.
+    /// Socket do daemon, ou `tcp://host:porta` para um daemon em outra máquina; padrão: `$RRV_SOCKET`
+    /// ou `$XDG_RUNTIME_DIR/rrv/rrv.sock`.
     pub socket: Option<std::path::PathBuf>,
+    /// O token do daemon pela rede (ignorado num socket local).
+    pub token: Option<String>,
 }
 
 #[allow(clippy::too_many_arguments)]

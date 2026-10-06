@@ -204,6 +204,46 @@ pub fn validate(config: &Config) -> Vec<Issue> {
             ));
         }
     }
+    if let Some(d) = &config.daemon {
+        let token = d.token.as_deref().unwrap_or("");
+        if let Some(l) = &d.listen {
+            match l.parse::<std::net::SocketAddr>() {
+                Err(_) => issues.push(Issue::error(
+                    "daemon.listen",
+                    format!("'{l}' não é um endereço IP:porta (ex.: 0.0.0.0:7878)"),
+                )),
+                Ok(addr) => {
+                    if let Err(m) = crate::ipc::auth::validate_token(token) {
+                        issues.push(Issue::error(
+                            "daemon.token",
+                            format!("{m} (necessário com listen)"),
+                        ));
+                    } else if !addr.ip().is_loopback() {
+                        issues.push(Issue::warning(
+                            "daemon.listen",
+                            "o canal pela rede não é criptografado: use só numa LAN de confiança ou por VPN"
+                                .to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+        if let Some(a) = &d.address
+            && let Some(hostport) = a.strip_prefix(crate::ipc::client::TCP_PREFIX)
+        {
+            if !hostport.contains(':') {
+                issues.push(Issue::error(
+                    "daemon.address",
+                    format!("'{a}' precisa de porta (tcp://host:porta)"),
+                ));
+            }
+            if !token.is_empty()
+                && let Err(m) = crate::ipc::auth::validate_token(token)
+            {
+                issues.push(Issue::error("daemon.token", m));
+            }
+        }
+    }
     if let Some(m) = &config.mqtt
         && let Err(message) = m.clone().into_config()
     {

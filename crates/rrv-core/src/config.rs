@@ -43,6 +43,10 @@ pub struct Config {
     /// `[motion]` — frame-difference detector tuning (`enabled`, `threshold`,
     /// `contour_area`, `sample_stride`).
     pub motion: Option<crate::domain::motion::MotionConfigFile>,
+    /// `[daemon]` — the network channel between the window and the daemon (they may be on different
+    /// machines): the daemon `listen`s on a TCP address, the window connects to an `address`, both
+    /// sharing a `token`.
+    pub daemon: Option<DaemonFile>,
     /// `[mqtt]` — the daemon publishes camera state and events to an MQTT broker (Home Assistant).
     pub mqtt: Option<crate::mqtt::MqttFile>,
     /// `[detect]` — object detection (YOLO) on the frames where motion is seen.
@@ -50,6 +54,31 @@ pub struct Config {
     /// `[retention]` — how long the daemon keeps recordings (`motion_days`,
     /// `manual_days`, `max_disk_percent`).
     pub retention: Option<crate::domain::retention::RetentionFile>,
+}
+
+/// `[daemon]`: the channel over the network (TCP + token; the traffic is **not encrypted**).
+#[derive(Deserialize, Clone, Default)]
+pub struct DaemonFile {
+    /// Daemon side: where to listen for windows, e.g. `"0.0.0.0:7878"` (all interfaces) or
+    /// `"192.168.1.10:7878"` (one). Requires `token`. Absent = the local socket only.
+    pub listen: Option<String>,
+    /// Window side: the daemon to connect to, `"tcp://192.168.1.10:7878"` (or a socket path). The
+    /// `--daemon` flag wins. Absent = the local socket.
+    pub address: Option<String>,
+    /// The shared secret (16+ characters, e.g. `openssl rand -hex 24`); accepts `${NAME}`. The window also
+    /// reads `RRV_TOKEN` or the keyring secret `rrv_token`.
+    pub token: Option<String>,
+}
+
+// The token is a secret: a stray `{:?}` of the config must never print it.
+impl std::fmt::Debug for DaemonFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DaemonFile")
+            .field("listen", &self.listen)
+            .field("address", &self.address)
+            .field("token", &self.token.as_ref().map(|_| "****"))
+            .finish()
+    }
 }
 
 /// Flat mirror of the `[notifications]` section.

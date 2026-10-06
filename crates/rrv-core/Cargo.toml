@@ -33,6 +33,9 @@ libc = "0.2.190"
 # ONVIF: SOAP é lido com roxmltree; a senha vai como WS-UsernameToken (digest SHA-1).
 roxmltree = "0.20"
 sha1 = "0.10"
+# Autenticação do canal TCP: HMAC-SHA256 de um desafio (o token nunca trafega).
+hmac = "0.12"
+sha2 = "0.10"
 # MQTT sem TLS (use-rustls desligado): `mqtt://` apenas; broker local ou VPN.
 rumqttc = { version = "0.25", default-features = false }
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "cuda"], optional = true }

@@ -72,11 +72,17 @@ pub struct DaemonLink {
 
 impl DaemonLink {
     pub fn spawn(socket: PathBuf) -> Self {
+        Self::spawn_with_token(socket, None)
+    }
+
+    /// Como [`DaemonLink::spawn`] para um daemon pela rede: `socket` é `tcp://host:porta` e `token` o
+    /// segredo dele. (Num socket Unix o token não é usado.)
+    pub fn spawn_with_token(socket: PathBuf, token: Option<String>) -> Self {
         let (ev_tx, events) = mpsc::channel();
         let (commands, cmd_rx) = mpsc::channel();
         let thread = std::thread::Builder::new()
             .name("rrv-daemon-link".into())
-            .spawn(move || run(socket, ev_tx, cmd_rx))
+            .spawn(move || run(socket, token, ev_tx, cmd_rx))
             .ok();
         Self {
             events,
@@ -113,7 +119,7 @@ enum Next {
     Stop,
 }
 
-fn run(socket: PathBuf, ev: Sender<LinkEvent>, cmds: Receiver<LinkCommand>) {
+fn run(socket: PathBuf, token: Option<String>, ev: Sender<LinkEvent>, cmds: Receiver<LinkCommand>) {
     let mut attempt = 0usize;
     // Comandos que chegaram enquanto não havia conexão: a resposta é um erro
     // claro, não um silêncio.
@@ -127,7 +133,7 @@ fn run(socket: PathBuf, ev: Sender<LinkEvent>, cmds: Receiver<LinkCommand>) {
     };
     loop {
         let _ = ev.send(LinkEvent::Connecting);
-        match IpcClient::connect_detailed(&socket) {
+        match IpcClient::connect_target(&socket, token.as_deref()) {
             Ok(mut client) => {
                 attempt = 0;
                 match serve(&mut client, &ev, &cmds) {

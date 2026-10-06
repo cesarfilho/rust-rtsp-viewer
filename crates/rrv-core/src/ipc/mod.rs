@@ -1,5 +1,5 @@
-//! O canal entre a janela e o daemon: socket Unix local, uma mensagem JSON por
-//! linha, versionado (ADR 0010).
+//! O canal entre a janela e o daemon: socket Unix local **ou TCP pela LAN** (com token, veja [`auth`]),
+//! uma mensagem JSON por linha, versionado (ADR 0010).
 //!
 //! - [`protocol`]: os tipos e o formato do fio.
 //! - [`handler`]: o que cada pedido faz no motor (puro, sem socket).
@@ -7,7 +7,9 @@
 //! - [`client`]: o lado da janela (e do `rrvctl`).
 //! - [`link`]: a conexão da janela mantida numa thread (heartbeat, backoff).
 
+pub mod auth;
 pub mod client;
+pub mod conn;
 pub mod handler;
 pub mod link;
 pub mod protocol;
@@ -26,6 +28,15 @@ pub fn default_socket_path() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     base.join("rrv").join("rrv.sock")
+}
+
+/// O token do canal pela rede para quem se conecta: a variável `RRV_TOKEN`, senão o segredo `rrv_token`
+/// (arquivo em `$RRV_SECRETS_DIR` ou chaveiro do sistema). `None` se não houver.
+pub fn client_token() -> Option<String> {
+    std::env::var("RRV_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty())
+        .or_else(|| crate::secrets::lookup("rrv_token"))
 }
 
 /// O limite de `sun_path` dos sockets Unix (108 no Linux, contando o NUL).

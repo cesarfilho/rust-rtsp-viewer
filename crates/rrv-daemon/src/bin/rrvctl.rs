@@ -19,7 +19,8 @@ use rrv_core::ipc::protocol::{CameraInfo, Request, Response};
 #[derive(Parser)]
 #[command(name = "rrvctl", version, about = "Opera o rrv-daemon pelo socket")]
 struct Cli {
-    /// Socket do daemon (padrão: `$RRV_SOCKET`, senão `$XDG_RUNTIME_DIR/rrv/rrv.sock`)
+    /// Socket do daemon, ou `tcp://host:porta` para um daemon em outra máquina (token: `RRV_TOKEN` ou o
+    /// segredo `rrv_token` do chaveiro). Padrão: `$RRV_SOCKET`, senão `$XDG_RUNTIME_DIR/rrv/rrv.sock`
     #[arg(long, env = "RRV_SOCKET", global = true)]
     socket: Option<PathBuf>,
 
@@ -330,7 +331,9 @@ fn run(cli: &Cli) -> Result<(), String> {
         .socket
         .clone()
         .unwrap_or_else(rrv_core::ipc::default_socket_path);
-    let mut c = IpcClient::connect(&socket)?;
+    // `--socket tcp://host:porta` fala com um daemon em outra máquina (token em RRV_TOKEN ou no chaveiro).
+    let token = rrv_core::ipc::client_token();
+    let mut c = IpcClient::connect_target(&socket, token.as_deref()).map_err(|e| e.to_string())?;
     match &cli.command {
         Command::Discover { .. } | Command::Secret { .. } => {
             unreachable!("tratado antes de conectar")

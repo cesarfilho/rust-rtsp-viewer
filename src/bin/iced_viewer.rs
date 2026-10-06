@@ -22,7 +22,9 @@ struct Cli {
     #[arg(long)]
     embedded: bool,
 
-    /// Socket of the rrv-daemon (default: $RRV_SOCKET, else $XDG_RUNTIME_DIR/rrv/rrv.sock)
+    /// The rrv-daemon: a socket path, or `tcp://host:port` for a daemon on another machine (the token
+    /// comes from `RRV_TOKEN`, the keyring secret `rrv_token` or `[daemon] token`).
+    /// Default: $RRV_SOCKET, else $XDG_RUNTIME_DIR/rrv/rrv.sock
     #[arg(long, env = "RRV_SOCKET", value_name = "PATH")]
     daemon: Option<std::path::PathBuf>,
 }
@@ -87,6 +89,7 @@ fn run(config_path: &str, cli: &Cli) -> Result<(), String> {
             .unwrap_or_default(),
     );
 
+    let daemon_cfg = config.daemon.clone().unwrap_or_default();
     let mut cameras = config.cameras.clone().unwrap_or_default();
     rust_rtsp_viewer::startup::merge_global_camera_defaults(&mut cameras, &config);
 
@@ -128,7 +131,16 @@ fn run(config_path: &str, cli: &Cli) -> Result<(), String> {
         motion_config,
         rust_rtsp_viewer::ui::DaemonOptions {
             embedded: cli.embedded,
-            socket: cli.daemon.clone(),
+            // `--daemon` (ou RRV_SOCKET) vence; sem ele, o `[daemon] address` do config
+            socket: cli
+                .daemon
+                .clone()
+                .or_else(|| daemon_cfg.address.clone().map(std::path::PathBuf::from)),
+            token: daemon_cfg
+                .token
+                .clone()
+                .filter(|t| !t.is_empty())
+                .or_else(rust_rtsp_viewer::ipc::client_token),
         },
     )
     .map_err(|e| format!("GUI failed to start: {e}"))

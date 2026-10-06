@@ -2028,6 +2028,7 @@ mod tests {
             crate::ui::DaemonOptions {
                 embedded: true,
                 socket: Some("/nonexistent/rrv.sock".into()),
+                token: None,
             },
         );
         crate::i18n::set(crate::i18n::Lang::Pt);

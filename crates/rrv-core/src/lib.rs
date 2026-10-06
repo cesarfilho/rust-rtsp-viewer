@@ -13,6 +13,7 @@ pub mod infrastructure;
 pub mod ipc;
 pub mod mqtt;
 pub mod onvif;
+pub mod random;
 pub mod secrets;
 pub mod startup;
 pub mod webhook;

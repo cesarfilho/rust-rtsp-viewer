@@ -130,6 +130,7 @@ fn run(cli: &Cli) -> Result<(), String> {
         .map(|d| d.into_config())
         .transpose()?
         .unwrap_or_default();
+    let daemon_cfg = config.daemon.clone().unwrap_or_default();
     let logs = config.logs.unwrap_or_default();
     let view = config.view.unwrap_or_default();
     let mut zones = rrv_core::infrastructure::zone_state::load();
@@ -177,6 +178,19 @@ fn run(cli: &Cli) -> Result<(), String> {
     let server = IpcServer::bind(&socket)
         .map_err(|e| format!("não consegui abrir o socket {}: {e}", socket.display()))?;
     log::info!("socket de controle em {}", server.path().display());
+    // Pela rede (a janela em outra máquina): só se `[daemon] listen` pedir, e sempre com token.
+    if let Some(listen) = &daemon_cfg.listen {
+        let addr: std::net::SocketAddr = listen
+            .parse()
+            .map_err(|e| format!("[daemon] listen '{listen}' inválido: {e}"))?;
+        let token = daemon_cfg.token.as_deref().unwrap_or("");
+        let bound = server
+            .listen_tcp(addr, token)
+            .map_err(|e| format!("não consegui escutar em {listen}: {e}"))?;
+        log::info!(
+            "canal pela rede em {bound} (autenticado por token; o tráfego NÃO é criptografado: só numa LAN de confiança)"
+        );
+    }
 
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
