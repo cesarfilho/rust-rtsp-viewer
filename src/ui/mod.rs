@@ -12,6 +12,7 @@ pub(crate) mod state;
 pub(crate) mod subscription;
 pub mod theme;
 pub(crate) mod update;
+pub mod video_shader;
 pub mod video_widget;
 pub(crate) mod view;
 pub mod zone_editor;

@@ -173,7 +173,8 @@ keyring is plan 5.3.
 | `subscription.rs` | keyboard + resize + 100 ms tick (`TICK_MS`) |
 | `bridge.rs` | (now `engine/bridge.rs`, re-exported as `ui::bridge`) `GStreamerBridge` — bus, metrics, frame state, recording lifecycle |
 | `pipeline.rs` | (now `engine/pipeline.rs`, re-exported as `ui::pipeline`) `start_rtsp`/`start_hls`/`start_file`, recording branch, probes |
-| `video_widget.rs` | `iced::widget::image` integration |
+| `video_widget.rs` | `VideoWidget`: shows a bridge's video through `video_shader` (never `iced::widget::image`: a `Handle` per frame flickers on iced 0.14) |
+| `video_shader.rs` | wgpu `shader` widget: one RGBA texture per video, updated in place with `write_texture`, letterboxed, freed when the widget dies (`Weak` token). Tested off-screen on a real wgpu device (`WGPU_POWER_PREF=high` for the NVIDIA) |
 | `zone_editor.rs` | zone editor canvas, drawn over the spotlight (`flex_layout::spotlight_view`) while `App.zone_edit` is `Some`; opened from the camera menu (`Message::EditZones`). Coordinates map onto the letterboxed video rect |
 | `icons.rs` | embedded DejaVu Sans (`icons::FONT`) for icon glyphs |
 | `theme.rs` | themes + `contrast_ratio` / `readable_on`; a test enforces WCAG targets per theme |
