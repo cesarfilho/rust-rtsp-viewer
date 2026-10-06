@@ -14,6 +14,14 @@ dir = "/state/logs"
 [motion]
 enabled = true
 
+# Detecção de objetos: só com compose.detect.yaml (CPU) ou compose.detect-cuda.yaml (GPU NVIDIA);
+# o modelo vem de `scripts/fetch-model.sh`, montado em /models.
+# [detect]
+# enabled = true
+# model = "/models/yolo11n-640.onnx"
+# backend = "auto"            # "cpu", "cuda" ou "auto"
+# labels = ["person", "car"]
+
 # A senha NÃO fica aqui: `${cam_portao_password}` é um segredo do Docker (veja o compose.yaml e o
 # README). O valor vem de /run/secrets/cam_portao_password, ou de uma variável de ambiente de mesmo nome.
 [[cameras]]

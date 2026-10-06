@@ -69,7 +69,7 @@ exato ao baixá-lo.
 | C4 ✅ | **4.4 eventos por rótulo**: schema v3 do histórico (caixa, rótulo, score, zona), `[detect] labels`/`min_score`, notificação e webhook por rótulo, cooldown por rótulo | M | eu | filtro por rótulo funciona de ponta a ponta no `rrvctl history` |
 | C5 | **4.5 interface**: caixas sobre o vídeo no spotlight e no player, filtro por rótulo na lista de eventos, revisão "Alertas × Detecções" | G | eu + você | você revisa a interface na tela; contraste dos novos estados nos 5 temas |
 | C6 | **4.6 avaliação**: conjunto pequeno com gabarito (suas câmeras, anonimizado), regressão por IoU/score, precisão/recall registrados, fallback em CPU | M | eu + você (as imagens) | números em `docs/` e um teste que falha se piorarem |
-| C7 | **4.7 empacotar** o `libonnxruntime` na imagem Docker (variantes CPU / OpenVINO / CUDA) | M | eu | `docker compose` sobe a detecção sem instalar nada no host |
+| C7 ✅ | **4.7 empacotar** o `libonnxruntime` na imagem Docker (variantes CPU / OpenVINO / CUDA) | M | eu | `docker compose` sobe a detecção sem instalar nada no host |
 
 Dependências: C1→C2→C3→C4→C5; C6 e C7 em paralelo com a C5. A C0 decide o backend e portanto o Dockerfile da C7.
 

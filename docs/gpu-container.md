@@ -81,3 +81,25 @@ A primeira rodada usou uma fonte sem `format=I420` e deu **285% de um núcleo**:
 H.264 4:4:4 de 10 bits, que é muito mais pesado e que a GPU não decodifica. O número parecia um
 resultado e era um artefato da fonte. Sempre conferir o formato/perfil da fonte de teste e a coluna
 "decodificador" do `rrvctl status`.
+
+## Detecção de objetos no contêiner (C7)
+
+O `Dockerfile` tem três alvos: `runtime` (só o NVR, o padrão), `detect-cpu` e `detect-cuda`. A libonnxruntime 1.30 vem
+na imagem (binário oficial, SHA-256 conferido no build); **o modelo não**: `scripts/fetch-model.sh 640` o baixa para
+`./models`, montado em `/models`.
+
+```bash
+# CPU
+docker compose -f compose.yaml -f compose.detect.yaml up -d --build
+# GPU NVIDIA (precisa do toolkit + CDI do host, veja acima)
+docker compose -f compose.yaml -f compose.nvidia.yaml -f compose.detect-cuda.yaml up -d --build
+docker compose logs rrv | grep detecção     # "detecção ligada: /models/yolo11n-640.onnx (640 px)"
+```
+No `config.docker.toml`: `[motion] enabled = true` e `[detect] enabled = true`, `model = "/models/yolo11n-640.onnx"`.
+
+Verificado em 2026-10-06:
+- `detect-cpu` (1,1 GB): o daemon sobe, carrega a libonnxruntime da imagem e o modelo montado e loga "detecção ligada".
+- `detect-cuda` (6,6 GB, base `nvidia/cuda:13.0.3-cudnn-runtime-ubuntu24.04`): compila e sobe. Sem GPU no contêiner, `ldd`
+  mostra que só falta `libcuda.so.1` (a do **driver**, que o CDI injeta), então `backend = "cuda"` falha alto e `"auto"`
+  cai para a CPU, como projetado. **Não foi rodado com a GPU dentro do contêiner**: falta o `nvidia-container-toolkit`
+  (sudo). Com ele, a inferência em CUDA já foi medida fora do contêiner (docs/spike-0.6-ort.md).

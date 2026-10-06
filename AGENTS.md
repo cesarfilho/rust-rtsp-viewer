@@ -225,6 +225,8 @@ staggered start — *initial* values; runtime tweaks persist to
 
 ## Build/test
 
+The `Dockerfile` has targets `runtime` (default), `detect-cpu` and `detect-cuda` (libonnxruntime 1.30 baked in, SHA-256 pinned; the model is mounted from `./models` at `/models`); `compose.detect.yaml` / `compose.detect-cuda.yaml` select them (`docs/gpu-container.md`).
+
 `make help` lists the shortcuts (`make ci` = everything below; `make status|history|record|clip` drive `rrvctl`;
 `make up|down|logs` the Docker daemon).
 
