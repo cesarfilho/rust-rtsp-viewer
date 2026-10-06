@@ -48,3 +48,14 @@ câmera cujo SDP lista o áudio antes do vídeo não funcionaria; a faixa de áu
 11 câmeras HLS no contêiner, 40 s de aquecimento e 40 s de amostra, em sequência: decodificação por CPU (`avdec_h264`)
 **88%** de CPU média (máx 125%, 625 MiB) × iGPU Intel por VA-API (`vah264dec`) **47%** (máx 70%, 709 MiB). Com o RGBA fora do
 caminho, a decodificação passou a dominar e a GPU a reduz quase pela metade. Detalhes em `docs/gpu-container.md`.
+
+## Keyframes da Intelbras (spike A2, 2026-10-06)
+Ferramenta: `RRV_PROBE_URL=... cargo test -p rrv-core --test headless probe_keyframes -- --ignored --nocapture`
+(mede os quadros-I por `alignment=au`, sem pedir e pedindo um *force-key-unit* para cima a cada N s).
+- A GOP da câmera é **dinâmica**: com a cena parada (gravação da noite) o ring chegou a **23 s** sem keyframe; com
+  movimento na sala vieram **17 keyframes em 40 s** (intervalos de 0,6 a 5,7 s).
+- Pedir keyframe a cada 4 s (RTCP PLI/FIR via rtspsrc) **não mudou visivelmente** a distribuição (15 em 40 s), mas com a
+  cena em movimento a linha de base já é curta: o teste só separa o efeito numa cena parada. Não construí
+  `[recording] keyframe_every_secs`; refazer o spike numa noite sem movimento antes de decidir.
+- Consequência para o pré-roll: ele sempre começa no keyframe anterior ao pedido, então com cena parada pode passar de 5 s
+  (até o teto de 30 s), e com movimento fica perto do pedido.

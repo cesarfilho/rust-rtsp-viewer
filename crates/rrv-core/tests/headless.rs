@@ -411,3 +411,96 @@ fn probe_url() {
     }
     e.shutdown();
 }
+
+/// Ferramenta manual (spike A2): a câmera atende pedido de keyframe? Mede os keyframes que chegam
+/// em `RRV_PROBE_SECS` (padrão 25) segundos, primeiro sem pedir nada e depois pedindo um keyframe a
+/// cada `RRV_PROBE_EVERY` (padrão 3) segundos com um evento *force-key-unit* para cima (o rtspsrc o
+/// transforma em RTCP PLI/FIR, se a câmera anunciar suporte). Imprime os intervalos, nunca a URL.
+///   RRV_PROBE_URL='rtsp://...${SENHA}...' cargo test -p rrv-core --test headless probe_keyframes \
+///       -- --ignored --nocapture
+#[test]
+#[ignore]
+fn probe_keyframes() {
+    use std::sync::{Arc, Mutex};
+    let Some(raw) = std::env::var_os("RRV_PROBE_URL") else {
+        eprintln!("defina RRV_PROBE_URL");
+        return;
+    };
+    let url = rrv_core::secrets::expand(&raw.to_string_lossy(), &rrv_core::secrets::lookup)
+        .expect("segredo ausente");
+    let secs: u64 = std::env::var("RRV_PROBE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(25);
+    let every: u64 = std::env::var("RRV_PROBE_EVERY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
+    gst::init().unwrap();
+
+    let run = |ask: bool| -> Vec<f64> {
+        let desc = format!(
+            "rtspsrc name=src location=\"{url}\" latency=200 protocols=tcp do-rtcp=true \
+             ! parsebin ! video/x-h264,alignment=au ! appsink name=sink sync=false emit-signals=true"
+        );
+        let pipeline = gst::parse::launch(&desc)
+            .unwrap()
+            .downcast::<gst::Pipeline>()
+            .unwrap();
+        let sink = pipeline
+            .by_name("sink")
+            .unwrap()
+            .downcast::<gstreamer_app::AppSink>()
+            .unwrap();
+        let keys = Arc::new(Mutex::new(Vec::<f64>::new()));
+        let k = keys.clone();
+        let started = Instant::now();
+        sink.set_callbacks(
+            gstreamer_app::AppSinkCallbacks::builder()
+                .new_sample(move |s| {
+                    let sample = s.pull_sample().map_err(|_| gst::FlowError::Error)?;
+                    if let Some(b) = sample.buffer()
+                        && !b.flags().contains(gst::BufferFlags::DELTA_UNIT)
+                    {
+                        k.lock().unwrap().push(started.elapsed().as_secs_f64());
+                    }
+                    Ok(gst::FlowSuccess::Ok)
+                })
+                .build(),
+        );
+        pipeline.set_state(gst::State::Playing).unwrap();
+        let sink_pad = sink.static_pad("sink").unwrap();
+        let end = Instant::now() + Duration::from_secs(secs);
+        let mut next = Instant::now() + Duration::from_secs(every);
+        while Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(100));
+            if ask && Instant::now() >= next {
+                next += Duration::from_secs(every);
+                let ev = gst::event::CustomUpstream::new(
+                    gst::Structure::builder("GstForceKeyUnit")
+                        .field("all-headers", true)
+                        .field("count", 0u32)
+                        .build(),
+                );
+                let _ = sink_pad.send_event(ev);
+            }
+        }
+        let _ = pipeline.set_state(gst::State::Null);
+        let v = keys.lock().unwrap().clone();
+        v
+    };
+
+    for (label, ask) in [("sem pedir", false), ("pedindo a cada poucos s", true)] {
+        let k = run(ask);
+        let gaps: Vec<String> = k
+            .windows(2)
+            .map(|w| format!("{:.1}", w[1] - w[0]))
+            .collect();
+        eprintln!(
+            "[{label}] {} keyframes em {secs} s; intervalos (s): {}",
+            k.len(),
+            gaps.join(" ")
+        );
+        std::thread::sleep(Duration::from_secs(3)); // a câmera libera a sessão
+    }
+}
