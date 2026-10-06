@@ -42,8 +42,8 @@ A janela é o último lugar que converte cada quadro para RGBA. No daemon a conv
 
 | # | Tarefa | Tam. | Quem | Critério de saída |
 |---|---|---|---|---|
-| B1 | **Rebase de `spike/deps-upgrade` na master** (iced 0.14, 84 ajustes de API já conhecidos + tudo o que entrou desde: vista Gravações, canvas, vários canais). Branch nova `iced-0.14`, sem tocar a master | G | eu | `cargo build/clippy/test --workspace` verdes na branch |
-| B2 | **Validação na tela** das cores (o 0.14 clareava as cores com a GTX 1650; `WGPU_POWER_PREF=low` na iGPU resolvia): 5 temas × grade, spotlight, vista Gravações, menus. Eu capturo a região da janela; você olha | P | eu + você | você aprova ou lista as diferenças |
+| B1 | ✅ **feito** na branch `iced-0.14` (commit `4afcc99`; 104 erros → 0; fmt, clippy, deny e todos os testes verdes; a master não foi tocada) — **Rebase de `spike/deps-upgrade` na master** (iced 0.14, 84 ajustes de API já conhecidos + tudo o que entrou desde: vista Gravações, canvas, vários canais). Branch nova `iced-0.14`, sem tocar a master | G | eu | `cargo build/clippy/test --workspace` verdes na branch |
+| B2 | 🟡 **checagem objetiva feita** (os 5 temas saem com as cores exatas na iGPU; forçando a NVIDIA o defeito reaparece: `#1b1b20` vira `#595961`). **Falta o seu olho** (roteiro no fim da B) — **Validação na tela** das cores (o 0.14 clareava as cores com a GTX 1650; `WGPU_POWER_PREF=low` na iGPU resolvia): 5 temas × grade, spotlight, vista Gravações, menus. Eu capturo a região da janela; você olha | P | eu + você | você aprova ou lista as diferenças |
 | B3 | **Decisão do merge**: o 0.14 entra na master, ou a master fica no 0.13 até a 2.3 | P | você | decisão registrada |
 | B4 | **Script de medição da janela** (`scripts/baseline-window.sh`): CPU/RSS do processo da janela, com N câmeras, grade e spotlight | P | eu | número de referência *antes* da 2.3 |
 | B5 | **2.3, NV12 + shader**: `appsink` em NV12; widget wgpu próprio (texturas Y e UV, conversão na GPU); o RGBA fica como fallback e para snapshots/detecção; a vista Gravações usa o mesmo widget | G–XG | eu + você | janela com 16 × 1080p dentro do orçamento medido em B4; imagem idêntica ao RGBA (comparação por captura); sem regressão nos testes |
@@ -106,3 +106,15 @@ sintético como referência.
   Reabrir só se algum modelo de câmera limitar a 1–2 sessões.
 - **2.4** (zero-copy): só se a B5 não bastar.
 - **Vários servidores**: fora do escopo (o canal de controle é um socket Unix, só local).
+
+## B2: o que olhar no iced 0.14 (≈ 5 min, você)
+```bash
+git switch iced-0.14 && make release       # (a branch; a master continua no 0.13)
+make a8                                    # daemon de demonstração
+make a8-window                             # a janela no 0.14
+```
+Confira: (1) os 5 temas (`⋯` → Aparência): nada lavado nem ilegível; (2) a grade, o menu `⋯` e a barra lateral; (3) o editor de
+zonas (clique direito numa câmera → Zonas: clicar pontos, Enter fecha, Esc sai); (4) digitar na busca (`/`) **sem** disparar
+atalhos (um `t` digitado ali não pode abrir a vista); (5) a vista Gravações: arrastar a barra e a roda do mouse (o canvas mudou de
+API); (6) `Ctrl+Q`. Se algo estiver diferente da master, me diga qual passo. Se estiver igual, a decisão é a **B3**:
+`git merge iced-0.14` na master (e a B5, o NV12 + shader, parte dali).
