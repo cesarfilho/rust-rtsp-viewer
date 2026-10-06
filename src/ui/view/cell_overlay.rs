@@ -77,6 +77,48 @@ fn action_btn<'a>(
         .into()
 }
 
+/// The icon actions of a grid tile. Each icon is only a glyph, so each gets a tooltip naming
+/// the action and its shortcut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CellAction {
+    Snapshot,
+    Record,
+    Audio,
+    Spotlight,
+}
+
+impl CellAction {
+    /// The tooltip text. `active` is the toggle state (recording / audible): the text names
+    /// what pressing the icon will do *now*.
+    pub fn tooltip(self, active: bool) -> &'static str {
+        match (self, active) {
+            (Self::Snapshot, _) => "Capturar imagem  (s)",
+            (Self::Record, false) => "Gravar  (r)",
+            (Self::Record, true) => "Parar gravação  (r)",
+            (Self::Audio, false) => "Ouvir áudio  (m)",
+            (Self::Audio, true) => "Silenciar  (m)",
+            (Self::Spotlight, _) => "Ampliar câmera  (f)",
+        }
+    }
+}
+
+/// `button` with a tooltip `tip` shown on `position` of it.
+fn with_tip<'a>(
+    button: Element<'a, Message>,
+    tip: &'static str,
+    position: iced::widget::tooltip::Position,
+) -> Element<'a, Message> {
+    iced::widget::tooltip(
+        button,
+        container(text(tip).size(Theme::TEXT_CAPTION))
+            .padding(iced::Padding::from([3, 8]))
+            .style(container::rounded_box),
+        position,
+    )
+    .gap(6)
+    .into()
+}
+
 /// The action row for a tile. `selected` tiles get the full set
 /// (snapshot / record / audio / spotlight); merely `hovered` tiles get just the
 /// spotlight affordance so a hover never implies "this camera is armed".
@@ -93,28 +135,37 @@ pub fn cell_actions(app: &App, idx: usize, selected: bool) -> Element<'_, Messag
         .map(|s| s.is_audible())
         .unwrap_or(false);
 
+    // The row sits at the top of the tile: the tooltip goes *below* the icon (above it would be
+    // cut off by the window edge on the first row of the grid).
+    let below = iced::widget::tooltip::Position::Bottom;
     let mut r = row![].spacing(2);
     if selected {
         r = r
-            .push(action_btn("\u{25C9}", Message::Snapshot, false, false))
-            .push(action_btn(
-                "\u{25CF}",
-                Message::ToggleRecording,
-                is_recording,
-                is_recording,
+            .push(with_tip(
+                action_btn("\u{25C9}", Message::Snapshot, false, false),
+                CellAction::Snapshot.tooltip(false),
+                below,
             ))
-            .push(action_btn(
-                "\u{266A}",
-                Message::ToggleAudio,
-                is_audio,
-                false,
+            .push(with_tip(
+                action_btn(
+                    "\u{25CF}",
+                    Message::ToggleRecording,
+                    is_recording,
+                    is_recording,
+                ),
+                CellAction::Record.tooltip(is_recording),
+                below,
+            ))
+            .push(with_tip(
+                action_btn("\u{266A}", Message::ToggleAudio, is_audio, false),
+                CellAction::Audio.tooltip(is_audio),
+                below,
             ));
     }
-    r = r.push(action_btn(
-        "\u{25A3}",
-        Message::EnterSpotlight(idx),
-        false,
-        false,
+    r = r.push(with_tip(
+        action_btn("\u{25A3}", Message::EnterSpotlight(idx), false, false),
+        CellAction::Spotlight.tooltip(false),
+        below,
     ));
 
     container(r)
@@ -323,4 +374,42 @@ pub fn placeholder_cell(
     .center_x(Length::Fill)
     .center_y(Length::Fill)
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CellAction;
+
+    #[test]
+    fn every_tile_icon_has_a_tooltip_with_its_shortcut() {
+        // Os atalhos são os de `handle_key`: s (snapshot), r (gravar), m (áudio), f (spotlight).
+        for (action, key) in [
+            (CellAction::Snapshot, "(s)"),
+            (CellAction::Record, "(r)"),
+            (CellAction::Audio, "(m)"),
+            (CellAction::Spotlight, "(f)"),
+        ] {
+            for active in [false, true] {
+                let tip = action.tooltip(active);
+                assert!(!tip.is_empty());
+                assert!(
+                    tip.ends_with(key),
+                    "{action:?}/{active}: {tip:?} deveria terminar em {key}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_toggles_say_what_pressing_them_does_now() {
+        assert_eq!(CellAction::Record.tooltip(false), "Gravar  (r)");
+        assert_eq!(CellAction::Record.tooltip(true), "Parar gravação  (r)");
+        assert_eq!(CellAction::Audio.tooltip(false), "Ouvir áudio  (m)");
+        assert_eq!(CellAction::Audio.tooltip(true), "Silenciar  (m)");
+        // quem não alterna diz sempre o mesmo
+        assert_eq!(
+            CellAction::Spotlight.tooltip(false),
+            CellAction::Spotlight.tooltip(true)
+        );
+    }
 }
