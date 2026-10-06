@@ -187,6 +187,7 @@ keyring is plan 5.3.
 | `pipeline.rs` | (now `engine/pipeline.rs`, re-exported as `ui::pipeline`) `start_rtsp`/`start_hls`/`start_file`, recording branch, probes |
 | `video_widget.rs` | `VideoWidget`: shows a bridge's video through `video_shader` (never `iced::widget::image`: a `Handle` per frame flickers on iced 0.14) |
 | `video_shader.rs` | wgpu `shader` widget: one texture set per video (RGBA, or NV12 as Y `R8` + UV `Rg8` converted to RGB in the fragment shader), updated in place with `write_texture`, letterboxed, freed when the widget dies (`Weak` token). Tested off-screen on a real wgpu device (`WGPU_POWER_PREF=high` for the NVIDIA) |
+| `detections_overlay.rs` | boxes of recognised objects over the video (canvas layer, `WireBox` from the daemon's `CameraInfo.detections`, mapped onto the letterboxed rect, one colour per class, label chip `pessoa 86%`); stacked in `flex_layout::spotlight_view` (daemon camera matched by *name*) and over the Recordings player (`recordings::boxes_at`: stored detections within ±2.5 s of the playhead). The Recordings event list has an `Objeto:` button cycling through the labels present (`RecMsg::CycleLabel`) |
 | `zone_editor.rs` | zone editor canvas, drawn over the spotlight (`flex_layout::spotlight_view`) while `App.zone_edit` is `Some`; opened from the camera menu (`Message::EditZones`). Coordinates map onto the letterboxed video rect |
 | `icons.rs` | embedded DejaVu Sans (`icons::FONT`) for icon glyphs |
 | `theme.rs` | themes + `contrast_ratio` / `readable_on`; a test enforces WCAG targets per theme |

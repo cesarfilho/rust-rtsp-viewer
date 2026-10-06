@@ -81,6 +81,15 @@ pub fn spotlight_view(app: &App, idx: usize) -> Element<'_, Message> {
     let mut layers = iced::widget::stack![picture]
         .width(Length::Fill)
         .height(Length::Fill);
+    if is_live && let Some(boxes) = detections_for(app, idx) {
+        let (_, w, h, _) = app.engine.bridges[idx]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .read_frame();
+        layers = layers.push(crate::ui::detections_overlay::layer(
+            boxes, w as f32, h as f32,
+        ));
+    }
     if let Some(edit) = app.zone_edit.as_ref().filter(|e| e.camera_idx == idx) {
         layers = layers.push(zone_editor_layer(app, idx, edit));
         layers = layers.push(super::pinned(
@@ -98,6 +107,13 @@ pub fn spotlight_view(app: &App, idx: usize) -> Element<'_, Message> {
             0.0,
         ))
         .into()
+}
+
+/// The objects the daemon sees now on camera `idx` (matched by name, never by index), or `None`.
+fn detections_for(app: &App, idx: usize) -> Option<Vec<crate::ipc::protocol::WireBox>> {
+    let name = &app.sidebar.cameras.get(idx)?.name;
+    let cam = app.daemon.cameras.iter().find(|c| &c.name == name)?;
+    (!cam.detections.is_empty()).then(|| cam.detections.clone())
 }
 
 /// Canvas over the picture that captures clicks while zones are being drawn.

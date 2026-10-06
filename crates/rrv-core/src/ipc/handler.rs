@@ -11,7 +11,9 @@ use crate::infrastructure::zone_state::{self, ZonesFile};
 
 use crate::infrastructure::store::Store;
 
-use super::protocol::{CameraInfo, HistoryEvent, PROTOCOL_VERSION, Request, Response, SegmentInfo};
+use super::protocol::{
+    CameraInfo, HistoryEvent, PROTOCOL_VERSION, Request, Response, SegmentInfo, WireBox,
+};
 
 /// O estado que o tratador altera além do motor: as zonas persistidas.
 pub struct Host<'a> {
@@ -93,6 +95,22 @@ pub fn camera_infos(engine: &Engine) -> Vec<CameraInfo> {
                 fps,
                 bitrate_kbps,
                 codec: stream.codec,
+                detections: engine
+                    .detections
+                    .get(i)
+                    .map(|d| {
+                        d.iter()
+                            .map(|d| WireBox {
+                                label: d.label().to_string(),
+                                score: d.score,
+                                x: d.x,
+                                y: d.y,
+                                w: d.w,
+                                h: d.h,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             }
         })
         .collect()
@@ -592,6 +610,48 @@ mod tests {
         // e um evento comum não carrega os campos novos na rede
         let json = serde_json::to_string(&parsed).unwrap();
         assert!(!json.contains("bbox") && !json.contains("zone"), "{json}");
+    }
+
+    #[test]
+    fn status_carries_what_the_detector_sees_and_stays_compatible() {
+        use crate::domain::detect::Detection;
+        let mut e = engine(1);
+        e.detections[0] = vec![Detection {
+            class: 0,
+            score: 0.9,
+            x: 0.1,
+            y: 0.2,
+            w: 0.3,
+            h: 0.4,
+        }];
+        let mut z = ZonesFile::default();
+        let Response::Status { cameras } = apply(
+            &mut Host {
+                engine: &mut e,
+                zones_file: &mut z,
+                persist: false,
+                history: None,
+                recordings: None,
+            },
+            &Request::Status,
+        ) else {
+            panic!("esperava Status");
+        };
+        assert_eq!(cameras[0].detections.len(), 1);
+        assert_eq!(cameras[0].detections[0].label, "person");
+        assert_eq!(cameras[0].detections[0].w, 0.3);
+        // sem detecção o campo nem vai para o fio, e um JSON antigo (sem o campo) continua válido
+        let mut quiet = cameras[0].clone();
+        quiet.detections.clear();
+        assert!(
+            !serde_json::to_string(&quiet)
+                .unwrap()
+                .contains("detections")
+        );
+        let mut v = serde_json::to_value(&quiet).unwrap();
+        v.as_object_mut().unwrap().remove("detections");
+        let old: CameraInfo = serde_json::from_value(v).unwrap();
+        assert!(old.detections.is_empty());
     }
 
     #[test]

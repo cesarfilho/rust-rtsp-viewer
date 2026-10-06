@@ -67,7 +67,7 @@ exato ao baixá-lo.
 | C2 ✅ | **4.2 thread de inferência**: fila limitada que descarta o mais antigo, métricas (ms, fila, descartes) | M | eu | nunca bloqueia o `appsink` nem a janela (teste com inferência lenta simulada) |
 | C3 ✅ | **4.3 gatilho**: só roda com movimento e dentro das zonas, sobre a região recortada do ramo de detecção | M | eu | GPU/CPU ociosas sem movimento (medido) |
 | C4 ✅ | **4.4 eventos por rótulo**: schema v3 do histórico (caixa, rótulo, score, zona), `[detect] labels`/`min_score`, notificação e webhook por rótulo, cooldown por rótulo | M | eu | filtro por rótulo funciona de ponta a ponta no `rrvctl history` |
-| C5 | **4.5 interface**: caixas sobre o vídeo no spotlight e no player, filtro por rótulo na lista de eventos, revisão "Alertas × Detecções" | G | eu + você | você revisa a interface na tela; contraste dos novos estados nos 5 temas |
+| C5 ⏳ | **4.5 interface** (feito: caixas no spotlight e no player, filtro por objeto, contraste; falta a sua revisão na tela): caixas sobre o vídeo no spotlight e no player, filtro por rótulo na lista de eventos, revisão "Alertas × Detecções" | G | eu + você | você revisa a interface na tela; contraste dos novos estados nos 5 temas |
 | C6 | **4.6 avaliação**: conjunto pequeno com gabarito (suas câmeras, anonimizado), regressão por IoU/score, precisão/recall registrados, fallback em CPU | M | eu + você (as imagens) | números em `docs/` e um teste que falha se piorarem |
 | C7 ✅ | **4.7 empacotar** o `libonnxruntime` na imagem Docker (variantes CPU / OpenVINO / CUDA) | M | eu | `docker compose` sobe a detecção sem instalar nada no host |
 

@@ -191,7 +191,7 @@ impl canvas::Program<ZoneEditorMessage> for ZoneEditorProgram {
 }
 
 /// Where a `video_w × video_h` picture lands inside `size` under `Contain`.
-fn fitted_rect(size: Size, video_w: f32, video_h: f32) -> Rectangle {
+pub(crate) fn fitted_rect(size: Size, video_w: f32, video_h: f32) -> Rectangle {
     if video_w <= 0.0 || video_h <= 0.0 || size.width <= 0.0 || size.height <= 0.0 {
         return Rectangle::new(Point::ORIGIN, size);
     }

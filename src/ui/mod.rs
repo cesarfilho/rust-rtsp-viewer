@@ -3,6 +3,7 @@ pub use crate::engine::{bridge, pipeline};
 
 pub(crate) mod app;
 pub mod daemon;
+pub mod detections_overlay;
 pub mod grid;
 pub(crate) mod icons;
 pub(crate) mod message;

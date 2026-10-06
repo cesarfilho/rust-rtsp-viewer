@@ -10,7 +10,7 @@ use iced::widget::{button, canvas, column, container, row, text};
 use iced::{Element, Length, Point, Rectangle, Renderer, Size, Task, mouse};
 
 use crate::domain::timeline_view::{self, SegmentSpan, Span};
-use crate::ipc::protocol::{HistoryEvent, Request, Response, SegmentInfo};
+use crate::ipc::protocol::{HistoryEvent, Request, Response, SegmentInfo, WireBox};
 use crate::ui::app::App;
 use crate::ui::bridge::GStreamerBridge;
 use crate::ui::daemon::{DaemonState, PendingRequest};
@@ -61,6 +61,8 @@ pub enum RecMsg {
     },
     /// Mostra só os eventos de movimento.
     ToggleMotionOnly,
+    /// Passa ao próximo objeto da lista (nenhum → pessoa → carro → … → nenhum): só as detecções dele.
+    CycleLabel,
     /// Adiciona / tira uma câmera da comparação (canais lado a lado, no mesmo instante).
     ToggleCompare(String),
     Live,
@@ -108,6 +110,8 @@ pub struct RecordingsView {
     pub truncated: bool,
     /// Filtro da lista de eventos: só movimento.
     pub motion_only: bool,
+    /// Filtro da lista de eventos: só as detecções deste objeto (nome COCO).
+    pub label_filter: Option<String>,
     /// A janela acompanha o vivo: novos segmentos entram sozinhos.
     pub follow: bool,
     /// Os canais de comparação, que seguem o instante do principal.
@@ -258,6 +262,12 @@ pub fn update(app: &mut App, msg: RecMsg) -> Task<Message> {
                 v.motion_only = !v.motion_only;
             }
         }
+        RecMsg::CycleLabel => {
+            if let Some(v) = app.recordings.as_mut() {
+                let labels = detection_labels(&v.events);
+                v.label_filter = next_label(v.label_filter.as_deref(), &labels);
+            }
+        }
         RecMsg::EventClicked { camera, ts_ms } => {
             let lane = app
                 .recordings
@@ -315,6 +325,7 @@ fn open(app: &mut App) {
         mark_out: None,
         truncated: false,
         motion_only: false,
+        label_filter: None,
         follow: true,
         followers: Vec::new(),
         refreshed_at: std::time::Instant::now(),
@@ -1119,7 +1130,7 @@ impl canvas::Program<Message> for TimelineProgram<'_> {
 
 fn pill_button<'a>(
     app: &App,
-    label: &'a str,
+    label: impl iced::widget::text::IntoFragment<'a>,
     msg: RecMsg,
     intent: Intent,
 ) -> iced::widget::Button<'a, Message> {
@@ -1127,6 +1138,28 @@ fn pill_button<'a>(
         .padding(iced::Padding::from([4, 10]))
         .style(style::pill(app.theme, intent))
         .on_press(Message::Recordings(msg))
+}
+
+/// The player's picture with the stored detections near the playhead drawn over it.
+fn player_with_boxes<'a>(p: &'a Player, v: &'a RecordingsView) -> Element<'a, Message> {
+    let picture: Element<'a, Message> = p.video.view().map(|_| Message::FrameUpdate);
+    let Some((_, ts)) = v.playhead() else {
+        return picture;
+    };
+    let boxes = boxes_at(&v.events, &p.camera, ts);
+    if boxes.is_empty() {
+        return picture;
+    }
+    let (_, w, h, _) = p
+        .bridge
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .read_frame();
+    iced::widget::stack![
+        picture,
+        crate::ui::detections_overlay::layer(boxes, w as f32, h as f32)
+    ]
+    .into()
 }
 
 pub fn view(app: &App) -> Element<'_, Message> {
@@ -1155,7 +1188,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     // ── a imagem
     let stage: Element<'_, Message> = match &v.player {
         Some(_) if !v.followers.is_empty() => channels_stage(app, v),
-        Some(p) => p.video.view().map(|_| Message::FrameUpdate),
+        Some(p) => player_with_boxes(p, v),
         None => container(
             text(if v.loading {
                 "Carregando…".to_string()
@@ -1363,29 +1396,101 @@ pub fn event_label(kind: &str) -> &'static str {
         "online" => "Câmera online",
         "snapshot" => "Foto",
         "disk_low" => "Disco quase cheio",
+        "detection" => "Objeto",
         _ => "Evento",
     }
 }
 
-/// Os eventos que a lista mostra: do mais novo ao mais antigo, com o filtro aplicado.
-pub fn visible_events(
-    events: &[HistoryEvent],
+/// Os eventos que a lista mostra: do mais novo ao mais antigo, com os filtros aplicados
+/// (`label`: só as detecções desse objeto).
+pub fn visible_events<'a>(
+    events: &'a [HistoryEvent],
     motion_only: bool,
+    label: Option<&str>,
     limit: usize,
-) -> Vec<&HistoryEvent> {
+) -> Vec<&'a HistoryEvent> {
     events
         .iter()
         .rev()
         .filter(|e| !motion_only || e.kind == "motion")
+        .filter(|e| label.is_none_or(|l| e.kind == "detection" && e.label == l))
         .take(limit)
         .collect()
+}
+
+/// How far from the playhead a stored detection is still drawn over the picture.
+const BOX_WINDOW_MS: i64 = 2500;
+
+/// As caixas das detecções gravadas de `camera` perto do instante `ts_ms` (Unix ms): a mais próxima de
+/// cada objeto, dentro de [`BOX_WINDOW_MS`]. O histórico guarda uma detecção por objeto a cada
+/// `[detect] cooldown_secs`, então só aparecem caixas perto desses instantes.
+pub fn boxes_at(events: &[HistoryEvent], camera: &str, ts_ms: i64) -> Vec<WireBox> {
+    let mut best: Vec<(i64, &HistoryEvent)> = Vec::new();
+    for e in events {
+        let near = (e.ts - ts_ms).abs();
+        if e.kind != "detection" || e.camera != camera || e.bbox.is_none() || near > BOX_WINDOW_MS {
+            continue;
+        }
+        match best.iter_mut().find(|(_, b)| b.label == e.label) {
+            Some(slot) if slot.0 <= near => {}
+            Some(slot) => *slot = (near, e),
+            None => best.push((near, e)),
+        }
+    }
+    best.into_iter()
+        .filter_map(|(_, e)| {
+            let [x, y, w, h] = e.bbox?;
+            Some(WireBox {
+                label: e.label.clone(),
+                score: e.score.unwrap_or(0.0) as f32,
+                x,
+                y,
+                w,
+                h,
+            })
+        })
+        .collect()
+}
+
+/// Os objetos que aparecem nas detecções do período, em ordem alfabética.
+pub fn detection_labels(events: &[HistoryEvent]) -> Vec<String> {
+    let mut v: Vec<String> = events
+        .iter()
+        .filter(|e| e.kind == "detection" && !e.label.is_empty())
+        .map(|e| e.label.clone())
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// O próximo filtro do botão de objeto: nenhum → o primeiro → … → o último → nenhum. Um filtro que
+/// deixou de existir (o período mudou) volta ao início.
+pub fn next_label(current: Option<&str>, labels: &[String]) -> Option<String> {
+    match current.and_then(|c| labels.iter().position(|l| l == c)) {
+        None if current.is_none() => labels.first().cloned(),
+        None => None,
+        Some(i) => labels.get(i + 1).cloned(),
+    }
+}
+
+/// A linha de um evento na lista: detecções mostram o objeto e a confiança ("Garagem · pessoa 86%").
+pub fn event_text(e: &HistoryEvent) -> String {
+    if e.kind == "detection" && !e.label.is_empty() {
+        let what = crate::domain::detect::label_pt(&e.label);
+        return match e.score {
+            Some(s) => format!("{} · {what} {:.0}%", e.camera, s * 100.0),
+            None => format!("{} · {what}", e.camera),
+        };
+    }
+    format!("{} · {}", e.camera, event_label(&e.kind))
 }
 
 fn events_column<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message> {
     let colors = app.theme.colors();
     let dim = Theme::color_from_hex(colors.text_secondary);
     let text_color = Theme::color_from_hex(colors.text);
-    let shown = visible_events(&v.events, v.motion_only, 200);
+    let shown = visible_events(&v.events, v.motion_only, v.label_filter.as_deref(), 200);
     let mut list = column![].spacing(2).width(Length::Fill);
     if shown.is_empty() {
         list = list.push(text("Nenhum evento neste período").size(12).color(dim));
@@ -1394,9 +1499,7 @@ fn events_column<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message
         let playable = v.lanes.contains(&e.camera);
         let line = row![
             text(format_clock(e.ts)).size(11).color(dim),
-            text(format!("{} · {}", e.camera, event_label(&e.kind)))
-                .size(12)
-                .color(text_color),
+            text(event_text(e)).size(12).color(text_color),
         ]
         .spacing(8);
         let b = button(line)
@@ -1412,23 +1515,35 @@ fn events_column<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message
             b
         });
     }
-    column![
-        row![
-            text("Eventos").size(13).color(text_color),
-            iced::widget::horizontal_space(),
-            pill_button(
-                app,
-                "Só movimento",
-                RecMsg::ToggleMotionOnly,
-                sel(v.motion_only)
-            ),
-        ]
-        .align_y(iced::Alignment::Center),
-        iced::widget::scrollable(list).height(Length::Fill),
+    let mut header = row![
+        text("Eventos").size(13).color(text_color),
+        iced::widget::horizontal_space(),
     ]
-    .spacing(6)
-    .width(EVENTS_W)
-    .into()
+    .spacing(4)
+    .align_y(iced::Alignment::Center);
+    // o botão de objeto só existe quando o período tem alguma detecção
+    if !detection_labels(&v.events).is_empty() {
+        let name = v.label_filter.as_deref().map_or_else(
+            || "todos".to_string(),
+            |l| crate::domain::detect::label_pt(l).to_string(),
+        );
+        header = header.push(pill_button(
+            app,
+            format!("Objeto: {name}"),
+            RecMsg::CycleLabel,
+            sel(v.label_filter.is_some()),
+        ));
+    }
+    header = header.push(pill_button(
+        app,
+        "Só movimento",
+        RecMsg::ToggleMotionOnly,
+        sel(v.motion_only),
+    ));
+    column![header, iced::widget::scrollable(list).height(Length::Fill),]
+        .spacing(6)
+        .width(EVENTS_W)
+        .into()
 }
 
 fn sel(on: bool) -> Intent {
@@ -1477,18 +1592,18 @@ mod tests {
             ev(3, "motion"),
             ev(4, "offline"),
         ];
-        let all: Vec<i64> = visible_events(&events, false, 10)
+        let all: Vec<i64> = visible_events(&events, false, None, 10)
             .iter()
             .map(|e| e.id)
             .collect();
         assert_eq!(all, [4, 3, 2, 1]);
-        let motion: Vec<i64> = visible_events(&events, true, 10)
+        let motion: Vec<i64> = visible_events(&events, true, None, 10)
             .iter()
             .map(|e| e.id)
             .collect();
         assert_eq!(motion, [3, 1]);
         assert_eq!(
-            visible_events(&events, false, 2).len(),
+            visible_events(&events, false, None, 2).len(),
             2,
             "respeita o limite"
         );
@@ -1504,6 +1619,7 @@ mod tests {
             "online",
             "snapshot",
             "disk_low",
+            "detection",
         ] {
             assert_ne!(event_label(k), "Evento", "{k}");
         }
@@ -1562,5 +1678,91 @@ mod tests {
     fn mmss_formats() {
         assert_eq!(format_mmss(0), "00:00");
         assert_eq!(format_mmss(65_400), "01:05");
+    }
+
+    fn det(id: i64, label: &str, score: f64) -> HistoryEvent {
+        HistoryEvent {
+            label: label.into(),
+            score: Some(score),
+            ..ev(id, "detection")
+        }
+    }
+
+    #[test]
+    fn the_object_filter_cycles_through_the_labels_present_and_back_to_none() {
+        let events = [
+            det(1, "person", 0.9),
+            ev(2, "motion"),
+            det(3, "car", 0.7),
+            det(4, "person", 0.8),
+        ];
+        let labels = detection_labels(&events);
+        assert_eq!(labels, ["car", "person"]);
+        let mut cur: Option<String> = None;
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            cur = next_label(cur.as_deref(), &labels);
+            seen.push(cur.clone());
+        }
+        assert_eq!(
+            seen,
+            [
+                Some("car".into()),
+                Some("person".into()),
+                None,
+                Some("car".into())
+            ]
+        );
+        // um filtro que sumiu do período (carro) volta ao início em vez de travar
+        assert_eq!(next_label(Some("dog"), &labels), None);
+        assert!(detection_labels(&[ev(1, "motion")]).is_empty());
+        assert_eq!(next_label(None, &[]), None);
+    }
+
+    #[test]
+    fn filtering_by_object_keeps_only_those_detections_newest_first() {
+        let events = [
+            det(1, "person", 0.9),
+            ev(2, "motion"),
+            det(3, "car", 0.7),
+            det(4, "person", 0.8),
+        ];
+        let ids: Vec<i64> = visible_events(&events, false, Some("person"), 10)
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(ids, [4, 1]);
+        assert!(visible_events(&events, true, Some("person"), 10).is_empty());
+    }
+
+    #[test]
+    fn a_detection_line_names_the_object_and_the_confidence() {
+        assert_eq!(event_text(&det(1, "person", 0.867)), "Garagem · pessoa 87%");
+        assert_eq!(event_text(&ev(2, "motion")), "Garagem · Movimento");
+    }
+
+    #[test]
+    fn stored_boxes_near_the_playhead_are_drawn_the_nearest_per_object() {
+        let boxed = |id: i64, ts: i64, label: &str, x: f32| HistoryEvent {
+            ts,
+            bbox: Some([x, 0.2, 0.1, 0.3]),
+            ..det(id, label, 0.9)
+        };
+        let events = [
+            boxed(1, 10_000, "person", 0.1),
+            boxed(2, 11_000, "person", 0.5), // mais perto de 11 s
+            boxed(3, 11_500, "car", 0.7),
+            boxed(4, 30_000, "person", 0.9), // longe demais
+            HistoryEvent {
+                camera: "Outra".into(),
+                ..boxed(5, 11_000, "person", 0.3)
+            },
+            det(6, "person", 0.9), // sem caixa (evento antigo)
+        ];
+        let got = boxes_at(&events, "Garagem", 11_100);
+        let mut labels: Vec<_> = got.iter().map(|b| (b.label.as_str(), b.x)).collect();
+        labels.sort_by(|a, b| a.0.cmp(b.0));
+        assert_eq!(labels, [("car", 0.7), ("person", 0.5)]);
+        assert!(boxes_at(&events, "Garagem", 20_000).is_empty());
     }
 }
