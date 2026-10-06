@@ -16,6 +16,10 @@ path = "src/main.rs"
 name = "rrvctl"
 path = "src/bin/rrvctl.rs"
 
+[features]
+# Detecção de objetos (YOLO via ONNX Runtime): cargo build --features detect
+detect = ["rrv-core/detect"]
+
 [dependencies]
 rrv-core = { path = "../rrv-core" }
 gstreamer = "0.25"
@@ -28,6 +32,7 @@ serde_json = "1"
 chrono = { version = "0.4.45", features = ["clock"] }
 
 [dev-dependencies]
+rumqttc = { version = "0.25", default-features = false }
 rrv-core = { path = "../rrv-core", features = ["testing"] }
 serde_json = "1"
 gstreamer = "0.25"

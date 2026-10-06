@@ -127,6 +127,27 @@ pub struct HistoryEvent {
     pub kind: String,
     pub label: String,
     pub segment_id: Option<i64>,
+    /// Confiança (0–1) de uma detecção.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<f64>,
+    /// Caixa `[x, y, w, h]` normalizada ao quadro, nas detecções.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bbox: Option<[f32; 4]>,
+    /// Zona de movimento em que o objeto estava, nas detecções.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zone: Option<String>,
+}
+
+/// Um objeto reconhecido agora na câmera (caixa normalizada ao quadro).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WireBox {
+    /// Nome COCO em inglês (`person`, `car`...).
+    pub label: String,
+    pub score: f32,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
 }
 
 /// Uma câmera como o cliente a vê.
@@ -163,6 +184,10 @@ pub struct CameraInfo {
     /// Codec do fluxo (`H264`, `H265`…).
     #[serde(default)]
     pub codec: Option<String>,
+    /// Objetos reconhecidos no último quadro analisado (detecção de objetos ligada); vazio se
+    /// não há nenhum. Aditivo: um cliente antigo ignora o campo.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub detections: Vec<WireBox>,
 }
 
 /// Um evento do motor, no formato do fio.

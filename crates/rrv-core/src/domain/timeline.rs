@@ -17,6 +17,8 @@ pub enum EventType {
     Snapshot,
     /// The recordings disk is nearly full (a system event, not a camera's).
     DiskLow,
+    /// An object (person, car...) was recognised in a frame with motion.
+    Detection,
 }
 
 impl EventType {
@@ -30,6 +32,7 @@ impl EventType {
             EventType::Online => "online",
             EventType::Snapshot => "snapshot",
             EventType::DiskLow => "disk_low",
+            EventType::Detection => "detection",
         }
     }
 
@@ -42,6 +45,7 @@ impl EventType {
             EventType::Online => "Online",
             EventType::Snapshot => "Snapshot",
             EventType::DiskLow => "Disk low",
+            EventType::Detection => "Detection",
         }
     }
 
@@ -54,6 +58,7 @@ impl EventType {
             EventType::Online => "#44FF44",
             EventType::Snapshot => "#4488FF",
             EventType::DiskLow => "#FFCC00",
+            EventType::Detection => "#B266FF",
         }
     }
 }

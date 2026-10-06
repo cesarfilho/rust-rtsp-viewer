@@ -45,13 +45,41 @@ pub struct LiveCamera {
 
 impl LiveCamera {
     pub fn start(dir: &Path) -> Self {
+        Self::launch(
+            dir,
+            "videotestsrc name=src is-live=true pattern=ball \
+             ! video/x-raw,width=320,height=180,framerate=30/1 \
+             ! videoconvert ! x264enc tune=zerolatency key-int-max=30 bitrate=400",
+        )
+    }
+
+    /// Uma cena de verdade: a foto `jpeg` parada, em 1280×720 com barras (a proporção de uma
+    /// câmera), e um relógio no canto que muda a cada quadro — é ele que "mexe" (`set_moving`).
+    /// O codificador usa quantizador constante: com taxa variável, cada keyframe (a cada 1 s) refaz a
+    /// imagem um pouco diferente e uma cena parada pareceria em movimento de segundo em segundo.
+    /// Serve para rodar um detector de objetos de verdade sobre pessoas e veículos reais.
+    pub fn start_scene(dir: &Path, jpeg: &Path) -> Self {
+        Self::launch(
+            dir,
+            &format!(
+                "filesrc location=\"{}\" ! jpegdec ! imagefreeze is-live=true \
+                 ! videoscale add-borders=true ! videoconvert \
+                 ! video/x-raw,width=1280,height=720,framerate=10/1 \
+                 ! timeoverlay name=src time-mode=running-time halignment=left valignment=top \
+                   font-desc=\"Sans 40\" \
+                 ! videoconvert \
+                 ! x264enc tune=zerolatency key-int-max=10 pass=quant quantizer=18",
+                jpeg.display()
+            ),
+        )
+    }
+
+    fn launch(dir: &Path, source: &str) -> Self {
         gst::init().unwrap();
         let hls = dir.join("hls");
         std::fs::create_dir_all(&hls).unwrap();
         let desc = format!(
-            "videotestsrc name=src is-live=true pattern=ball \
-             ! video/x-raw,width=320,height=180,framerate=30/1 \
-             ! videoconvert ! x264enc tune=zerolatency key-int-max=30 bitrate=400 \
+            "{source} \
              ! h264parse \
              ! hlssink2 location=\"{d}/seg%05d.ts\" playlist-location=\"{d}/live.m3u8\" \
                target-duration=1 max-files=10 playlist-length=6",
@@ -107,8 +135,13 @@ impl LiveCamera {
 
     /// A bola se mexe, ou a imagem fica parada.
     pub fn set_moving(&self, moving: bool) {
-        self.src
-            .set_property_from_str("pattern", if moving { "ball" } else { "black" });
+        if self.src.find_property("pattern").is_some() {
+            self.src
+                .set_property_from_str("pattern", if moving { "ball" } else { "black" });
+        } else {
+            // a cena (`start_scene`): o relógio some e sobra a foto parada
+            self.src.set_property("silent", !moving);
+        }
     }
 }
 

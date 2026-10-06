@@ -1,3 +1,4 @@
+use crate::i18n::{t, tf};
 use iced::Task;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -92,7 +93,7 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
             });
             toast(
                 app,
-                "Zonas: clique para marcar os pontos · Enter conclui · Esc sai",
+                t("Zonas: clique para marcar os pontos · Enter conclui · Esc sai"),
             );
             update(app, Message::EnterSpotlight(idx))
         }
@@ -129,7 +130,7 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
                     cfg.zones.clear();
                 }
                 persist_zones(app, idx);
-                toast(app, "Zonas removidas: o quadro inteiro conta");
+                toast(app, t("Zonas removidas: o quadro inteiro conta"));
             }
             Task::none()
         }
@@ -139,6 +140,11 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::ThemeChanged(t) => {
             app.theme = t;
+            Task::none()
+        }
+        Message::LanguageChanged(lang) => {
+            crate::i18n::set(lang);
+            persist_view(app);
             Task::none()
         }
         Message::Sidebar(msg) => update_sidebar(app, msg),
@@ -182,9 +188,9 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
             toast(
                 app,
                 if app.view.rotate_enabled {
-                    format!("Carrossel ligado ({}s)", app.view.rotate_secs)
+                    tf("Carrossel ligado ({}s)", &[&app.view.rotate_secs])
                 } else {
-                    "Carrossel desligado".to_string()
+                    t("Carrossel desligado").to_string()
                 },
             );
             Task::none()
@@ -193,7 +199,7 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
             app.view.rotate_secs = view::step_rotate_secs(app.view.rotate_secs, up);
             app.rotate_last_advance = Instant::now();
             persist_view(app);
-            toast(app, format!("Carrossel: {}s", app.view.rotate_secs));
+            toast(app, tf("Carrossel: {}s", &[&app.view.rotate_secs]));
             Task::none()
         }
         Message::WindowResized(size) => {
@@ -219,7 +225,7 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
                     // success; the burst reports its own "complete" toast.
                     if sequence == 1 && app.pending_burst.is_none() {
                         app.toasts.push(Toast {
-                            message: format!("Snapshot: {name} · clique para abrir a pasta"),
+                            message: tf("Snapshot: {} · clique para abrir a pasta", &[&name]),
                             shown_at: Instant::now(),
                             open_dir: path.parent().map(std::path::Path::to_path_buf),
                         });
@@ -227,7 +233,7 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
                 }
                 Err(e) => {
                     log::warn!("Falha no snapshot: {e}");
-                    toast(app, format!("Falha no snapshot: {e}"));
+                    toast(app, tf("Falha no snapshot: {}", &[&e]));
                 }
             }
             Task::none()
@@ -412,7 +418,7 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
         Message::DaemonReconnect => {
             if let Some(link) = &app.link {
                 link.reconnect_now();
-                toast(app, "Reconectando ao daemon…");
+                toast(app, t("Reconectando ao daemon…"));
             }
             Task::none()
         }
@@ -421,11 +427,11 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::CopyDaemonStartCommand => {
-            toast(app, "Comando copiado: docker compose up -d");
+            toast(app, t("Comando copiado: docker compose up -d"));
             iced::clipboard::write("docker compose up -d".to_string())
         }
         Message::CopyDaemonSocket => {
-            toast(app, "Caminho do socket copiado");
+            toast(app, t("Caminho do socket copiado"));
             iced::clipboard::write(app.daemon.socket.display().to_string())
         }
         Message::ModalCancel => {
@@ -704,11 +710,14 @@ fn finish_zone(app: &mut App) {
         return; // aguardando o daemon
     }
     if edit.temp_vertices.len() < 3 {
-        toast(app, "Uma zona precisa de pelo menos 3 pontos");
+        toast(app, t("Uma zona precisa de pelo menos 3 pontos"));
         return;
     }
     if crate::domain::zones::polygon_area(&edit.temp_vertices) < MIN_ZONE_AREA {
-        toast(app, "Zona sem área: os pontos estão alinhados ou repetidos");
+        toast(
+            app,
+            t("Zona sem área: os pontos estão alinhados ou repetidos"),
+        );
         return;
     }
     let idx = edit.camera_idx;
@@ -723,7 +732,7 @@ fn finish_zone(app: &mut App) {
             .get(idx)
             .map(|c| c.zones.clone())
             .unwrap_or_default();
-        let name = format!("Zona {}", zones.len() + 1);
+        let name = tf("Zona {}", &[&(zones.len() + 1)]);
         zones.push(crate::domain::zones::MotionZone::new(name, vertices));
         send_zones(app, idx, zones);
         return;
@@ -731,12 +740,12 @@ fn finish_zone(app: &mut App) {
 
     let vertices = std::mem::take(&mut edit.temp_vertices);
     if let Some(cfg) = app.engine.zones.get_mut(idx) {
-        let name = format!("Zona {}", cfg.zones.len() + 1);
+        let name = tf("Zona {}", &[&(cfg.zones.len() + 1)]);
         cfg.zones
             .push(crate::domain::zones::MotionZone::new(name, vertices));
     }
     persist_zones(app, idx);
-    toast(app, "Zona salva");
+    toast(app, t("Zona salva"));
 }
 
 /// Ask the daemon to store `zones` for camera `idx` (a camera of this window).
@@ -839,7 +848,7 @@ fn use_local_engine(app: &mut App) {
     sync_active_streams(app);
     toast(
         app,
-        "Motor local ativado: esta janela agora grava e detecta",
+        t("Motor local ativado: esta janela agora grava e detecta"),
     );
 }
 
@@ -880,7 +889,7 @@ fn daemon_event(app: &mut App, wire: crate::ipc::protocol::WireEvent) {
         if let Some(d) = &wire.detail
             && wire.notification.is_some()
         {
-            toast(app, format!("Disco das gravações quase cheio: {d}"));
+            toast(app, tf("Disco das gravações quase cheio: {}", &[&d]));
         }
         return;
     }
@@ -905,7 +914,7 @@ pub(super) fn send_to_daemon(
     if !app.daemon.is_connected() {
         toast(
             app,
-            "Sem conexão com o daemon: tente de novo quando ele voltar",
+            t("Sem conexão com o daemon: tente de novo quando ele voltar"),
         );
         return false;
     }
@@ -923,7 +932,7 @@ pub(super) fn send_to_daemon(
 fn daemon_index(app: &mut App, name: &str) -> Option<usize> {
     let found = app.daemon.info_for(name).map(|c| c.index);
     if found.is_none() {
-        toast(app, format!("O daemon não conhece a câmera '{name}'"));
+        toast(app, tf("O daemon não conhece a câmera '{}'", &[&name]));
     }
     found
 }
@@ -953,9 +962,9 @@ fn handle_reply(app: &mut App, token: u64, result: Result<crate::ipc::protocol::
                 toast(
                     app,
                     if recording {
-                        "Gravação iniciada no daemon"
+                        t("Gravação iniciada no daemon")
                     } else {
-                        "Gravação parada no daemon"
+                        t("Gravação parada no daemon")
                     },
                 );
             }
@@ -969,20 +978,20 @@ fn handle_reply(app: &mut App, token: u64, result: Result<crate::ipc::protocol::
                 edit.temp_vertices.clear();
                 edit.saving = false;
             }
-            toast(app, "Zona salva no daemon");
+            toast(app, t("Zona salva no daemon"));
         }
         (PendingRequest::SetZones { .. }, Some(why)) => {
             // O editor continua aberto com o desenho intacto.
             if let Some(edit) = app.zone_edit.as_mut() {
                 edit.saving = false;
             }
-            toast(app, format!("Não foi possível salvar a zona: {why}"));
+            toast(app, tf("Não foi possível salvar a zona: {}", &[&why]));
         }
         (PendingRequest::ToggleRecording { .. }, Some(why)) => {
-            toast(app, format!("Falha na gravação: {why}"));
+            toast(app, tf("Falha na gravação: {}", &[&why]));
         }
         (PendingRequest::SetEnabled { camera }, Some(why)) => {
-            toast(app, format!("O daemon não aplicou '{camera}': {why}"));
+            toast(app, tf("O daemon não aplicou '{}': {}", &[&camera, &why]));
         }
     }
 }
@@ -1250,6 +1259,7 @@ fn persist_view(app: &App) {
             .to_string(),
         ),
         sidebar_visible: Some(app.sidebar.visible),
+        language: Some(crate::i18n::get().code().to_string()),
     };
     crate::infrastructure::view_state::save(&state);
 }
@@ -1553,7 +1563,7 @@ fn encode_and_write_snapshot(job: SnapshotJob) -> Result<std::path::PathBuf, Str
         job.height,
         image::ExtendedColorType::Rgb8,
     )
-    .map_err(|e| format!("PNG encode failed: {e}"))?;
+    .map_err(|e| format!("PNG encode failed: {e}"))?; // i18n-ok: erro de programação
 
     // Write to a temporary file first so a reader never sees a partial PNG.
     let tmp_path = path.with_extension("png.tmp");
@@ -1578,7 +1588,7 @@ fn snapshot_task(job: SnapshotJob, camera_idx: usize) -> Task<Message> {
 
 fn update_snapshot(app: &mut App) -> Task<Message> {
     let Some(idx) = app.sidebar.selected else {
-        toast(app, "Selecione uma câmera primeiro");
+        toast(app, t("Selecione uma câmera primeiro"));
         return Task::none();
     };
     if idx >= app.engine.bridges.len() {
@@ -1592,13 +1602,13 @@ fn update_snapshot(app: &mut App) -> Task<Message> {
         Ok(job) => job,
         Err(e) => {
             log::warn!("Falha no snapshot: {e}");
-            toast(app, format!("Falha no snapshot: {e}"));
+            toast(app, tf("Falha no snapshot: {}", &[&e]));
             return Task::none();
         }
     };
 
     if burst_count > 1 {
-        toast(app, format!("Rajada 1/{burst_count}"));
+        toast(app, tf("Rajada 1/{}", &[&burst_count]));
         app.pending_burst = Some(PendingBurst {
             camera_idx: idx,
             timestamp,
@@ -1643,7 +1653,7 @@ fn advance_burst(app: &mut App) -> Task<Message> {
 
     if burst.remaining == 0 {
         app.pending_burst = None;
-        toast(app, format!("Rajada concluída: {total} quadros"));
+        toast(app, tf("Rajada concluída: {} quadros", &[&total]));
     }
 
     task
@@ -1651,7 +1661,7 @@ fn advance_burst(app: &mut App) -> Task<Message> {
 
 fn update_recording(app: &mut App) -> Task<Message> {
     let Some(idx) = app.sidebar.selected else {
-        toast(app, "Selecione uma câmera primeiro");
+        toast(app, t("Selecione uma câmera primeiro"));
         return Task::none();
     };
     if idx >= app.engine.bridges.len() {
@@ -1679,11 +1689,11 @@ fn update_recording(app: &mut App) -> Task<Message> {
     }
 
     match toggle_camera_recording(app, idx) {
-        Ok(true) => toast(app, "Gravação iniciada"),
-        Ok(false) => toast(app, "Gravação parada"),
+        Ok(true) => toast(app, t("Gravação iniciada")),
+        Ok(false) => toast(app, t("Gravação parada")),
         Err(e) => {
             log::error!("Recording toggle failed: {e}");
-            toast(app, format!("Falha na gravação: {e}"));
+            toast(app, tf("Falha na gravação: {}", &[&e]));
         }
     }
     Task::none()
@@ -1727,11 +1737,11 @@ fn spawn_audio(app: &mut App, idx: usize, volume: f32) {
 
 fn update_audio(app: &mut App) -> Task<Message> {
     if !app.audio_config.enabled {
-        toast(app, "Áudio desativado no config.toml");
+        toast(app, t("Áudio desativado no config.toml"));
         return Task::none();
     }
     let Some(idx) = app.sidebar.selected else {
-        toast(app, "Selecione uma câmera primeiro");
+        toast(app, t("Selecione uma câmera primeiro"));
         return Task::none();
     };
     if idx >= app.audio_states.len() {
@@ -1769,7 +1779,7 @@ fn update_audio(app: &mut App) -> Task<Message> {
 
 fn update_volume(app: &mut App, up: bool) -> Task<Message> {
     if !app.audio_config.enabled {
-        toast(app, "Áudio desativado no config.toml");
+        toast(app, t("Áudio desativado no config.toml"));
         return Task::none();
     }
     let Some(idx) = app.sidebar.selected else {

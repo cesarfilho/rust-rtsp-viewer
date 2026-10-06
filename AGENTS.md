@@ -119,6 +119,33 @@ each segment (with Docker, set it to the host folder mounted as `/data`). The pl
 `<recordings>/exports/`. Test aid: `RRV_OPEN_RECORDINGS=1` opens the view once the daemon connects,
 `=play` also plays the latest finished segment, `=compare` also puts every other camera side by side (no synthetic key presses needed). **Several channels**: the main `Player` plus `Follower`s (`RecordingsView.followers`, up to `MAX_CHANNELS` = 4); `sync_followers` (each tick) asks the pure `timeline_view::follow_action` what each follower does (keep / open the segment covering the main's instant / seek if it drifted over `FOLLOW_DRIFT_MS` / gap). A follower whose file has not reported a position yet counts as "where it should be" (else it is reopened every tick forever), and followers hold while the main has ended.
 
+## Inference (plan C2)
+
+`engine::inference::InferenceWorker` runs the detector on its own thread behind the `Infer` trait.
+`submit` never blocks: one waiting frame per camera (a newer one replaces it) and at most `capacity`
+overall (oldest evicted); both count in `InferenceStats.dropped`. Results come back through
+`take_results` (bounded), each with `infer_ms` / `queued_ms`. Tested with a deliberately slow fake;
+`Detector` implements `Infer` under feature `detect`.
+
+**Trigger (C3)**: `Engine.inference` (`set_inference`) is fed from `detect_motion` **only while motion is active** on a camera (so the model/GPU idle on a still scene): the ~320 px detection frame is cropped to the bounding box of the camera's active zones (`domain::detect::Region::of_zones`/`crop_rgba`; whole frame when no zone), and `poll_inference` (each slow tick) maps boxes back with `Detection::from_crop` and drops those whose centre lies outside the zones, into `Engine.detections[camera]` (cleared when motion stops). `[detect]` (`enabled`, `model`, `backend` cpu/cuda/auto, `min_score`, `iou`; `config_check` validates) is wired only in `rrv-daemon` built with `--features detect` (`start_detection`; any failure disables just the detection). **Events (C4)**: `poll_inference` also drops classes outside `[detect] labels` and raises one `EventType::Detection` per (camera, class) — its best box — at most every `[detect] cooldown_secs` (`Engine.detect_last`); the notification (`notify::detection_message`, title `Detecção: pessoa`) has its own per-class cooldown from `[notifications]`. The history row (schema **v3**: `box_x/y/w/h`, `zone` next to `label`/`score`) is written through `StoreCmd::Event { bbox, zone }`; `HistoryEvent` carries `score`/`bbox`/`zone` (optional on the wire, so old clients still parse). `rrvctl history --label person` filters events. The webhook gets the event as `detection` with `detail` `"person 90% · Zona"`.
+
+## MQTT / Home Assistant (plan D3)
+
+`rrv_core::mqtt`: pure half (`MqttFile`/`MqttConfig` with `mqtt://user:pass@host:port` parsing — **no TLS**, `mqtts://` is refused —, `slug`/`unique_slugs`, `CameraState::to_json`, `discovery_messages`, `event_json`) and `MqttPublisher` (a thread running `rumqttc`'s sync client: never blocks the daemon loop — `try_publish` into a bounded queue —, reconnects every 5 s, and on every `ConnAck` re-announces availability, Home Assistant discovery and the last known states). Topics: `<prefix>/status` (retained `online`, LWT `offline`), `<prefix>/<slug>/state` (retained JSON: `status, online, recording, motion, objects`), `<prefix>/<slug>/event` (not retained). `update()` only publishes when the state changed. The daemon (`main.rs`: `mqtt_state`) feeds it each tick and sends `offline` on shutdown; `[mqtt] url` accepts `${SECRET}`; only `mqtt://host:port` is ever logged. Tests: pure ones always; `RRV_TEST_MQTT=host:port` (a Mosquitto, see the header of `crates/rrv-core/tests/mqtt_broker.rs`) enables the broker tests and `crates/rrv-daemon/tests/mqtt.rs` (real daemon + HLS camera).
+
+## Languages (plan D4)
+
+`rrv_core::i18n`: Portuguese is the source text, written in the code inside `t("…")` / `tf("… {} …", &[&arg])` / `plural(n, "câmera", "câmeras")`; the English catalog is `i18n/en.rs` (`EN: &[(pt, en)]`, keyed by the exact Portuguese text, `{}` placeholders must match). `t` returns `&'static str` for the active language (`i18n::set`/`get`, global atomic) and falls back to the Portuguese when a phrase has no entry. Language: `[config] language = "pt-BR"|"en"`, else `LANG`, else Portuguese; the menu's *Aparência* selector (`Message::LanguageChanged`) applies on the next frame and persists to `view.toml` (wins over the config). **`tests/i18n_scan.rs` enforces it**: every `t()/tf()/plural()` literal is in the catalog, no catalog entry is unused, and no Portuguese-looking literal (accent, listed word, or an uppercase-initial word of 4+ letters) sits outside those calls in `src/ui/**` and the core files the window displays (`CORE_FILES`: camera status, diagnostics hints, notification texts, backoff detail). Escape hatch for a literal that is a name/key/path: end the line with `// i18n-ok: reason`. Keep catalog keys on **one line** (the scanner is line based). Logs, CLI output and config-check messages stay Portuguese on purpose (operator-facing). A local variable named `t` shadows the function: call `crate::i18n::t(…)` there. Tests that flip the language live in `crates/rrv-core/tests/i18n.rs` (own binary: the language is process-global).
+Accessibility is limited by the toolkit: iced 0.14 has no screen-reader (AccessKit) support; every control is reachable by the keyboard shortcuts in the help overlay, and state is never colour-only (glyph shapes).
+
+## Keyring (plan D2)
+
+`secrets::lookup` tries, in order: environment variable, file in `$RRV_SECRETS_DIR`, then the **system keyring** (Secret Service: GNOME Keyring / KWallet / KeePassXC) through `secret-tool` (`secrets::keyring`: `lookup`/`store`/`clear`/`exists`; items carry `service=rust-rtsp-viewer name=NAME`; the value only travels over the tool's stdin/stdout, never argv; 8 s timeout so a locked keyring's dialog cannot hang startup; `RRV_KEYRING=off` disables it; a container without `secret-tool` just skips it). The window resolves `${NAME}` through the same `startup::load_config_with`, so no window code changed. CLI: `rrvctl secret set|check|delete NAME` (`set` prompts without echo, or reads stdin when piped; `check` never prints the value) and `rrvctl discover --user U --store-secret` stores the camera password under the name the generated snippet uses. Test against the real keyring: `RRV_TEST_KEYRING=1 cargo test -p rrv-core --test keyring` (one temporary item, removed at the end).
+
+## ONVIF discovery (plan D1)
+
+`rrv_core::onvif`, discovery and enrolment only (read-only, no PTZ). Pure half: WS-Discovery probe, `parse_probe_match`, WS-Security `UsernameToken` digest (`security_header`: `base64(sha1(nonce+created+password))`, **the password never appears in the request or in any output**), SOAP builders and parsers (`roxmltree`) for `GetSystemDateAndTime`/`GetDeviceInformation`/`GetCapabilities`/`GetProfiles`/`GetStreamUri`, `pick_main_and_sub` (biggest H.264/H.265 profile = main, smallest ≥ 320 px = sub), `config_snippet` (URL with `${cam_<slug>_password}`). Network half: `discover` sends the probe by multicast on every local interface **and unicast to every host of the /22–/30 subnet** (the home Wi-Fi router here does not forward multicast; the unicast sweep found the Intelbras), `inspect` does the SOAP over `curl` with the body on stdin, using the camera's own clock for the digest. CLI: `rrvctl discover [--user U] [--password-env NAME]` (no daemon needed; the password is read from the environment variable only). An in-window "add camera" wizard is not built yet.
+
 ## Secrets (plan 2.5.8)
 
 URLs in the config may carry `${NAME}` (`rrv_core::secrets`): value from env var `NAME`, else file
@@ -138,6 +165,7 @@ keyring is plan 5.3.
 | `audio.rs` | `AudioConfig`, `AudioState` |
 | `camera_status.rs` | `CameraStatus`, `StatusReading`, `BitrateReading` — what the engine reports per camera (re-exported by `ui::sidebar`) |
 | `codec.rs` | `enum Codec` (H264/H265/Mjpeg/Vp8/…), `from_caps` |
+| `detect.rs` | YOLO11 around the network, no runtime: `Letterbox`, `preprocess_rgba`, `decode`, `nms`, `postprocess`, `COCO_LABELS` |
 | `diagnostics.rs` | `Severity`, `Hint`, `diagnose`, `overall_severity` |
 | `groups.rs` | camera grouping — wired to `[[groups]]` + sidebar/grid filter |
 | `metrics.rs` | `Metrics` (atomic), `PacketStats`, `StreamInfo` |
@@ -156,6 +184,7 @@ keyring is plan 5.3.
 | File | Responsibility |
 |------|---------------|
 | `audio.rs` | `build_audio_pipeline_for_url`, `AudioLevelState` / `poll_level_bus` (VU meter) |
+| `detector.rs` | (feature `detect`) `Detector`: ONNX Runtime session for a YOLO11 `.onnx` (`Backend::Cpu`/`Cuda`). The runtime is loaded at run time from `ORT_DYLIB_PATH` (CPU or CUDA build of `libonnxruntime.so`); `scripts/fetch-model.sh` downloads the weight (SHA-256 pinned) and exports `models/yolo11n-{320,640}.onnx`. Tests skip without the model + `ORT_DYLIB_PATH`; `RRV_TEST_CUDA=1` runs them on CUDA (needs the cuDNN 9 / CUDA 13 libs on `LD_LIBRARY_PATH`) |
 | `notify.rs` | `notify-send` / `xdg-open` (best-effort, child reaped on a thread) |
 | `reconnect.rs` | `ReconnectState` (FPS watchdog + backoff decision) |
 | `recording_paths.rs` | directory creation helpers |
@@ -175,6 +204,7 @@ keyring is plan 5.3.
 | `pipeline.rs` | (now `engine/pipeline.rs`, re-exported as `ui::pipeline`) `start_rtsp`/`start_hls`/`start_file`, recording branch, probes |
 | `video_widget.rs` | `VideoWidget`: shows a bridge's video through `video_shader` (never `iced::widget::image`: a `Handle` per frame flickers on iced 0.14) |
 | `video_shader.rs` | wgpu `shader` widget: one texture set per video (RGBA, or NV12 as Y `R8` + UV `Rg8` converted to RGB in the fragment shader), updated in place with `write_texture`, letterboxed, freed when the widget dies (`Weak` token). Tested off-screen on a real wgpu device (`WGPU_POWER_PREF=high` for the NVIDIA) |
+| `detections_overlay.rs` | boxes of recognised objects over the video (canvas layer, `WireBox` from the daemon's `CameraInfo.detections`, mapped onto the letterboxed rect, one colour per class, label chip `pessoa 86%`); stacked in `flex_layout::spotlight_view` (daemon camera matched by *name*) and over the Recordings player (`recordings::boxes_at`: stored detections within ±2.5 s of the playhead). The Recordings event list has an `Objeto:` button cycling through the labels present (`RecMsg::CycleLabel`) |
 | `zone_editor.rs` | zone editor canvas, drawn over the spotlight (`flex_layout::spotlight_view`) while `App.zone_edit` is `Some`; opened from the camera menu (`Message::EditZones`). Coordinates map onto the letterboxed video rect |
 | `icons.rs` | embedded DejaVu Sans (`icons::FONT`) for icon glyphs |
 | `theme.rs` | themes + `contrast_ratio` / `readable_on`; a test enforces WCAG targets per theme |
@@ -212,6 +242,8 @@ staggered start — *initial* values; runtime tweaks persist to
 0-based `cameras` indices — that become sidebar/grid filter chips).
 
 ## Build/test
+
+The `Dockerfile` has targets `runtime` (default), `detect-cpu` and `detect-cuda` (libonnxruntime 1.30 baked in, SHA-256 pinned; the model is mounted from `./models` at `/models`); `compose.detect.yaml` / `compose.detect-cuda.yaml` select them (`docs/gpu-container.md`).
 
 `make help` lists the shortcuts (`make ci` = everything below; `make status|history|record|clip` drive `rrvctl`;
 `make up|down|logs` the Docker daemon).

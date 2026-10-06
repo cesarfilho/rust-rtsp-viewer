@@ -62,14 +62,14 @@ exato ao baixá-lo.
 
 | # | Tarefa | Tam. | Quem | Critério de saída |
 |---|---|---|---|---|
-| C0 | **0.6, spike do `ort`**: YOLO-n a 320 e 640 em (1) CPU (já medido: 38–117 ms), (2) OpenVINO na iGPU Intel (sem `sudo`), (3) CUDA na GTX 1650 (só se a D6 estiver feita). Escolher o backend | M | eu (+ você: D6) | `docs/spike-0.6-ort.md` com ms/inferência e VRAM por backend e a recomendação |
-| C1 | **4.1 módulo `detect`** (feature `detect`): pré-processamento, inferência, NMS; `scripts/fetch-model.sh` com SHA-256 (o peso não entra no repositório) | G | eu | testes com imagens de referência: caixas dentro de uma tolerância de IoU |
-| C2 | **4.2 thread de inferência**: fila limitada que descarta o mais antigo, métricas (ms, fila, descartes) | M | eu | nunca bloqueia o `appsink` nem a janela (teste com inferência lenta simulada) |
-| C3 | **4.3 gatilho**: só roda com movimento e dentro das zonas, sobre a região recortada do ramo de detecção | M | eu | GPU/CPU ociosas sem movimento (medido) |
-| C4 | **4.4 eventos por rótulo**: schema v3 do histórico (caixa, rótulo, score, zona), `[detect] labels`/`min_score`, notificação e webhook por rótulo, cooldown por rótulo | M | eu | filtro por rótulo funciona de ponta a ponta no `rrvctl history` |
-| C5 | **4.5 interface**: caixas sobre o vídeo no spotlight e no player, filtro por rótulo na lista de eventos, revisão "Alertas × Detecções" | G | eu + você | você revisa a interface na tela; contraste dos novos estados nos 5 temas |
+| C0 ✅ | **0.6, spike do `ort`**: YOLO-n a 320 e 640 em (1) CPU (já medido: 38–117 ms), (2) OpenVINO na iGPU Intel (sem `sudo`), (3) CUDA na GTX 1650 (só se a D6 estiver feita). Escolher o backend | M | eu (+ você: D6) | `docs/spike-0.6-ort.md` com ms/inferência e VRAM por backend e a recomendação |
+| C1 ✅ | **4.1 módulo `detect`** (feature `detect`): pré-processamento, inferência, NMS; `scripts/fetch-model.sh` com SHA-256 (o peso não entra no repositório) | G | eu | testes com imagens de referência: caixas dentro de uma tolerância de IoU |
+| C2 ✅ | **4.2 thread de inferência**: fila limitada que descarta o mais antigo, métricas (ms, fila, descartes) | M | eu | nunca bloqueia o `appsink` nem a janela (teste com inferência lenta simulada) |
+| C3 ✅ | **4.3 gatilho**: só roda com movimento e dentro das zonas, sobre a região recortada do ramo de detecção | M | eu | GPU/CPU ociosas sem movimento (medido) |
+| C4 ✅ | **4.4 eventos por rótulo**: schema v3 do histórico (caixa, rótulo, score, zona), `[detect] labels`/`min_score`, notificação e webhook por rótulo, cooldown por rótulo | M | eu | filtro por rótulo funciona de ponta a ponta no `rrvctl history` |
+| C5 ⏳ | **4.5 interface** (feito: caixas no spotlight e no player, filtro por objeto, contraste; falta a sua revisão na tela): caixas sobre o vídeo no spotlight e no player, filtro por rótulo na lista de eventos, revisão "Alertas × Detecções" | G | eu + você | você revisa a interface na tela; contraste dos novos estados nos 5 temas |
 | C6 | **4.6 avaliação**: conjunto pequeno com gabarito (suas câmeras, anonimizado), regressão por IoU/score, precisão/recall registrados, fallback em CPU | M | eu + você (as imagens) | números em `docs/` e um teste que falha se piorarem |
-| C7 | **4.7 empacotar** o `libonnxruntime` na imagem Docker (variantes CPU / OpenVINO / CUDA) | M | eu | `docker compose` sobe a detecção sem instalar nada no host |
+| C7 ✅ | **4.7 empacotar** o `libonnxruntime` na imagem Docker (variantes CPU / OpenVINO / CUDA) | M | eu | `docker compose` sobe a detecção sem instalar nada no host |
 
 Dependências: C1→C2→C3→C4→C5; C6 e C7 em paralelo com a C5. A C0 decide o backend e portanto o Dockerfile da C7.
 
@@ -81,11 +81,11 @@ Decididos em 2026-10-06: **só Linux** (ADR 0001) e **sem PTZ**. O ONVIF fica s�
 
 | # | Tarefa | Tam. | Quem | Critério de saída |
 |---|---|---|---|---|
-| D1 | **5.1 ONVIF**: descoberta (WS-Discovery) e assistente de cadastro; Profile T como base, sem PTZ. Teste na Intelbras (a maioria suporta ONVIF) | G | eu | "Adicionar câmera" lista as da rede e preenche a URL e o sub-stream |
-| D2 | **5.3 chaveiro** (`secret-service`) para as senhas da janela (o daemon já usa `${NOME}`/Docker secrets) | M | eu | senha fora do `config.toml` na janela, com fallback documentado |
-| D3 | **5.4 MQTT/Home Assistant** (`rumqttc`): eventos, saúde por câmera, descoberta automática do Home Assistant | M | eu | câmeras e sensores de movimento aparecem no Home Assistant (teste com um broker local) |
-| D4 | **5.5 i18n e acessibilidade**: extrair os textos (hoje em português dentro do código), pt-BR + en, foco por teclado e rótulos legíveis por leitor de tela | G | eu | alternar o idioma sem reiniciar; nenhum texto fixo fora do catálogo (teste que varre) |
-| D5 | **5.6 empacotamento (só Linux)**: AUR, AppImage/Flatpak, releases automáticas (`cargo-dist`) e a imagem Docker publicada | M | eu + você (contas/chaves) | `pkgbuild` instala e roda; release de teste no GitHub |
+| D1 ⏳ | **5.1 ONVIF** (feito: descoberta + leitura dos streams + trecho do config no `rrvctl discover`, testado na Intelbras; falta o assistente dentro da janela): descoberta (WS-Discovery) e assistente de cadastro; Profile T como base, sem PTZ. Teste na Intelbras (a maioria suporta ONVIF) | G | eu | "Adicionar câmera" lista as da rede e preenche a URL e o sub-stream |
+| D2 ✅ | **5.3 chaveiro** (`secret-service`) para as senhas da janela (o daemon já usa `${NOME}`/Docker secrets) | M | eu | senha fora do `config.toml` na janela, com fallback documentado |
+| D3 ✅ | **5.4 MQTT/Home Assistant** (`rumqttc`): eventos, saúde por câmera, descoberta automática do Home Assistant | M | eu | câmeras e sensores de movimento aparecem no Home Assistant (teste com um broker local) |
+| D4 ✅/⏳ | **5.5 i18n e acessibilidade** (feito: pt-BR/en com troca no menu e teste que varre `src/ui` e os textos do núcleo que a janela mostra; leitor de tela não existe no iced; falta você conferir o inglês na tela): extrair os textos (hoje em português dentro do código), pt-BR + en, foco por teclado e rótulos legíveis por leitor de tela | G | eu | alternar o idioma sem reiniciar; nenhum texto fixo fora do catálogo (teste que varre) |
+| D5 ❌ dispensada | **5.6 empacotamento (só Linux)** — decidido em 2026-10-06: basta o executável no diretório do projeto (`make bin` → `./bin/`): AUR, AppImage/Flatpak, releases automáticas (`cargo-dist`) e a imagem Docker publicada | M | eu + você (contas/chaves) | `pkgbuild` instala e roda; release de teste no GitHub |
 
 ---
 

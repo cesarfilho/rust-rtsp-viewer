@@ -26,7 +26,7 @@ pub const MIN_SEGMENT_BYTES: i64 = 4096;
 pub const LINK_BACK_MS: i64 = 10_000;
 
 /// Versão do esquema (`PRAGMA user_version`).
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Segment {
@@ -53,6 +53,10 @@ pub struct StoredEvent {
     pub label: String,
     pub score: Option<f64>,
     pub segment_id: Option<i64>,
+    /// Caixa do objeto (`[x, y, w, h]`, normalizada ao quadro); só nas detecções.
+    pub bbox: Option<[f32; 4]>,
+    /// Nome da zona de movimento em que o objeto estava; só nas detecções.
+    pub zone: Option<String>,
 }
 
 /// O que a reconciliação encontrou.
@@ -133,6 +137,17 @@ impl Store {
                  PRAGMA user_version = 2;",
             )?;
         }
+        if version < 3 {
+            conn.execute_batch(
+                "ALTER TABLE events ADD COLUMN box_x REAL;
+                 ALTER TABLE events ADD COLUMN box_y REAL;
+                 ALTER TABLE events ADD COLUMN box_w REAL;
+                 ALTER TABLE events ADD COLUMN box_h REAL;
+                 ALTER TABLE events ADD COLUMN zone TEXT;
+                 CREATE INDEX events_by_label ON events (kind, label, ts);
+                 PRAGMA user_version = 3;",
+            )?;
+        }
         Ok(Self { conn })
     }
 
@@ -200,6 +215,21 @@ impl Store {
         label: &str,
         score: Option<f64>,
     ) -> Result<i64, StoreError> {
+        self.insert_event_full(camera, ts, kind, label, score, None, None)
+    }
+
+    /// Como [`Self::insert_event`], com a caixa e a zona de uma detecção.
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_event_full(
+        &self,
+        camera: &str,
+        ts: i64,
+        kind: &str,
+        label: &str,
+        score: Option<f64>,
+        bbox: Option<[f32; 4]>,
+        zone: Option<&str>,
+    ) -> Result<i64, StoreError> {
         let segment: Option<i64> = self
             .conn
             .query_row(
@@ -211,9 +241,21 @@ impl Store {
             )
             .optional()?;
         self.conn.execute(
-            "INSERT INTO events (camera, ts, kind, label, score, segment_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![camera, ts, kind, label, score, segment],
+            "INSERT INTO events (camera, ts, kind, label, score, segment_id, box_x, box_y, box_w, box_h, zone)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                camera,
+                ts,
+                kind,
+                label,
+                score,
+                segment,
+                bbox.map(|b| f64::from(b[0])),
+                bbox.map(|b| f64::from(b[1])),
+                bbox.map(|b| f64::from(b[2])),
+                bbox.map(|b| f64::from(b[3])),
+                zone
+            ],
         )?;
         if let (Some(id), "motion") = (segment, kind) {
             self.conn
@@ -264,7 +306,7 @@ impl Store {
         to: i64,
     ) -> Result<Vec<StoredEvent>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, camera, ts, kind, label, score, segment_id FROM events
+            "SELECT id, camera, ts, kind, label, score, segment_id, box_x, box_y, box_w, box_h, zone FROM events
              WHERE (?1 IS NULL OR camera = ?1) AND ts BETWEEN ?2 AND ?3
              ORDER BY ts",
         )?;
@@ -277,6 +319,18 @@ impl Store {
                 label: r.get(4)?,
                 score: r.get(5)?,
                 segment_id: r.get(6)?,
+                bbox: match (
+                    r.get::<_, Option<f64>>(7)?,
+                    r.get::<_, Option<f64>>(8)?,
+                    r.get::<_, Option<f64>>(9)?,
+                    r.get::<_, Option<f64>>(10)?,
+                ) {
+                    (Some(x), Some(y), Some(w), Some(h)) => {
+                        Some([x as f32, y as f32, w as f32, h as f32])
+                    }
+                    _ => None,
+                },
+                zone: r.get(11)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -434,6 +488,8 @@ pub enum StoreCmd {
         kind: String,
         label: String,
         score: Option<f64>,
+        bbox: Option<[f32; 4]>,
+        zone: Option<String>,
     },
     /// Roda a retenção; `dir` é onde ficam as gravações (para medir o disco).
     Retention {
@@ -531,8 +587,10 @@ fn apply(store: &Store, cmd: StoreCmd) -> Result<(), StoreError> {
             kind,
             label,
             score,
+            bbox,
+            zone,
         } => {
-            store.insert_event(&camera, ts, &kind, &label, score)?;
+            store.insert_event_full(&camera, ts, &kind, &label, score, bbox, zone.as_deref())?;
         }
     }
     Ok(())
@@ -765,7 +823,46 @@ mod tests {
         let s = Store::open(&db).unwrap();
         let seg = &s.segments_between("c", 0, 100).unwrap()[0];
         assert_eq!(seg.mode, "manual", "o que já existia vira manual");
+        // e chega à versão atual, com as colunas das detecções
+        let v: i64 = s
+            .conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, SCHEMA_VERSION);
+        s.insert_event_full(
+            "c",
+            6,
+            "detection",
+            "person",
+            Some(0.9),
+            Some([0.1; 4]),
+            None,
+        )
+        .unwrap();
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_detection_keeps_its_label_score_box_and_zone() {
+        let s = Store::open_in_memory().unwrap();
+        s.insert_event("c", 10, "motion", "", None).unwrap();
+        s.insert_event_full(
+            "c",
+            20,
+            "detection",
+            "person",
+            Some(0.875),
+            Some([0.25, 0.5, 0.125, 0.0625]),
+            Some("Portão"),
+        )
+        .unwrap();
+        let ev = s.events_between(Some("c"), 0, 100).unwrap();
+        assert_eq!(ev.len(), 2);
+        assert_eq!((ev[0].bbox, ev[0].zone.as_deref()), (None, None));
+        assert_eq!(ev[1].label, "person");
+        assert_eq!(ev[1].score, Some(0.875));
+        assert_eq!(ev[1].bbox, Some([0.25, 0.5, 0.125, 0.0625]));
+        assert_eq!(ev[1].zone.as_deref(), Some("Portão"));
     }
 
     #[test]
@@ -800,6 +897,8 @@ mod tests {
             kind: "motion".into(),
             label: String::new(),
             score: None,
+            bbox: None,
+            zone: None,
         });
         h.send(StoreCmd::SegmentClosed {
             path: p,

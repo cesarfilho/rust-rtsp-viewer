@@ -1,6 +1,7 @@
 //! Desktop-notification policy (pure): which events notify and how often.
 
 use crate::domain::timeline::EventType;
+use crate::i18n::t;
 
 pub const DEFAULT_COOLDOWN_SECS: u64 = 60;
 pub const MIN_COOLDOWN_SECS: u64 = 5;
@@ -29,8 +30,8 @@ pub fn message_for(
     detail: Option<&str>,
 ) -> Option<(String, String)> {
     let (title, body) = match kind {
-        EventType::Motion => ("Movimento detectado", detail.unwrap_or("")),
-        EventType::Offline => ("Câmera offline", "Sem sinal de vídeo"),
+        EventType::Motion => (t("Movimento detectado"), detail.unwrap_or("")),
+        EventType::Offline => (t("Câmera offline"), t("Sem sinal de vídeo")),
         _ => return None,
     };
     let body = if body.is_empty() {
@@ -39,6 +40,21 @@ pub fn message_for(
         format!("{camera} · {body}")
     };
     Some((title.to_string(), body))
+}
+
+/// Title/body of a "something was recognised" notification.
+pub fn detection_message(
+    label: &str,
+    camera: &str,
+    percent: f32,
+    zone: Option<&str>,
+) -> (String, String) {
+    let title = crate::i18n::tf("Detecção: {}", &[&crate::domain::detect::label_pt(label)]);
+    let body = match zone {
+        Some(z) => format!("{camera} · {percent}% · {z}"),
+        None => format!("{camera} · {percent}%"),
+    };
+    (title, body)
 }
 
 /// Whether enough time has passed since the last notification of this kind.
@@ -56,6 +72,17 @@ mod tests {
         assert!(message_for(EventType::Offline, "Garagem", None).is_some());
         assert!(message_for(EventType::Snapshot, "Garagem", None).is_none());
         assert!(message_for(EventType::RecordingStart, "Garagem", None).is_none());
+    }
+
+    #[test]
+    fn detection_messages_name_the_object_the_camera_and_the_zone() {
+        let (t, b) = detection_message("person", "Garagem", 87.0, Some("Portão"));
+        assert_eq!(t, "Detecção: pessoa");
+        assert_eq!(b, "Garagem · 87% · Portão");
+        assert_eq!(
+            detection_message("kite", "G", 50.0, None).0,
+            "Detecção: kite"
+        );
     }
 
     #[test]

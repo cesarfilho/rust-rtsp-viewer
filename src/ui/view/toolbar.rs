@@ -5,6 +5,7 @@
 //!   centre — page navigator · carousel   (grid layout only, contextual)
 //!   right  — camera-health readout · REC · overflow menu
 
+use crate::i18n::t;
 use iced::{Element, Length};
 
 use super::super::app::App;
@@ -82,7 +83,7 @@ fn density_segments(app: &App) -> Element<'_, Message> {
             .style(style::segment(theme, active))
     };
     let mut r = iced::widget::row![seg(
-        "Auto".into(),
+        "Auto".into(), // i18n-ok: igual nos dois idiomas
         app.view.mode == GridMode::Auto,
         Message::GridModeChanged(GridMode::Auto)
     )]
@@ -205,7 +206,7 @@ fn health_meter(app: &App) -> Element<'_, Message> {
     let total = app.sidebar.cameras.len();
     if total == 0 {
         return iced::widget::container(
-            iced::widget::text("sem câmeras")
+            iced::widget::text(t("sem câmeras"))
                 .size(Theme::TEXT_CAPTION)
                 .color(Theme::color_from_hex(colors.text_tertiary)),
         )
@@ -279,7 +280,7 @@ pub fn toolbar(app: &App) -> Element<'_, Message> {
     let layout_seg = iced::widget::container(
         iced::widget::row![
             pill(
-                iced::widget::text("Grade").size(Theme::TEXT_BODY),
+                iced::widget::text(t("Grade")).size(Theme::TEXT_BODY),
                 if app.layout_mode == LayoutMode::Grid {
                     Intent::Selected
                 } else {
@@ -289,7 +290,7 @@ pub fn toolbar(app: &App) -> Element<'_, Message> {
                 theme,
             ),
             pill(
-                iced::widget::text("Flex").size(Theme::TEXT_BODY),
+                iced::widget::text("Flex").size(Theme::TEXT_BODY), // i18n-ok: nome do modo
                 if app.layout_mode == LayoutMode::Flex {
                     Intent::Selected
                 } else {

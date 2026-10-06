@@ -22,6 +22,7 @@ impl LayoutMode {
 pub enum Message {
     FrameUpdate,
     ThemeChanged(Theme),
+    LanguageChanged(crate::i18n::Lang),
     Sidebar(sidebar::Message),
     LayoutModeChanged(LayoutMode),
     FlexMainSelected(usize),

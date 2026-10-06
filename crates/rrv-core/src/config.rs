@@ -23,6 +23,9 @@ pub struct Config {
     pub cameras: Option<Vec<CameraConfig>>,
     /// UI theme: "cosmic" (default), "dark", "light", "amoled" or "opencode".
     pub theme: Option<String>,
+    /// Interface language: `"pt-BR"` or `"en"`. Default: the system's (`LANG`), else Portuguese.
+    /// The choice made in the window's menu is saved in `view.toml` and wins.
+    pub language: Option<String>,
     /// Per-camera log file directory. Default: `~/logs/rust-rtsp-viewer`.
     /// Each camera gets its own file: `<dir>/<safe_label>.log`.
     pub logs: Option<LogsConfigFile>,
@@ -40,6 +43,10 @@ pub struct Config {
     /// `[motion]` — frame-difference detector tuning (`enabled`, `threshold`,
     /// `contour_area`, `sample_stride`).
     pub motion: Option<crate::domain::motion::MotionConfigFile>,
+    /// `[mqtt]` — the daemon publishes camera state and events to an MQTT broker (Home Assistant).
+    pub mqtt: Option<crate::mqtt::MqttFile>,
+    /// `[detect]` — object detection (YOLO) on the frames where motion is seen.
+    pub detect: Option<crate::domain::detect::DetectFile>,
     /// `[retention]` — how long the daemon keeps recordings (`motion_days`,
     /// `manual_days`, `max_disk_percent`).
     pub retention: Option<crate::domain::retention::RetentionFile>,

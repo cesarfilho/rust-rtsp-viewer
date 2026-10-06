@@ -232,7 +232,7 @@ pub fn new_app(
             kind: if cam.url.starts_with("http") {
                 "HLS"
             } else {
-                "RTSP"
+                "RTSP" // i18n-ok: nome próprio
             }
             .into(),
             status: sidebar::CameraStatus::Connecting,
@@ -269,6 +269,13 @@ pub fn new_app(
     };
 
     let persisted = crate::infrastructure::view_state::load();
+    if let Some(l) = persisted
+        .language
+        .as_deref()
+        .and_then(crate::i18n::Lang::parse)
+    {
+        crate::i18n::set(l);
+    }
     if let Some(m) = persisted
         .mode
         .as_deref()

@@ -12,6 +12,7 @@ use super::super::sidebar;
 use super::super::theme::Theme;
 use super::style;
 use crate::domain::view;
+use crate::i18n::{t, tf};
 
 pub const MENU_WIDTH: f32 = 248.0;
 
@@ -107,7 +108,7 @@ fn segmented<'a>(theme: Theme, items: Vec<(String, bool, Message)>) -> Element<'
 
 fn density_row(app: &App) -> Element<'_, Message> {
     let mut items = vec![(
-        "Auto".to_string(),
+        "Auto".to_string(), // i18n-ok: igual nos dois idiomas
         app.view.mode == GridMode::Auto,
         Message::GridModeChanged(GridMode::Auto),
     )];
@@ -127,12 +128,12 @@ fn layout_row(app: &App) -> Element<'_, Message> {
         app.theme,
         vec![
             (
-                "Grade".into(),
+                t("Grade").into(),
                 app.layout_mode == LayoutMode::Grid,
                 Message::LayoutModeChanged(LayoutMode::Grid),
             ),
             (
-                "Flex".into(),
+                "Flex".into(), // i18n-ok: nome do modo
                 app.layout_mode == LayoutMode::Flex,
                 Message::LayoutModeChanged(LayoutMode::Flex),
             ),
@@ -173,6 +174,23 @@ fn theme_row(app: &App) -> Element<'_, Message> {
         .into()
 }
 
+fn language_row(app: &App) -> Element<'_, Message> {
+    let current = crate::i18n::get();
+    segmented(
+        app.theme,
+        crate::i18n::Lang::all()
+            .into_iter()
+            .map(|l| {
+                (
+                    l.native_name().to_string(),
+                    l == current,
+                    Message::LanguageChanged(l),
+                )
+            })
+            .collect(),
+    )
+}
+
 fn hairline(theme: Theme) -> Element<'static, Message> {
     iced::widget::rule::horizontal(1)
         .style(move |_: &iced::Theme| iced::widget::rule::Style {
@@ -191,7 +209,7 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
     let immersive = !app.focus.is_normal();
 
     let mut col = column![
-        section_header(theme, "Exibição"),
+        section_header(theme, t("Exibição")),
         container(density_row(app)).padding(iced::Padding::from([0, 10])),
         container(layout_row(app)).padding(iced::Padding {
             top: 3.0,
@@ -203,9 +221,9 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
             theme,
             "\u{25F1}",
             if immersive {
-                "Sair do modo imersivo"
+                t("Sair do modo imersivo")
             } else {
-                "Modo imersivo"
+                t("Modo imersivo")
             },
             Some("h"),
             Message::ToggleImmersive,
@@ -214,7 +232,7 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
         menu_row(
             theme,
             "\u{25F2}",
-            "Tela cheia",
+            t("Tela cheia"),
             Some("F11"),
             Message::ToggleFullscreen,
             false
@@ -230,11 +248,11 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
             let enabled = app.engine.camera_enabled.get(idx).copied().unwrap_or(true);
             col = col
                 .push(hairline(theme))
-                .push(section_header(theme, format!("Câmera · {}", cam.name)))
+                .push(section_header(theme, tf("Câmera · {}", &[&cam.name])))
                 .push(menu_row(
                     theme,
                     "\u{25A3}",
-                    "Spotlight",
+                    t("Spotlight"),
                     Some("f"),
                     Message::EnterSpotlight(idx),
                     false,
@@ -242,7 +260,7 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
                 .push(menu_row(
                     theme,
                     "\u{25C9}",
-                    "Snapshot",
+                    t("Snapshot"),
                     Some("s"),
                     Message::Snapshot,
                     false,
@@ -251,9 +269,9 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
                     theme,
                     "\u{25CF}",
                     if cam.status == sidebar::CameraStatus::Recording {
-                        "Parar gravação"
+                        t("Parar gravação")
                     } else {
-                        "Gravar"
+                        t("Gravar")
                     },
                     Some("r"),
                     Message::ToggleRecording,
@@ -262,7 +280,7 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
                 .push(menu_row(
                     theme,
                     "\u{266A}",
-                    "Áudio",
+                    t("Áudio"),
                     Some("m"),
                     Message::ToggleAudio,
                     false,
@@ -270,7 +288,7 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
                 .push(menu_row(
                     theme,
                     "\u{2B21}",
-                    "Zonas de movimento",
+                    t("Zonas de movimento"),
                     None,
                     Message::EditZones(idx),
                     false,
@@ -278,7 +296,7 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
                 .push(menu_row(
                     theme,
                     "\u{25D0}",
-                    if enabled { "Desativar" } else { "Ativar" },
+                    if enabled { t("Desativar") } else { t("Ativar") },
                     None,
                     Message::Sidebar(sidebar::Message::CameraToggled(idx, !enabled)),
                     false,
@@ -288,13 +306,19 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
 
     col = col
         .push(hairline(theme))
-        .push(section_header(theme, "Aparência"))
+        .push(section_header(theme, t("Aparência")))
         .push(theme_row(app))
+        .push(container(language_row(app)).padding(iced::Padding {
+            top: 0.0,
+            right: 10.0,
+            bottom: 6.0,
+            left: 10.0,
+        }))
         .push(hairline(theme))
         .push(menu_row(
             theme,
             "\u{25B6}",
-            "Gravações",
+            t("Gravações"),
             Some("t"),
             Message::Recordings(crate::ui::recordings::RecMsg::Open),
             false,
@@ -302,7 +326,7 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
         .push(menu_row(
             theme,
             "?",
-            "Ajuda",
+            t("Ajuda"),
             Some("?"),
             Message::ShowHelp,
             false,
@@ -310,8 +334,8 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
         .push(menu_row(
             theme,
             "\u{25CF}",
-            "Sair",
-            Some("Ctrl Q"),
+            t("Sair"),
+            Some("Ctrl Q"), // i18n-ok: nome de tecla
             Message::Quit,
             true,
         ));

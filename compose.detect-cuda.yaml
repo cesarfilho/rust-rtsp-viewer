@@ -1,0 +1,20 @@
+# Detecção de objetos (YOLO) na GPU NVIDIA dentro do contêiner (plano C7). Combine com o compose.nvidia.yaml
+# (que entrega a GPU ao contêiner via CDI):
+#
+#   scripts/check-nvidia-host.sh                # o toolkit e o CDI do host (precisam de sudo, uma vez)
+#   scripts/fetch-model.sh 640
+#   docker compose -f compose.yaml -f compose.nvidia.yaml -f compose.detect-cuda.yaml up -d --build
+#   docker compose logs rrv | grep detecção     # "detecção ligada: ... (640 px)"; sem CUDA, `backend = "auto"` cai para a CPU
+#
+# A imagem parte de nvidia/cuda (CUDA 13 + cuDNN 9) e traz a libonnxruntime 1.30 com o provedor CUDA.
+# No config: [detect] backend = "cuda" (falha alto se a GPU não estiver acessível) ou "auto".
+services:
+  rrv:
+    build:
+      context: .
+      target: detect-cuda
+      args:
+        FEATURES: detect
+    image: rust-rtsp-viewer/rrv-daemon:detect-cuda
+    volumes:
+      - ./models:/models:ro

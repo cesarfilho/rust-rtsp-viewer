@@ -3,6 +3,7 @@
 //! arquivos são lidos da pasta de gravações **desta** janela (`[recording] dir`), que no
 //! Docker é a pasta do host montada no contêiner.
 
+use crate::i18n::{t, tf};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -10,7 +11,7 @@ use iced::widget::{button, canvas, column, container, row, text};
 use iced::{Element, Length, Point, Rectangle, Renderer, Size, Task, mouse};
 
 use crate::domain::timeline_view::{self, SegmentSpan, Span};
-use crate::ipc::protocol::{HistoryEvent, Request, Response, SegmentInfo};
+use crate::ipc::protocol::{HistoryEvent, Request, Response, SegmentInfo, WireBox};
 use crate::ui::app::App;
 use crate::ui::bridge::GStreamerBridge;
 use crate::ui::daemon::{DaemonState, PendingRequest};
@@ -61,6 +62,8 @@ pub enum RecMsg {
     },
     /// Mostra só os eventos de movimento.
     ToggleMotionOnly,
+    /// Passa ao próximo objeto da lista (nenhum → pessoa → carro → … → nenhum): só as detecções dele.
+    CycleLabel,
     /// Adiciona / tira uma câmera da comparação (canais lado a lado, no mesmo instante).
     ToggleCompare(String),
     Live,
@@ -108,6 +111,8 @@ pub struct RecordingsView {
     pub truncated: bool,
     /// Filtro da lista de eventos: só movimento.
     pub motion_only: bool,
+    /// Filtro da lista de eventos: só as detecções deste objeto (nome COCO).
+    pub label_filter: Option<String>,
     /// A janela acompanha o vivo: novos segmentos entram sozinhos.
     pub follow: bool,
     /// Os canais de comparação, que seguem o instante do principal.
@@ -258,6 +263,12 @@ pub fn update(app: &mut App, msg: RecMsg) -> Task<Message> {
                 v.motion_only = !v.motion_only;
             }
         }
+        RecMsg::CycleLabel => {
+            if let Some(v) = app.recordings.as_mut() {
+                let labels = detection_labels(&v.events);
+                v.label_filter = next_label(v.label_filter.as_deref(), &labels);
+            }
+        }
         RecMsg::EventClicked { camera, ts_ms } => {
             let lane = app
                 .recordings
@@ -279,20 +290,19 @@ pub(crate) fn unavailable_reason(daemon: &DaemonState) -> Option<String> {
     use super::daemon::Mode;
     match daemon.mode {
         Mode::Connected => None,
-        Mode::Embedded => Some(format!(
-            "A vista Gravações precisa do daemon, e esta janela está no motor local (o chip da barra diz \
-             \"Motor local\"). Abra a janela ligada ao daemon: RRV_SOCKET={} ou --daemon <socket>",
-            daemon.socket.display()
+        Mode::Embedded => Some(tf(
+            "A vista Gravações precisa do daemon, e esta janela está no motor local (o chip da barra diz \"Motor local\"). Abra a janela ligada ao daemon: RRV_SOCKET={} ou --daemon <socket>",
+            &[&daemon.socket.display()],
         )),
-        Mode::Connecting => Some("Conectando ao daemon… tente de novo em instantes".into()),
+        Mode::Connecting => Some(t("Conectando ao daemon… tente de novo em instantes").into()),
         Mode::Lost => Some(
-            "Sem contato com o daemon agora (veja o aviso sob a barra); a vista Gravações volta quando ele responder".into(),
+            t("Sem contato com o daemon agora (veja o aviso sob a barra); a vista Gravações volta quando ele responder").into(),
         ),
         Mode::Incompatible => Some(
-            "A janela e o daemon falam versões diferentes do protocolo; atualize um dos dois".into(),
+            t("A janela e o daemon falam versões diferentes do protocolo; atualize um dos dois").into(),
         ),
         Mode::NoPermission => Some(
-            "Sem permissão para o socket do daemon (é de outro usuário?); a vista Gravações precisa dele".into(),
+            t("Sem permissão para o socket do daemon (é de outro usuário?); a vista Gravações precisa dele").into(),
         ),
     }
 }
@@ -315,6 +325,7 @@ fn open(app: &mut App) {
         mark_out: None,
         truncated: false,
         motion_only: false,
+        label_filter: None,
         follow: true,
         followers: Vec::new(),
         refreshed_at: std::time::Instant::now(),
@@ -350,9 +361,11 @@ fn candidate_dirs() -> Vec<PathBuf> {
         v.push(PathBuf::from(d));
     }
     v.push(PathBuf::from("recordings"));
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        v.push(home.join("Videos"));
-        v.push(home.join("Vídeos"));
+    if let Some(home) = std::env::var_os("HOME") /* i18n-ok */
+        .map(PathBuf::from)
+    {
+        v.push(home.join("Videos")); // i18n-ok: nome de pasta
+        v.push(home.join("Vídeos")); // i18n-ok: nome de pasta
     }
     v
 }
@@ -437,14 +450,14 @@ pub fn on_history(app: &mut App, result: Result<Response, String>) {
     if let Some(dir) = found_in {
         super::update::toast(
             app,
-            format!("Gravações do daemon encontradas em {}", dir.display()),
+            tf("Gravações do daemon encontradas em {}", &[&dir.display()]),
         );
     }
 }
 
 fn toggle_protect(app: &mut App) {
     let Some(p) = app.recordings.as_ref().and_then(|v| v.player.as_ref()) else {
-        super::update::toast(app, "Toque uma gravação para protegê-la");
+        super::update::toast(app, t("Toque uma gravação para protegê-la"));
         return;
     };
     let (segment_id, protected) = (p.segment.id, !p.segment.protected);
@@ -483,14 +496,14 @@ pub fn on_protected(
             super::update::toast(
                 app,
                 if protected {
-                    "Trecho protegido: a retenção não o apaga"
+                    t("Trecho protegido: a retenção não o apaga")
                 } else {
-                    "Trecho solto: volta a valer a retenção"
+                    t("Trecho solto: volta a valer a retenção")
                 },
             );
         }
         Ok(Response::Error { message }) | Err(message) => {
-            super::update::toast(app, format!("Não consegui mudar a proteção: {message}"))
+            super::update::toast(app, tf("Não consegui mudar a proteção: {}", &[&message]))
         }
         Ok(_) => {}
     }
@@ -503,12 +516,12 @@ pub fn on_exported(app: &mut App, result: Result<Response, String>) {
             let path = app.recordings_dir.join(&file);
             super::update::toast_open_dir(
                 app,
-                format!("Clipe salvo: {file} ({} KiB)", bytes / 1024),
+                tf("Clipe salvo: {} ({} KiB)", &[&file, &(bytes / 1024)]),
                 path.parent().map(PathBuf::from),
             );
         }
         Ok(Response::Error { message }) | Err(message) => {
-            super::update::toast(app, format!("Não consegui exportar: {message}"))
+            super::update::toast(app, tf("Não consegui exportar: {}", &[&message]))
         }
         Ok(_) => {}
     }
@@ -531,7 +544,7 @@ fn click(app: &mut App, lane: usize, t_ms: i64) {
         None => match timeline_view::next_after(&only, t_ms) {
             Some(i) => (spans[i].0, only[i].start, true),
             None => {
-                super::update::toast(app, "Sem gravação neste instante");
+                super::update::toast(app, t("Sem gravação neste instante"));
                 return;
             }
         },
@@ -554,7 +567,7 @@ fn click(app: &mut App, lane: usize, t_ms: i64) {
         return;
     }
     if gap {
-        super::update::toast(app, "Sem gravação aqui; indo para o próximo trecho");
+        super::update::toast(app, t("Sem gravação aqui; indo para o próximo trecho"));
     }
     play(app, camera, segment, at);
 }
@@ -568,16 +581,16 @@ fn open_player(
 ) -> Result<Player, String> {
     let path = recordings_dir.join(&segment.file);
     if !path.exists() {
-        return Err(format!(
+        return Err(tf(
             "Arquivo não encontrado: {}. Ajuste [recording] dir da janela para a pasta de gravações do daemon",
-            path.display()
+            &[&path.display()],
         ));
     }
     let mut bridge =
-        GStreamerBridge::new(640, 360).map_err(|e| format!("Não consegui abrir o player: {e}"))?;
+        GStreamerBridge::new(640, 360).map_err(|e| tf("Não consegui abrir o player: {}", &[&e]))?;
     bridge
         .start_file(&path.to_string_lossy())
-        .map_err(|e| format!("Não consegui abrir a gravação: {e}"))?;
+        .map_err(|e| tf("Não consegui abrir a gravação: {}", &[&e]))?;
     let bridge = Arc::new(Mutex::new(bridge));
     let video = VideoWidget::new(bridge.clone());
     let offset = (at_ms - segment.ts_start).max(0) as u64;
@@ -658,7 +671,10 @@ fn toggle_compare(app: &mut App, camera: String) {
     if used >= MAX_CHANNELS {
         super::update::toast(
             app,
-            format!("No máximo {MAX_CHANNELS} câmeras lado a lado: tire uma antes"),
+            tf(
+                "No máximo {} câmeras lado a lado: tire uma antes",
+                &[&MAX_CHANNELS],
+            ),
         );
         return;
     }
@@ -769,7 +785,7 @@ fn sync_followers(app: &mut App) {
                 if let Some(p) = f.player.take() {
                     stop_player(p);
                 }
-                f.note = Some("Sem gravação neste instante".into());
+                f.note = Some(crate::i18n::t("Sem gravação neste instante").into());
                 f.retry_at = None;
             }
             timeline_view::FollowAction::Open { index, offset_ms } => {
@@ -830,7 +846,7 @@ fn mark(app: &mut App, is_in: bool) {
     let Some((_, t)) = v.playhead() else {
         super::update::toast(
             app,
-            "Toque uma gravação para marcar o início e o fim do clipe",
+            t("Toque uma gravação para marcar o início e o fim do clipe"),
         );
         return;
     };
@@ -851,7 +867,7 @@ fn export(app: &mut App) {
     let (Some(from), Some(to)) = (v.mark_in, v.mark_out) else {
         super::update::toast(
             app,
-            "Marque o início (I) e o fim (O) do clipe antes de exportar",
+            t("Marque o início (I) e o fim (O) do clipe antes de exportar"),
         );
         return;
     };
@@ -859,7 +875,7 @@ fn export(app: &mut App) {
         return;
     };
     if to <= from {
-        super::update::toast(app, "O fim do clipe precisa ser depois do início");
+        super::update::toast(app, t("O fim do clipe precisa ser depois do início"));
         return;
     }
     if super::update::send_to_daemon(
@@ -871,7 +887,7 @@ fn export(app: &mut App) {
         },
         PendingRequest::Export,
     ) {
-        super::update::toast(app, "Exportando o clipe…");
+        super::update::toast(app, t("Exportando o clipe…"));
     }
 }
 
@@ -1115,7 +1131,7 @@ impl canvas::Program<Message> for TimelineProgram<'_> {
 
 fn pill_button<'a>(
     app: &App,
-    label: &'a str,
+    label: impl iced::widget::text::IntoFragment<'a>,
     msg: RecMsg,
     intent: Intent,
 ) -> iced::widget::Button<'a, Message> {
@@ -1123,6 +1139,28 @@ fn pill_button<'a>(
         .padding(iced::Padding::from([4, 10]))
         .style(style::pill(app.theme, intent))
         .on_press(Message::Recordings(msg))
+}
+
+/// The player's picture with the stored detections near the playhead drawn over it.
+fn player_with_boxes<'a>(p: &'a Player, v: &'a RecordingsView) -> Element<'a, Message> {
+    let picture: Element<'a, Message> = p.video.view().map(|_| Message::FrameUpdate);
+    let Some((_, ts)) = v.playhead() else {
+        return picture;
+    };
+    let boxes = boxes_at(&v.events, &p.camera, ts);
+    if boxes.is_empty() {
+        return picture;
+    }
+    let (_, w, h, _) = p
+        .bridge
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .read_frame();
+    iced::widget::stack![
+        picture,
+        crate::ui::detections_overlay::layer(boxes, w as f32, h as f32)
+    ]
+    .into()
 }
 
 pub fn view(app: &App) -> Element<'_, Message> {
@@ -1135,7 +1173,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
     let span_hours = (v.span.len() / 3_600_000).max(1);
     let header = row![
-        text("Gravações").size(15).color(text_color),
+        text(t("Gravações")).size(15).color(text_color),
         iced::widget::space::horizontal(),
         pill_button(app, "1 h", RecMsg::SetSpan(1), sel(span_hours == 1)),
         pill_button(app, "6 h", RecMsg::SetSpan(6), sel(span_hours == 6)),
@@ -1143,7 +1181,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
         pill_button(app, "7 d", RecMsg::SetSpan(168), sel(span_hours == 168)),
         pill_button(app, "‹", RecMsg::Pan(-0.5), Intent::Ghost),
         pill_button(app, "›", RecMsg::Pan(0.5), Intent::Ghost),
-        pill_button(app, "Fechar  Esc", RecMsg::Close, Intent::Ghost),
+        pill_button(app, t("Fechar  Esc"), RecMsg::Close, Intent::Ghost),
     ]
     .spacing(6)
     .align_y(iced::Alignment::Center);
@@ -1151,17 +1189,17 @@ pub fn view(app: &App) -> Element<'_, Message> {
     // ── a imagem
     let stage: Element<'_, Message> = match &v.player {
         Some(_) if !v.followers.is_empty() => channels_stage(app, v),
-        Some(p) => p.video.view().map(|_| Message::FrameUpdate),
+        Some(p) => player_with_boxes(p, v),
         None => container(
             text(if v.loading {
-                "Carregando…".to_string()
+                t("Carregando…").to_string()
             } else if let Some(e) = &v.error {
-                format!("Não consegui carregar o histórico: {e}")
+                tf("Não consegui carregar o histórico: {}", &[e])
             } else if v.segments.is_empty() {
-                "Nada gravado neste período. Ative a gravação por movimento ou a manual (r)."
+                t("Nada gravado neste período. Ative a gravação por movimento ou a manual (r).")
                     .to_string()
             } else {
-                "Clique na linha do tempo para ver a gravação".to_string()
+                t("Clique na linha do tempo para ver a gravação").to_string()
             })
             .size(13)
             .color(dim),
@@ -1195,13 +1233,13 @@ pub fn view(app: &App) -> Element<'_, Message> {
             row![
                 pill_button(
                     app,
-                    if p.paused { "Tocar" } else { "Pausar" },
+                    if p.paused { t("Tocar") } else { t("Pausar") },
                     RecMsg::PlayPause,
                     Intent::Primary
                 ),
                 pill_button(app, "−10 s", RecMsg::Skip(-SKIP_MS), Intent::Ghost),
                 pill_button(app, "+10 s", RecMsg::Skip(SKIP_MS), Intent::Ghost),
-                pill_button(app, "Quadro", RecMsg::Step, Intent::Ghost),
+                pill_button(app, t("Quadro"), RecMsg::Step, Intent::Ghost),
                 pill_button(app, "0,5×", RecMsg::Rate(0.5), sel(p.rate == 0.5)),
                 pill_button(app, "1×", RecMsg::Rate(1.0), sel(p.rate == 1.0)),
                 pill_button(app, "2×", RecMsg::Rate(2.0), sel(p.rate == 2.0)),
@@ -1216,23 +1254,23 @@ pub fn view(app: &App) -> Element<'_, Message> {
                 .size(12)
                 .color(dim),
                 iced::widget::space::horizontal(),
-                pill_button(app, "Início  I", RecMsg::MarkIn, sel(v.mark_in.is_some())),
-                pill_button(app, "Fim  O", RecMsg::MarkOut, sel(v.mark_out.is_some())),
+                pill_button(app, t("Início  I"), RecMsg::MarkIn, sel(v.mark_in.is_some())),
+                pill_button(app, t("Fim  O"), RecMsg::MarkOut, sel(v.mark_out.is_some())),
                 pill_button(
                     app,
-                    if p.segment.protected { "Soltar  P" } else { "Proteger  P" },
+                    if p.segment.protected { t("Soltar  P") } else { t("Proteger  P") },
                     RecMsg::ToggleProtect,
                     sel(p.segment.protected)
                 ),
-                pill_button(app, "Exportar  E", RecMsg::Export, Intent::Primary),
+                pill_button(app, t("Exportar  E"), RecMsg::Export, Intent::Primary),
             ]
             .spacing(6)
             .align_y(iced::Alignment::Center)
             .into()
         }
-        None => text(
+        None => text(t(
             "Clique para ver · roda do mouse aproxima · ‹ › desloca · Espaço toca/pausa · setas esquerda/direita pulam 10 s",
-        )
+        ))
         .size(11)
         .color(dim)
         .into(),
@@ -1301,9 +1339,13 @@ fn channels_stage<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Messag
         let body: Element<'a, Message> = match &f.player {
             Some(p) => p.video.view().map(|_| Message::FrameUpdate),
             None => container(
-                text(f.note.clone().unwrap_or_else(|| "Carregando…".to_string()))
-                    .size(12)
-                    .color(dim),
+                text(
+                    f.note
+                        .clone()
+                        .unwrap_or_else(|| t("Carregando…").to_string()),
+                )
+                .size(12)
+                .color(dim),
             )
             .center_x(Length::Fill)
             .center_y(Length::Fill)
@@ -1337,7 +1379,7 @@ fn compare_row<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message> 
         return iced::widget::Space::new().into();
     }
     let dim = Theme::color_from_hex(app.theme.colors().text_secondary);
-    let mut r = row![text("Comparar:").size(12).color(dim)]
+    let mut r = row![text(t("Comparar:")).size(12).color(dim)]
         .spacing(6)
         .align_y(iced::Alignment::Center);
     for name in others {
@@ -1355,47 +1397,117 @@ fn compare_row<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message> 
 /// O nome de um evento do histórico, em português.
 pub fn event_label(kind: &str) -> &'static str {
     match kind {
-        "motion" => "Movimento",
-        "recording_start" => "Gravação iniciada",
-        "recording_stop" => "Gravação parou",
-        "offline" => "Câmera offline",
-        "online" => "Câmera online",
-        "snapshot" => "Foto",
-        "disk_low" => "Disco quase cheio",
-        _ => "Evento",
+        "motion" => t("Movimento"),
+        "recording_start" => t("Gravação iniciada"),
+        "recording_stop" => t("Gravação parou"),
+        "offline" => t("Câmera offline"),
+        "online" => t("Câmera online"),
+        "snapshot" => t("Foto"),
+        "disk_low" => t("Disco quase cheio"),
+        "detection" => t("Objeto"),
+        _ => t("Evento"),
     }
 }
 
-/// Os eventos que a lista mostra: do mais novo ao mais antigo, com o filtro aplicado.
-pub fn visible_events(
-    events: &[HistoryEvent],
+/// Os eventos que a lista mostra: do mais novo ao mais antigo, com os filtros aplicados
+/// (`label`: só as detecções desse objeto).
+pub fn visible_events<'a>(
+    events: &'a [HistoryEvent],
     motion_only: bool,
+    label: Option<&str>,
     limit: usize,
-) -> Vec<&HistoryEvent> {
+) -> Vec<&'a HistoryEvent> {
     events
         .iter()
         .rev()
         .filter(|e| !motion_only || e.kind == "motion")
+        .filter(|e| label.is_none_or(|l| e.kind == "detection" && e.label == l))
         .take(limit)
         .collect()
+}
+
+/// How far from the playhead a stored detection is still drawn over the picture.
+const BOX_WINDOW_MS: i64 = 2500;
+
+/// As caixas das detecções gravadas de `camera` perto do instante `ts_ms` (Unix ms): a mais próxima de
+/// cada objeto, dentro de [`BOX_WINDOW_MS`]. O histórico guarda uma detecção por objeto a cada
+/// `[detect] cooldown_secs`, então só aparecem caixas perto desses instantes.
+pub fn boxes_at(events: &[HistoryEvent], camera: &str, ts_ms: i64) -> Vec<WireBox> {
+    let mut best: Vec<(i64, &HistoryEvent)> = Vec::new();
+    for e in events {
+        let near = (e.ts - ts_ms).abs();
+        if e.kind != "detection" || e.camera != camera || e.bbox.is_none() || near > BOX_WINDOW_MS {
+            continue;
+        }
+        match best.iter_mut().find(|(_, b)| b.label == e.label) {
+            Some(slot) if slot.0 <= near => {}
+            Some(slot) => *slot = (near, e),
+            None => best.push((near, e)),
+        }
+    }
+    best.into_iter()
+        .filter_map(|(_, e)| {
+            let [x, y, w, h] = e.bbox?;
+            Some(WireBox {
+                label: e.label.clone(),
+                score: e.score.unwrap_or(0.0) as f32,
+                x,
+                y,
+                w,
+                h,
+            })
+        })
+        .collect()
+}
+
+/// Os objetos que aparecem nas detecções do período, em ordem alfabética.
+pub fn detection_labels(events: &[HistoryEvent]) -> Vec<String> {
+    let mut v: Vec<String> = events
+        .iter()
+        .filter(|e| e.kind == "detection" && !e.label.is_empty())
+        .map(|e| e.label.clone())
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// O próximo filtro do botão de objeto: nenhum → o primeiro → … → o último → nenhum. Um filtro que
+/// deixou de existir (o período mudou) volta ao início.
+pub fn next_label(current: Option<&str>, labels: &[String]) -> Option<String> {
+    match current.and_then(|c| labels.iter().position(|l| l == c)) {
+        None if current.is_none() => labels.first().cloned(),
+        None => None,
+        Some(i) => labels.get(i + 1).cloned(),
+    }
+}
+
+/// A linha de um evento na lista: detecções mostram o objeto e a confiança ("Garagem · pessoa 86%").
+pub fn event_text(e: &HistoryEvent) -> String {
+    if e.kind == "detection" && !e.label.is_empty() {
+        let what = crate::domain::detect::label_pt(&e.label);
+        return match e.score {
+            Some(s) => format!("{} · {what} {:.0}%", e.camera, s * 100.0),
+            None => format!("{} · {what}", e.camera),
+        };
+    }
+    format!("{} · {}", e.camera, event_label(&e.kind))
 }
 
 fn events_column<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message> {
     let colors = app.theme.colors();
     let dim = Theme::color_from_hex(colors.text_secondary);
     let text_color = Theme::color_from_hex(colors.text);
-    let shown = visible_events(&v.events, v.motion_only, 200);
+    let shown = visible_events(&v.events, v.motion_only, v.label_filter.as_deref(), 200);
     let mut list = column![].spacing(2).width(Length::Fill);
     if shown.is_empty() {
-        list = list.push(text("Nenhum evento neste período").size(12).color(dim));
+        list = list.push(text(t("Nenhum evento neste período")).size(12).color(dim));
     }
     for e in shown {
         let playable = v.lanes.contains(&e.camera);
         let line = row![
             text(format_clock(e.ts)).size(11).color(dim),
-            text(format!("{} · {}", e.camera, event_label(&e.kind)))
-                .size(12)
-                .color(text_color),
+            text(event_text(e)).size(12).color(text_color),
         ]
         .spacing(8);
         let b = button(line)
@@ -1411,23 +1523,35 @@ fn events_column<'a>(app: &'a App, v: &'a RecordingsView) -> Element<'a, Message
             b
         });
     }
-    column![
-        row![
-            text("Eventos").size(13).color(text_color),
-            iced::widget::space::horizontal(),
-            pill_button(
-                app,
-                "Só movimento",
-                RecMsg::ToggleMotionOnly,
-                sel(v.motion_only)
-            ),
-        ]
-        .align_y(iced::Alignment::Center),
-        iced::widget::scrollable(list).height(Length::Fill),
+    let mut header = row![
+        text(t("Eventos")).size(13).color(text_color),
+        iced::widget::space::horizontal(),
     ]
-    .spacing(6)
-    .width(EVENTS_W)
-    .into()
+    .spacing(4)
+    .align_y(iced::Alignment::Center);
+    // o botão de objeto só existe quando o período tem alguma detecção
+    if !detection_labels(&v.events).is_empty() {
+        let name = v.label_filter.as_deref().map_or_else(
+            || t("todos").to_string(),
+            |l| crate::domain::detect::label_pt(l).to_string(),
+        );
+        header = header.push(pill_button(
+            app,
+            tf("Objeto: {}", &[&name]),
+            RecMsg::CycleLabel,
+            sel(v.label_filter.is_some()),
+        ));
+    }
+    header = header.push(pill_button(
+        app,
+        t("Só movimento"),
+        RecMsg::ToggleMotionOnly,
+        sel(v.motion_only),
+    ));
+    column![header, iced::widget::scrollable(list).height(Length::Fill),]
+        .spacing(6)
+        .width(EVENTS_W)
+        .into()
 }
 
 fn sel(on: bool) -> Intent {
@@ -1462,6 +1586,9 @@ mod tests {
             kind: kind.into(),
             label: String::new(),
             segment_id: None,
+            score: None,
+            bbox: None,
+            zone: None,
         }
     }
 
@@ -1473,18 +1600,18 @@ mod tests {
             ev(3, "motion"),
             ev(4, "offline"),
         ];
-        let all: Vec<i64> = visible_events(&events, false, 10)
+        let all: Vec<i64> = visible_events(&events, false, None, 10)
             .iter()
             .map(|e| e.id)
             .collect();
         assert_eq!(all, [4, 3, 2, 1]);
-        let motion: Vec<i64> = visible_events(&events, true, 10)
+        let motion: Vec<i64> = visible_events(&events, true, None, 10)
             .iter()
             .map(|e| e.id)
             .collect();
         assert_eq!(motion, [3, 1]);
         assert_eq!(
-            visible_events(&events, false, 2).len(),
+            visible_events(&events, false, None, 2).len(),
             2,
             "respeita o limite"
         );
@@ -1500,6 +1627,7 @@ mod tests {
             "online",
             "snapshot",
             "disk_low",
+            "detection",
         ] {
             assert_ne!(event_label(k), "Evento", "{k}");
         }
@@ -1558,5 +1686,91 @@ mod tests {
     fn mmss_formats() {
         assert_eq!(format_mmss(0), "00:00");
         assert_eq!(format_mmss(65_400), "01:05");
+    }
+
+    fn det(id: i64, label: &str, score: f64) -> HistoryEvent {
+        HistoryEvent {
+            label: label.into(),
+            score: Some(score),
+            ..ev(id, "detection")
+        }
+    }
+
+    #[test]
+    fn the_object_filter_cycles_through_the_labels_present_and_back_to_none() {
+        let events = [
+            det(1, "person", 0.9),
+            ev(2, "motion"),
+            det(3, "car", 0.7),
+            det(4, "person", 0.8),
+        ];
+        let labels = detection_labels(&events);
+        assert_eq!(labels, ["car", "person"]);
+        let mut cur: Option<String> = None;
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            cur = next_label(cur.as_deref(), &labels);
+            seen.push(cur.clone());
+        }
+        assert_eq!(
+            seen,
+            [
+                Some("car".into()),
+                Some("person".into()),
+                None,
+                Some("car".into())
+            ]
+        );
+        // um filtro que sumiu do período (carro) volta ao início em vez de travar
+        assert_eq!(next_label(Some("dog"), &labels), None);
+        assert!(detection_labels(&[ev(1, "motion")]).is_empty());
+        assert_eq!(next_label(None, &[]), None);
+    }
+
+    #[test]
+    fn filtering_by_object_keeps_only_those_detections_newest_first() {
+        let events = [
+            det(1, "person", 0.9),
+            ev(2, "motion"),
+            det(3, "car", 0.7),
+            det(4, "person", 0.8),
+        ];
+        let ids: Vec<i64> = visible_events(&events, false, Some("person"), 10)
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(ids, [4, 1]);
+        assert!(visible_events(&events, true, Some("person"), 10).is_empty());
+    }
+
+    #[test]
+    fn a_detection_line_names_the_object_and_the_confidence() {
+        assert_eq!(event_text(&det(1, "person", 0.867)), "Garagem · pessoa 87%");
+        assert_eq!(event_text(&ev(2, "motion")), "Garagem · Movimento");
+    }
+
+    #[test]
+    fn stored_boxes_near_the_playhead_are_drawn_the_nearest_per_object() {
+        let boxed = |id: i64, ts: i64, label: &str, x: f32| HistoryEvent {
+            ts,
+            bbox: Some([x, 0.2, 0.1, 0.3]),
+            ..det(id, label, 0.9)
+        };
+        let events = [
+            boxed(1, 10_000, "person", 0.1),
+            boxed(2, 11_000, "person", 0.5), // mais perto de 11 s
+            boxed(3, 11_500, "car", 0.7),
+            boxed(4, 30_000, "person", 0.9), // longe demais
+            HistoryEvent {
+                camera: "Outra".into(),
+                ..boxed(5, 11_000, "person", 0.3)
+            },
+            det(6, "person", 0.9), // sem caixa (evento antigo)
+        ];
+        let got = boxes_at(&events, "Garagem", 11_100);
+        let mut labels: Vec<_> = got.iter().map(|b| (b.label.as_str(), b.x)).collect();
+        labels.sort_by(|a, b| a.0.cmp(b.0));
+        assert_eq!(labels, [("car", 0.7), ("person", 0.5)]);
+        assert!(boxes_at(&events, "Garagem", 20_000).is_empty());
     }
 }

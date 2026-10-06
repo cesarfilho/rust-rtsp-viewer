@@ -1,0 +1,19 @@
+# Detecção de objetos (YOLO) na CPU dentro do contêiner (plano C7).
+#
+#   scripts/fetch-model.sh 640                  # baixa o modelo para ./models (fora do git)
+#   # no config.docker.toml:  [motion] enabled = true   e   [detect] enabled = true, model = "/models/yolo11n-640.onnx"
+#   docker compose -f compose.yaml -f compose.detect.yaml up -d --build
+#   docker compose logs rrv | grep detecção     # "detecção ligada: /models/yolo11n-640.onnx (640 px)"
+#
+# A libonnxruntime 1.30 vem na imagem (SHA-256 conferido no build); o modelo, não: é um peso AGPL de 10 MiB que
+# você baixa e confere com o script. Para a GPU NVIDIA, use compose.detect-cuda.yaml.
+services:
+  rrv:
+    build:
+      context: .
+      target: detect-cpu
+      args:
+        FEATURES: detect
+    image: rust-rtsp-viewer/rrv-daemon:detect-cpu
+    volumes:
+      - ./models:/models:ro

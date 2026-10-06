@@ -1,3 +1,4 @@
+use crate::i18n::t;
 use iced::widget::{button, column, row, text};
 use iced::{Element, Length};
 
@@ -28,13 +29,13 @@ impl Sidebar {
 
         let tabs = column![
             row![
-                tab(SidebarView::Cameras, "Câmeras"),
-                tab(SidebarView::Info, "Inspetor"),
+                tab(SidebarView::Cameras, t("Câmeras")),
+                tab(SidebarView::Info, t("Inspetor")),
             ]
             .spacing(3),
             row![
-                tab(SidebarView::Diagnostics, "Diagnóstico"),
-                tab(SidebarView::Timeline, "Eventos"),
+                tab(SidebarView::Diagnostics, t("Diagnóstico")),
+                tab(SidebarView::Timeline, t("Eventos")),
             ]
             .spacing(3),
         ]

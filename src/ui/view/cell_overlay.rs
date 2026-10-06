@@ -5,6 +5,7 @@
 //! These used to be a full-width bar above the grid (`quick_actions.rs`); the
 //! redesign moves them onto the tile itself so the video area never reflows.
 
+use crate::i18n::{t, tf};
 use iced::widget::{button, container, row, text};
 use iced::{Element, Length};
 
@@ -92,12 +93,12 @@ impl CellAction {
     /// what pressing the icon will do *now*.
     pub fn tooltip(self, active: bool) -> &'static str {
         match (self, active) {
-            (Self::Snapshot, _) => "Capturar imagem  (s)",
-            (Self::Record, false) => "Gravar  (r)",
-            (Self::Record, true) => "Parar gravação  (r)",
-            (Self::Audio, false) => "Ouvir áudio  (m)",
-            (Self::Audio, true) => "Silenciar  (m)",
-            (Self::Spotlight, _) => "Ampliar câmera  (f)",
+            (Self::Snapshot, _) => t("Capturar imagem  (s)"),
+            (Self::Record, false) => t("Gravar  (r)"),
+            (Self::Record, true) => t("Parar gravação  (r)"),
+            (Self::Audio, false) => t("Ouvir áudio  (m)"),
+            (Self::Audio, true) => t("Silenciar  (m)"),
+            (Self::Spotlight, _) => t("Ampliar câmera  (f)"),
         }
     }
 }
@@ -200,13 +201,13 @@ pub fn feature_actions(app: &App, idx: usize) -> Element<'_, Message> {
     let editing_zones = app.zone_edit.as_ref().is_some_and(|e| e.camera_idx == idx);
 
     let zones_tip = match zone_count {
-        0 => "Zonas de movimento".to_string(),
-        n => format!("Zonas de movimento ({n})"),
+        0 => t("Zonas de movimento").to_string(),
+        n => tf("Zonas de movimento ({})", &[&n]),
     };
     let items: [(&str, String, Message, bool, bool); 4] = [
         (
             "\u{25C9}",
-            "Snapshot  (s)".into(),
+            t("Snapshot  (s)").into(),
             Message::Snapshot,
             false,
             false,
@@ -214,9 +215,9 @@ pub fn feature_actions(app: &App, idx: usize) -> Element<'_, Message> {
         (
             "\u{25CF}",
             if is_recording {
-                "Parar gravação  (r)"
+                t("Parar gravação  (r)")
             } else {
-                "Gravar  (r)"
+                t("Gravar  (r)")
             }
             .into(),
             Message::ToggleRecording,
@@ -226,9 +227,9 @@ pub fn feature_actions(app: &App, idx: usize) -> Element<'_, Message> {
         (
             "\u{266A}",
             if is_audio {
-                "Silenciar  (m)"
+                t("Silenciar  (m)")
             } else {
-                "Ouvir áudio  (m)"
+                t("Ouvir áudio  (m)")
             }
             .into(),
             Message::ToggleAudio,
@@ -311,27 +312,27 @@ pub fn placeholder_cell(
     let (glyph, label, tint) = match status {
         CameraStatus::Connecting => (
             "\u{25CC}",
-            "Conectando\u{2026}",
+            t("Conectando\u{2026}"),
             Theme::color_from_hex(colors.accent_amber),
         ),
         CameraStatus::Reconnecting => (
             "\u{25CC}",
-            "Reconectando",
+            t("Reconectando"),
             Theme::color_from_hex(colors.accent_amber),
         ),
         CameraStatus::Paused => (
             "\u{25D0}",
-            "Pausada",
+            t("Pausada"),
             iced::Color::from_rgba(0.58, 0.58, 0.63, 0.9),
         ),
         CameraStatus::Disabled => (
             "\u{25CB}",
-            "Desativada",
+            t("Desativada"),
             iced::Color::from_rgba(0.5, 0.5, 0.55, 0.8),
         ),
         _ => (
             "\u{25CF}",
-            "Offline",
+            t("Offline"),
             iced::Color::from_rgba(0.72, 0.5, 0.5, 0.9),
         ),
     };

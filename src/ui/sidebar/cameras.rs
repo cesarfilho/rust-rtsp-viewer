@@ -1,3 +1,4 @@
+use crate::i18n::{t, tf};
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length};
 
@@ -19,7 +20,7 @@ pub(super) fn cameras_view(sidebar: &Sidebar, colors: ThemeColors) -> Element<'_
     let accent = theme::Theme::color_from_hex(colors.accent_blue);
     let active_surface = theme::Theme::color_from_hex(colors.surface_hover);
 
-    let search = text_input("Filtrar câmeras  (/)", &sidebar.search_query)
+    let search = text_input(t("Filtrar câmeras  (/)"), &sidebar.search_query)
         .id(search_input_id())
         .on_input(Message::SearchChanged)
         .on_submit(Message::SearchSubmitted)
@@ -251,7 +252,7 @@ fn group_chip_row<'a>(sidebar: &'a Sidebar, colors: ThemeColors) -> Option<Eleme
     };
 
     let mut items: Vec<Element<'a, Message>> = vec![chip(
-        format!("Todas {}", sidebar.cameras.len()),
+        tf("Todas {}", &[&sidebar.cameras.len()]),
         sidebar.active_group.is_none(),
         None,
     )];

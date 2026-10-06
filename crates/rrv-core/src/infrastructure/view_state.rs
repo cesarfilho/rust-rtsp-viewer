@@ -28,6 +28,8 @@ pub struct ViewStateFile {
     /// `"grid"` or `"flex"`.
     pub layout: Option<String>,
     pub sidebar_visible: Option<bool>,
+    /// Interface language (`"pt-BR"` / `"en"`), chosen in the menu.
+    pub language: Option<String>,
 }
 
 /// `~/…` expansion limited to a leading `~/`, matching
@@ -147,6 +149,7 @@ mod tests {
             active_group: Some(1),
             layout: Some("grid".into()),
             sidebar_visible: Some(false),
+            language: Some("en".into()),
         };
         save_to(&p, &state);
         assert_eq!(load_from(&p), state);

@@ -3,6 +3,7 @@
 //! Header + Stream + Rede cards up top, diagnostics chips when something is
 //! wrong, and the long tail of raw counters folded into an "Avançado" block.
 
+use crate::i18n::{t, tf};
 use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Element, Length};
 
@@ -78,13 +79,13 @@ pub(super) fn info_view(
     let secondary = Theme::color_from_hex(colors.text_secondary);
 
     let Some(idx) = sidebar.selected else {
-        return placeholder("Selecione uma câmera", secondary);
+        return placeholder(t("Selecione uma câmera"), secondary);
     };
     let Some(cam) = sidebar.cameras.get(idx) else {
-        return placeholder("Câmera não encontrada", secondary);
+        return placeholder(t("Câmera não encontrada"), secondary);
     };
     let Some(m) = &sidebar.selected_metrics else {
-        return placeholder("Sem dados ainda…", secondary);
+        return placeholder(t("Sem dados ainda…"), secondary);
     };
 
     // ── Header ────────────────────────────────────────────────────────────
@@ -122,7 +123,7 @@ pub(super) fn info_view(
             badge,
         ]
         .align_y(iced::Alignment::Center),
-        text(format!("no ar há {}", fmt_hms(m.uptime_secs)))
+        text(tf("no ar há {}", &[&fmt_hms(m.uptime_secs)]))
             .size(Theme::TEXT_CAPTION)
             .color(secondary),
     ]
@@ -187,13 +188,13 @@ pub(super) fn info_view(
     let mut stream_rows = vec![
         metric(
             colors,
-            "Codec",
+            t("Codec"),
             m.codec.clone().unwrap_or_else(|| "—".into()),
             None,
         ),
         metric(
             colors,
-            "Decoder",
+            t("Decoder"),
             m.decoder.clone().unwrap_or_else(|| "—".into()),
             None,
         ),
@@ -203,14 +204,14 @@ pub(super) fn info_view(
             decoder_via(m.decoder.as_deref(), m.decoder_hw),
             None,
         ),
-        metric(colors, "Resolução", res, None),
+        metric(colors, t("Resolução"), res, None),
     ];
     if let Some(q) = m.stream_quality {
-        stream_rows.push(metric(colors, "Fluxo", q.to_string(), None));
+        stream_rows.push(metric(colors, t("Fluxo"), q.to_string(), None));
     }
     stream_rows.push(fps_row.into());
-    stream_rows.push(metric(colors, "Bitrate", cam.bitrate.clone(), None));
-    body = body.push(card(theme, "STREAM", stream_rows));
+    stream_rows.push(metric(colors, t("Bitrate"), cam.bitrate.clone(), None));
+    body = body.push(card(theme, t("STREAM"), stream_rows));
 
     // ── Rede card ────────────────────────────────────────────────────────
     let lat = m.latency_ms.unwrap_or(0);
@@ -222,11 +223,11 @@ pub(super) fn info_view(
     };
     body = body.push(card(
         theme,
-        "REDE",
+        t("REDE"),
         vec![
             metric(
                 colors,
-                "Latência",
+                t("Latência"),
                 m.latency_ms
                     .map(|v| format!("{v} ms"))
                     .unwrap_or_else(|| "—".into()),
@@ -234,7 +235,7 @@ pub(super) fn info_view(
             ),
             metric(
                 colors,
-                "Jitter",
+                t("Jitter"),
                 m.jitter_ms
                     .map(|v| format!("{v} ms"))
                     .unwrap_or_else(|| "—".into()),
@@ -242,7 +243,7 @@ pub(super) fn info_view(
             ),
             metric(
                 colors,
-                "Perda",
+                t("Perda"),
                 if m.packet_stats.available {
                     format!("{loss:.2}%")
                 } else {
@@ -250,7 +251,7 @@ pub(super) fn info_view(
                 },
                 Some(tone(colors, loss, 0.5, 2.0)),
             ),
-            metric(colors, "Reconexões", m.reconnects.to_string(), None),
+            metric(colors, t("Reconexões"), m.reconnects.to_string(), None),
         ],
     ));
 
@@ -258,10 +259,10 @@ pub(super) fn info_view(
     if m.is_recording {
         body = body.push(card(
             theme,
-            "GRAVAÇÃO",
+            t("GRAVAÇÃO"),
             vec![metric(
                 colors,
-                "Ativa há",
+                t("Ativa há"),
                 fmt_hms(m.recording_elapsed_secs),
                 Some(Theme::color_from_hex(colors.accent_red)),
             )],
@@ -281,7 +282,9 @@ pub(super) fn info_view(
                     .font(crate::ui::icons::FONT)
                     .size(Theme::TEXT_CAPTION)
                     .color(secondary),
-                text("Avançado").size(Theme::TEXT_CAPTION).color(secondary),
+                text(t("Avançado"))
+                    .size(Theme::TEXT_CAPTION)
+                    .color(secondary),
             ]
             .spacing(6),
         )
@@ -296,22 +299,27 @@ pub(super) fn info_view(
     if sidebar.info_advanced {
         body = body.push(card(
             theme,
-            "CONTADORES",
+            t("CONTADORES"),
             vec![
                 metric(
                     colors,
-                    "Decode",
+                    t("Decode"),
                     m.decode_time_ms
                         .map(|v| format!("{v} ms"))
                         .unwrap_or_else(|| "—".into()),
                     None,
                 ),
-                metric(colors, "Frames perdidos", m.dropped.to_string(), None),
-                metric(colors, "Erros de decode", m.decode_errors.to_string(), None),
-                metric(colors, "Frames", m.frames.to_string(), None),
+                metric(colors, t("Frames perdidos"), m.dropped.to_string(), None),
                 metric(
                     colors,
-                    "Luma",
+                    t("Erros de decode"),
+                    m.decode_errors.to_string(),
+                    None,
+                ),
+                metric(colors, t("Frames"), m.frames.to_string(), None),
+                metric(
+                    colors,
+                    t("Luma"),
                     m.avg_luma
                         .map(|v| v.to_string())
                         .unwrap_or_else(|| "—".into()),
@@ -319,7 +327,7 @@ pub(super) fn info_view(
                 ),
                 metric(
                     colors,
-                    "Parado há",
+                    t("Parado há"),
                     m.static_secs
                         .map(|v| format!("{v}s"))
                         .unwrap_or_else(|| "—".into()),
@@ -327,7 +335,7 @@ pub(super) fn info_view(
                 ),
                 metric(
                     colors,
-                    "Último erro",
+                    t("Último erro"),
                     m.last_error.clone().unwrap_or_else(|| "—".into()),
                     None,
                 ),

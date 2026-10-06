@@ -5,6 +5,8 @@
 //!   rrvctl enable 2 / disable 2
 //!   rrvctl zones "Portão"
 //!   rrvctl events               # acompanha os eventos até Ctrl+C
+//!   rrvctl discover             # câmeras ONVIF na rede (não precisa do daemon)
+//!   rrvctl secret set cam_portao_password   # guarda a senha no chaveiro do sistema
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -30,6 +32,16 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+enum SecretAction {
+    /// Guarda a senha de NOME. Sem terminal, lê a senha da entrada padrão (`printf %s "$S" | rrvctl secret set NOME`)
+    Set { name: String },
+    /// Diz se NOME existe (nunca imprime o valor)
+    Check { name: String },
+    /// Apaga NOME
+    Delete { name: String },
+}
+
+#[derive(Subcommand)]
 enum Command {
     /// Estado de todas as câmeras
     Status,
@@ -43,6 +55,28 @@ enum Command {
     Zones { camera: String },
     /// Acompanha os eventos (movimento, gravação, online/offline)
     Events,
+    /// Senhas no chaveiro do sistema (Secret Service), que a janela e o daemon leem por `${NOME}`
+    Secret {
+        #[command(subcommand)]
+        action: SecretAction,
+    },
+    /// Procura câmeras ONVIF na rede (não precisa do daemon). Com `--user` (e a senha na variável de
+    /// ambiente `--password-env`) pergunta a cada câmera os streams e imprime o trecho do `config.toml`;
+    /// a senha nunca é impressa nem vai para o trecho (ele traz `${SEGREDO}`).
+    Discover {
+        /// Usuário da câmera
+        #[arg(long)]
+        user: Option<String>,
+        /// Variável de ambiente que guarda a senha (padrão: ONVIF_PASSWORD)
+        #[arg(long, default_value = "ONVIF_PASSWORD")]
+        password_env: String,
+        /// Quantos segundos esperar as respostas
+        #[arg(long, default_value_t = 4)]
+        wait: u64,
+        /// Guarda a senha no chaveiro com o nome que o trecho do config usa (`${cam_…_password}`)
+        #[arg(long)]
+        store_secret: bool,
+    },
     /// Exporta um clipe (.mp4, sem reencode) para a pasta exports/ das gravações
     Export {
         /// Nome da câmera
@@ -61,6 +95,9 @@ enum Command {
         /// Quantas horas olhar para trás
         #[arg(long, default_value_t = 24)]
         hours: u32,
+        /// Só os eventos com este rótulo (ex.: `person`, `car`); as gravações não são filtradas
+        #[arg(long)]
+        label: Option<String>,
     },
 }
 
@@ -151,13 +188,153 @@ fn expect_ok(r: Response) -> Result<(), String> {
     }
 }
 
+fn discover(
+    user: Option<&str>,
+    password_env: &str,
+    wait: u64,
+    store_secret: bool,
+    json: bool,
+) -> Result<(), String> {
+    use rrv_core::onvif;
+    let found = onvif::discover(Duration::from_secs(wait.clamp(1, 30)));
+    if found.is_empty() {
+        println!("nenhuma câmera ONVIF respondeu (ONVIF ligado na câmera? mesma rede?)");
+        return Ok(());
+    }
+    let password = user.map(|_| std::env::var(password_env).unwrap_or_default());
+    let mut report = Vec::new();
+    for f in &found {
+        let label = format!(
+            "{}  {}  {}",
+            f.ip,
+            f.name.as_deref().unwrap_or("?"),
+            f.hardware.as_deref().unwrap_or("")
+        );
+        let (Some(u), Some(p)) = (user, password.as_deref()) else {
+            report.push((label, None, f.xaddr.clone()));
+            continue;
+        };
+        if p.is_empty() {
+            return Err(format!(
+                "a variável {password_env} está vazia ou não existe"
+            ));
+        }
+        let outcome = onvif::inspect(f, u, p).and_then(|i| {
+            let snippet = onvif::config_snippet(f, u, &i);
+            if store_secret {
+                let name = onvif::secret_name_for(f, &i);
+                rrv_core::secrets::keyring::store(&name, p)?;
+                eprintln!("senha guardada no chaveiro como `{name}`");
+            }
+            Ok(snippet)
+        });
+        report.push((label, Some(outcome), f.xaddr.clone()));
+    }
+    if json {
+        let v: Vec<_> = report
+            .iter()
+            .map(|(l, o, x)| {
+                serde_json::json!({
+                    "camera": l,
+                    "xaddr": x,
+                    "config": o.as_ref().and_then(|r| r.as_ref().ok()),
+                    "error": o.as_ref().and_then(|r| r.as_ref().err()),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&v).unwrap());
+        return Ok(());
+    }
+    println!("# {} câmera(s) ONVIF", report.len());
+    for (label, outcome, xaddr) in report {
+        println!("\n{label}\n  {xaddr}");
+        match outcome {
+            None => {}
+            Some(Ok(snippet)) => println!("\n{snippet}"),
+            Some(Err(e)) => println!("  não consegui ler os streams: {e}"),
+        }
+    }
+    if user.is_none() {
+        println!(
+            "\nPara ver os streams e gerar o trecho do config.toml:\n  ONVIF_PASSWORD=… rrvctl discover --user admin"
+        );
+    }
+    Ok(())
+}
+
+/// A senha de um terminal sem eco, ou de toda a entrada padrão quando não é um terminal.
+fn read_password(prompt: &str) -> Result<String, String> {
+    use std::io::{IsTerminal, Read, Write};
+    let stdin = std::io::stdin();
+    let mut line = String::new();
+    if stdin.is_terminal() {
+        eprint!("{prompt}");
+        let _ = std::io::stderr().flush();
+        let _ = std::process::Command::new("stty").arg("-echo").status();
+        let r = stdin.read_line(&mut line);
+        let _ = std::process::Command::new("stty").arg("echo").status();
+        eprintln!();
+        r.map_err(|e| e.to_string())?;
+    } else {
+        stdin
+            .lock()
+            .read_to_string(&mut line)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(line.trim_end_matches(['\n', '\r']).to_string())
+}
+
+fn secret(action: &SecretAction) -> Result<(), String> {
+    use rrv_core::secrets::keyring;
+    match action {
+        SecretAction::Set { name } => {
+            let value = read_password(&format!("Senha para {name}: "))?;
+            keyring::store(name, &value)?;
+            println!("guardada no chaveiro como `{name}`; use ${{{name}}} na URL da câmera");
+        }
+        SecretAction::Check { name } => {
+            if keyring::exists(name) {
+                println!("`{name}` existe no chaveiro");
+            } else {
+                return Err(format!("`{name}` não existe no chaveiro"));
+            }
+        }
+        SecretAction::Delete { name } => {
+            keyring::clear(name)?;
+            println!("`{name}` apagada do chaveiro");
+        }
+    }
+    Ok(())
+}
+
 fn run(cli: &Cli) -> Result<(), String> {
+    if let Command::Discover {
+        user,
+        password_env,
+        wait,
+        store_secret,
+    } = &cli.command
+    {
+        return discover(
+            user.as_deref(),
+            password_env,
+            *wait,
+            *store_secret,
+            cli.json,
+        );
+    }
+    if let Command::Secret { action } = &cli.command {
+        return secret(action);
+    }
     let socket = cli
         .socket
         .clone()
         .unwrap_or_else(rrv_core::ipc::default_socket_path);
     let mut c = IpcClient::connect(&socket)?;
     match &cli.command {
+        Command::Discover { .. } | Command::Secret { .. } => {
+            unreachable!("tratado antes de conectar")
+        }
         Command::Status => {
             let all = cameras(&mut c)?;
             if cli.json {
@@ -248,7 +425,11 @@ fn run(cli: &Cli) -> Result<(), String> {
                 other => Err(format!("resposta inesperada: {other:?}")),
             }
         }
-        Command::History { camera, hours } => {
+        Command::History {
+            camera,
+            hours,
+            label,
+        } => {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_millis() as i64);
@@ -260,9 +441,12 @@ fn run(cli: &Cli) -> Result<(), String> {
             match c.request(&req)? {
                 Response::History {
                     segments,
-                    events,
+                    mut events,
                     truncated,
                 } => {
+                    if let Some(l) = label {
+                        events.retain(|e| e.label.eq_ignore_ascii_case(l));
+                    }
                     if cli.json {
                         println!(
                             "{}",
@@ -287,7 +471,16 @@ fn run(cli: &Cli) -> Result<(), String> {
                     }
                     println!("# eventos ({})", events.len());
                     for e in &events {
-                        println!("{}  {:<16} {}", clock(e.ts), e.camera, e.kind);
+                        let what = match (e.label.as_str(), e.score) {
+                            ("", _) => String::new(),
+                            (l, Some(s)) => format!("  {l} {:.0}%", s * 100.0),
+                            (l, None) => format!("  {l}"),
+                        };
+                        let zone = e
+                            .zone
+                            .as_deref()
+                            .map_or(String::new(), |z| format!("  [{z}]"));
+                        println!("{}  {:<16} {}{what}{zone}", clock(e.ts), e.camera, e.kind);
                     }
                     if truncated {
                         println!("(resposta cortada no limite; reduza --hours)");

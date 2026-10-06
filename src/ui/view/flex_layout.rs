@@ -1,3 +1,4 @@
+use crate::i18n::{t, tf};
 use iced::alignment::{Horizontal, Vertical};
 use iced::{Element, Length};
 
@@ -81,6 +82,15 @@ pub fn spotlight_view(app: &App, idx: usize) -> Element<'_, Message> {
     let mut layers = iced::widget::stack![picture]
         .width(Length::Fill)
         .height(Length::Fill);
+    if is_live && let Some(boxes) = detections_for(app, idx) {
+        let (_, w, h, _) = app.engine.bridges[idx]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .read_frame();
+        layers = layers.push(crate::ui::detections_overlay::layer(
+            boxes, w as f32, h as f32,
+        ));
+    }
     if let Some(edit) = app.zone_edit.as_ref().filter(|e| e.camera_idx == idx) {
         layers = layers.push(zone_editor_layer(app, idx, edit));
         layers = layers.push(super::pinned(
@@ -98,6 +108,13 @@ pub fn spotlight_view(app: &App, idx: usize) -> Element<'_, Message> {
             0.0,
         ))
         .into()
+}
+
+/// The objects the daemon sees now on camera `idx` (matched by name, never by index), or `None`.
+fn detections_for(app: &App, idx: usize) -> Option<Vec<crate::ipc::protocol::WireBox>> {
+    let name = &app.sidebar.cameras.get(idx)?.name;
+    let cam = app.daemon.cameras.iter().find(|c| &c.name == name)?;
+    (!cam.detections.is_empty()).then(|| cam.detections.clone())
 }
 
 /// Canvas over the picture that captures clicks while zones are being drawn.
@@ -131,11 +148,11 @@ fn zone_editor_layer<'a>(
 /// Hint + actions for the zone editor, pinned to the top of the picture.
 fn zone_editor_bar(edit: &super::super::app::ZoneEdit) -> Element<'_, Message> {
     let hint = if edit.temp_vertices.is_empty() {
-        "Clique no vídeo para marcar os cantos da zona".to_string()
+        t("Clique no vídeo para marcar os cantos da zona").to_string()
     } else {
-        format!(
+        tf(
             "{} ponto(s) · Enter ou clique no 1º ponto conclui",
-            edit.temp_vertices.len()
+            &[&edit.temp_vertices.len()],
         )
     };
     iced::widget::container(
@@ -143,10 +160,10 @@ fn zone_editor_bar(edit: &super::super::app::ZoneEdit) -> Element<'_, Message> {
             iced::widget::text(hint)
                 .size(Theme::TEXT_CAPTION)
                 .color(iced::Color::from_rgb(0.95, 0.95, 0.97)),
-            nav_btn("Concluir", Message::ZoneFinish),
-            nav_btn("Desfazer", Message::ZoneUndo),
-            nav_btn("Limpar", Message::ZoneClear),
-            nav_btn("Sair", Message::ZoneCancel),
+            nav_btn(t("Concluir"), Message::ZoneFinish),
+            nav_btn(t("Desfazer"), Message::ZoneUndo),
+            nav_btn(t("Limpar"), Message::ZoneClear),
+            nav_btn(t("Sair"), Message::ZoneCancel),
         ]
         .spacing(Theme::SPACE_3)
         .align_y(iced::Alignment::Center),
@@ -184,7 +201,7 @@ fn nav_btn(glyph: &str, msg: Message) -> Element<'_, Message> {
 
 pub fn flex_layout(app: &App) -> Element<'_, Message> {
     if app.videos.is_empty() {
-        return iced::widget::container(iced::widget::text("Nenhuma câmera configurada"))
+        return iced::widget::container(iced::widget::text(t("Nenhuma câmera configurada")))
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)
@@ -247,7 +264,7 @@ pub fn flex_layout(app: &App) -> Element<'_, Message> {
                 iced::widget::text(cam_name)
                     .color(Theme::color_from_hex(colors.text))
                     .size(14),
-                iced::widget::text("DESATIVADA")
+                iced::widget::text(t("DESATIVADA"))
                     .color(iced::Color::from_rgba(0.5, 0.5, 0.5, 0.6))
                     .size(11),
             ]

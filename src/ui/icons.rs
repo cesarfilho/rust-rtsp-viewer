@@ -9,7 +9,7 @@ use iced::Font;
 pub const FONT_BYTES: &[u8] = include_bytes!("../../assets/fonts/DejaVuSans.ttf");
 
 /// Family name inside `FONT_BYTES`.
-pub const FONT: Font = Font::with_name("DejaVu Sans");
+pub const FONT: Font = Font::with_name("DejaVu Sans"); // i18n-ok: nome próprio
 
 #[cfg(test)]
 mod tests {

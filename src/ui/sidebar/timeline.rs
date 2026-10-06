@@ -1,3 +1,4 @@
+use crate::i18n::{t, tf};
 use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Element, Length};
 
@@ -30,7 +31,7 @@ pub(super) fn timeline_view<'a>(
 
     if events.is_empty() {
         return column![
-            text("Nenhum evento na última hora")
+            text(t("Nenhum evento na última hora"))
                 .color(text_secondary)
                 .size(12),
         ]
@@ -108,9 +109,9 @@ pub(super) fn timeline_view<'a>(
         );
     }
 
-    let header = text(format!(
+    let header = text(tf(
         "{} eventos (última hora) · clique para abrir a câmera",
-        events.len()
+        &[&events.len()],
     ))
     .color(text_color)
     .size(11);

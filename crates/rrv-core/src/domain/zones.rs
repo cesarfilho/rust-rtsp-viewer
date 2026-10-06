@@ -152,6 +152,14 @@ impl ZoneConfig {
             .any(|z| z.is_active() && z.contains(point))
     }
 
+    /// Name of the first active zone that contains `point`.
+    pub fn zone_at(&self, point: Point) -> Option<&str> {
+        self.zones
+            .iter()
+            .find(|z| z.is_active() && z.contains(point))
+            .map(|z| z.name.as_str())
+    }
+
     /// Whether any zone actually restricts detection. Zones that are disabled
     /// or have fewer than 3 vertices never match, so counting them as
     /// "restricting" would leave the camera with nothing to sample.
