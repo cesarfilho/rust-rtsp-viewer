@@ -17,6 +17,7 @@ pub mod motion;
 pub mod multi_stream;
 pub mod notify;
 pub mod preroll;
+pub mod recent_frames;
 pub mod recording;
 pub mod redact;
 pub mod retention;

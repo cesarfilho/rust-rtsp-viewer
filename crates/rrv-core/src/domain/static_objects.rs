@@ -5,11 +5,18 @@
 //! A *track* is one spot of one class. A detection that overlaps a track (IoU ≥ [`SAME_SPOT_IOU`])
 //! counts as a sighting, at most one per [`HIT_SPACING_MS`] (the model answers twice a second, so
 //! counting every answer would make anyone who pauses for three seconds "static"). A spot seen in
-//! [`STATIC_HITS`] different minutes within [`WINDOW_MS`] is static, and stays static while it
-//! keeps showing up within [`STATIC_KEEP_MS`]. The first sightings still raise events: only the
-//! repetitions are dropped.
+//! [`STATIC_HITS`] different minutes within [`WINDOW_MS`], spread over at least [`MIN_SPAN_MS`],
+//! is static, and stays static while it keeps showing up within [`STATIC_KEEP_MS`]. The first
+//! sightings still raise events: only the repetitions are dropped.
+//!
+//! A sign is only *seen* when something else moves (the model only runs on motion), so at night it
+//! may show up once every few minutes: few hits over a long window catch it, and the span rule
+//! keeps a person who waits a couple of minutes at the same spot from being taken for a sign.
+//! Static spots survive a restart ([`StaticFilter::static_spots`] / [`StaticFilter::with_spots`]).
 
 use std::collections::VecDeque;
+
+use serde::{Deserialize, Serialize};
 
 use super::detect::Detection;
 
@@ -18,12 +25,14 @@ use super::detect::Detection;
 pub const SAME_SPOT_IOU: f32 = 0.5;
 /// Sightings counted at most once a minute.
 pub const HIT_SPACING_MS: i64 = 60_000;
-/// Seen in 5 different minutes...
-pub const STATIC_HITS: usize = 5;
-/// ...within 10 minutes = static.
-pub const WINDOW_MS: i64 = 10 * 60_000;
-/// A static spot is forgotten after an hour without being seen (the next day it must earn it again).
-pub const STATIC_KEEP_MS: i64 = 60 * 60_000;
+/// Seen in 3 different minutes...
+pub const STATIC_HITS: usize = 3;
+/// ...within 30 minutes...
+pub const WINDOW_MS: i64 = 30 * 60_000;
+/// ...the first and the last at least 10 minutes apart = static.
+pub const MIN_SPAN_MS: i64 = 10 * 60_000;
+/// A static spot is forgotten after a day without being seen.
+pub const STATIC_KEEP_MS: i64 = 24 * 60 * 60_000;
 /// Tracks kept per camera (the least recently seen is dropped).
 const MAX_TRACKS: usize = 64;
 
@@ -36,15 +45,74 @@ struct Track {
     is_static: bool,
 }
 
+/// A spot taken for a fixed object, as kept on disk (normalised box, Unix ms).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StaticSpot {
+    pub class: usize,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub last_seen: i64,
+}
+
 /// The spots of one camera.
 #[derive(Debug, Clone, Default)]
 pub struct StaticFilter {
     tracks: Vec<Track>,
+    /// A spot became static (or a static one was forgotten) since the last [`Self::take_changed`].
+    changed: bool,
 }
 
 impl StaticFilter {
+    /// A filter that already knows these fixed spots (read back after a restart).
+    pub fn with_spots(spots: &[StaticSpot]) -> Self {
+        let tracks = spots
+            .iter()
+            .map(|s| Track {
+                spot: Detection {
+                    class: s.class,
+                    score: 0.0,
+                    x: s.x,
+                    y: s.y,
+                    w: s.w,
+                    h: s.h,
+                },
+                hits: VecDeque::new(),
+                last_seen: s.last_seen,
+                is_static: true,
+            })
+            .collect();
+        Self {
+            tracks,
+            changed: false,
+        }
+    }
+
+    /// The spots currently taken for fixed objects (what is worth saving).
+    pub fn static_spots(&self) -> Vec<StaticSpot> {
+        self.tracks
+            .iter()
+            .filter(|t| t.is_static)
+            .map(|t| StaticSpot {
+                class: t.spot.class,
+                x: t.spot.x,
+                y: t.spot.y,
+                w: t.spot.w,
+                h: t.spot.h,
+                last_seen: t.last_seen,
+            })
+            .collect()
+    }
+
+    /// Whether the set of static spots changed since the last call.
+    pub fn take_changed(&mut self) -> bool {
+        std::mem::take(&mut self.changed)
+    }
+
     /// Records `d` seen at `now_ms` and says whether it is a fixed object (drop it).
     pub fn is_static(&mut self, now_ms: i64, d: &Detection) -> bool {
+        let before = self.tracks.iter().filter(|t| t.is_static).count();
         self.tracks.retain(|t| {
             let keep = if t.is_static {
                 STATIC_KEEP_MS
@@ -53,6 +121,9 @@ impl StaticFilter {
             };
             now_ms - t.last_seen <= keep
         });
+        if self.tracks.iter().filter(|t| t.is_static).count() != before {
+            self.changed = true;
+        }
         let best = self
             .tracks
             .iter_mut()
@@ -92,8 +163,13 @@ impl StaticFilter {
         while track.hits.front().is_some_and(|&t| now_ms - t > WINDOW_MS) {
             track.hits.pop_front();
         }
-        if track.hits.len() >= STATIC_HITS {
+        let span = match (track.hits.front(), track.hits.back()) {
+            (Some(first), Some(last)) => last - first,
+            _ => 0,
+        };
+        if !track.is_static && track.hits.len() >= STATIC_HITS && span >= MIN_SPAN_MS {
             track.is_static = true;
+            self.changed = true;
         }
         track.is_static
     }
@@ -117,27 +193,46 @@ mod tests {
     }
 
     #[test]
-    fn a_sign_seen_in_five_minutes_becomes_static_and_stays_so() {
+    fn a_sign_seen_now_and_then_becomes_static_and_stays_so() {
         let mut f = StaticFilter::default();
-        // minutos 0..4: ainda conta como evento
-        for m in 0..4 {
-            assert!(!f.is_static(m * MIN, &person(0.69)), "minuto {m}");
-        }
-        // o quinto minuto com a caixa (quase) no mesmo lugar: fixo
-        assert!(f.is_static(4 * MIN, &person(0.692)));
-        // continua fixo enquanto aparecer, mesmo 40 min depois da última vez
-        assert!(f.is_static(44 * MIN, &person(0.69)));
-        // depois de mais de uma hora sem aparecer, precisa provar de novo
-        assert!(!f.is_static(110 * MIN, &person(0.69)));
+        // à noite a placa só aparece quando um carro passa: minutos 0, 6 e 12
+        assert!(!f.is_static(0, &person(0.69)));
+        assert!(!f.is_static(6 * MIN, &person(0.692)));
+        assert!(
+            f.is_static(12 * MIN, &person(0.69)),
+            "3 vezes em 12 min: fixa"
+        );
+        assert!(f.take_changed() && !f.take_changed());
+        // continua fixa enquanto aparecer, mesmo horas depois
+        assert!(f.is_static(12 * MIN + 20 * 60 * MIN, &person(0.69)));
+        // um dia inteiro sem aparecer: precisa provar de novo
+        assert!(!f.is_static(12 * MIN + 46 * 60 * MIN, &person(0.69)));
+        assert!(f.take_changed(), "esquecer também conta como mudança");
     }
 
     #[test]
-    fn someone_standing_still_for_a_few_seconds_is_not_static() {
+    fn someone_waiting_a_few_minutes_at_one_spot_is_not_static() {
         let mut f = StaticFilter::default();
-        // o modelo responde duas vezes por segundo: 3 min parado = 360 respostas, mas só 3 minutos
-        for i in 0..360 {
+        // 8 minutos parado no ponto de ônibus, o modelo respondendo duas vezes por segundo
+        for i in 0..960 {
             assert!(!f.is_static(i * 500, &person(0.40)), "resposta {i}");
         }
+    }
+
+    #[test]
+    fn static_spots_survive_a_restart() {
+        let mut f = StaticFilter::default();
+        for m in [0, 6, 12] {
+            f.is_static(m * MIN, &person(0.69));
+        }
+        let saved = f.static_spots();
+        assert_eq!(saved.len(), 1);
+        let mut g = StaticFilter::with_spots(&saved);
+        assert!(
+            g.is_static(13 * MIN, &person(0.69)),
+            "já fixa depois de reiniciar"
+        );
+        assert!(!g.is_static(13 * MIN, &person(0.2)), "outro ponto não");
     }
 
     #[test]
@@ -153,9 +248,10 @@ mod tests {
     #[test]
     fn a_different_class_at_the_same_spot_is_its_own_track() {
         let mut f = StaticFilter::default();
-        for m in 0..5 {
+        for m in [0, 6, 12] {
             f.is_static(m * MIN, &person(0.69));
         }
+        assert!(f.is_static(13 * MIN, &person(0.69)));
         let dog = Detection {
             class: 16,
             ..person(0.69)
@@ -166,9 +262,9 @@ mod tests {
     #[test]
     fn sightings_older_than_the_window_do_not_count() {
         let mut f = StaticFilter::default();
-        // a cada 3 minutos: em 10 minutos nunca há 5 avistamentos
+        // a cada 16 minutos: em 30 minutos nunca há 3 avistamentos
         for k in 0..10 {
-            assert!(!f.is_static(k * 3 * MIN, &person(0.69)), "vez {k}");
+            assert!(!f.is_static(k * 16 * MIN, &person(0.69)), "vez {k}");
         }
     }
 }

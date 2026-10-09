@@ -448,6 +448,7 @@ fn start_detection(engine: &mut Engine, cfg: rrv_core::domain::detect::DetectCon
                 log::info!("detecção só em: {}", on.join(", "));
             }
             engine.set_detect_actions(cfg.record, cfg.snapshot);
+            engine.set_static_spots_file(rrv_core::infrastructure::static_state::path());
             if engine.detect_recording {
                 log::info!("detecção: grava enquanto o objeto aparece");
             } else if cfg.record {

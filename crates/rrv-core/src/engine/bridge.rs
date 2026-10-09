@@ -76,6 +76,8 @@ pub(crate) struct DetectFrame {
     pub rgba: Bytes,
     pub width: u32,
     pub height: u32,
+    /// The frame's timestamp (stream running time, ns): which full-size picture it was cut from.
+    pub pts: Option<u64>,
 }
 
 /// The pre-roll ring and, while a recording is on, the `appsrc`s that feed it: one for
@@ -165,12 +167,12 @@ pub struct GStreamerBridge {
     pub store: Option<(crate::infrastructure::store::StoreHandle, String)>,
     /// Most recent detection frame, `None` until the first one arrives.
     pub(crate) detect_frame: Arc<Mutex<Option<DetectFrame>>>,
-    /// Keep the latest decoded sample even when headless (`[detect] snapshot`): a detection
-    /// snapshot needs the whole picture, which the daemon otherwise never converts nor copies.
-    /// Set before the pipeline starts.
+    /// Keep the last seconds of decoded samples even when headless (`[detect] snapshot`): a
+    /// detection snapshot needs the whole picture the model saw, which the daemon otherwise never
+    /// converts nor copies. Set before the pipeline starts.
     pub keep_last_sample: bool,
-    /// That sample (a reference, not a copy; converted only when a snapshot is taken).
-    pub(crate) last_sample: Arc<Mutex<Option<gst::Sample>>>,
+    /// Those samples (references, not copies; converted only when a snapshot is taken).
+    pub(crate) recent_samples: Arc<Mutex<crate::domain::recent_frames::RecentFrames<gst::Sample>>>,
     pub(crate) recording: Option<RecordingBranch>,
     /// Bumped on every `start_recording` so each recording branch gets uniquely
     /// named elements. Without this, a reconnect that stops then immediately
@@ -246,7 +248,7 @@ impl GStreamerBridge {
             store: None,
             detect_frame: Arc::new(Mutex::new(None)),
             keep_last_sample: false,
-            last_sample: Arc::new(Mutex::new(None)),
+            recent_samples: Arc::new(Mutex::new(Default::default())),
             recording: None,
             recording_seq: 0,
             finalisers: Vec::new(),
@@ -641,7 +643,10 @@ impl GStreamerBridge {
             let _ = handle.join();
         }
         // A picture of a camera that is gone must not end up in a later snapshot.
-        *self.last_sample.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.recent_samples
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         if let Some(pipeline) = self.pipeline.take() {
             self.camera_log("INFO", "pipeline → Null (stop)");
             let _ = pipeline.set_state(gst::State::Null);
@@ -739,12 +744,15 @@ impl GStreamerBridge {
     }
 
     /// What a detection snapshot is made from: the frame the window already holds, or (headless)
-    /// the latest decoded sample. Cheap (references only); the conversion to RGBA is
+    /// the decoded sample closest to `pts` (the model's frame), the newest without one. Cheap (references only); the conversion to RGBA is
     /// [`SnapshotSource::into_rgba`], meant for a worker thread.
-    pub fn snapshot_source(&self) -> Option<SnapshotSource> {
+    pub fn snapshot_source(&self, pts: Option<u64>) -> Option<SnapshotSource> {
         if self.headless {
-            let sample = self.last_sample.lock().unwrap_or_else(|e| e.into_inner());
-            return sample.clone().map(SnapshotSource::Sample);
+            let samples = self
+                .recent_samples
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            return samples.nearest(pts).map(SnapshotSource::Sample);
         }
         let (frame, w, h, _) = self.read_frame();
         Some(SnapshotSource::Frame(frame?, w, h))
@@ -753,8 +761,15 @@ impl GStreamerBridge {
     /// Most recent frame of the reduced detection branch (RGBA, ~320 px wide).
     /// `None` when the branch is off or has not produced a frame yet.
     pub fn capture_detect_frame(&self) -> Option<(Bytes, u32, u32)> {
+        self.capture_detect_frame_at().map(|(b, w, h, _)| (b, w, h))
+    }
+
+    /// Like [`Self::capture_detect_frame`], with the frame's timestamp.
+    pub fn capture_detect_frame_at(&self) -> Option<(Bytes, u32, u32, Option<u64>)> {
         let state = self.detect_frame.lock().unwrap_or_else(|e| e.into_inner());
-        state.as_ref().map(|f| (f.rgba.clone(), f.width, f.height))
+        state
+            .as_ref()
+            .map(|f| (f.rgba.clone(), f.width, f.height, f.pts))
     }
 
     pub fn update_fps(&self) -> f64 {

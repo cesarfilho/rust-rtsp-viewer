@@ -140,8 +140,12 @@ pub struct Engine {
     /// When each `(camera, class)` last raised an event, and last notified.
     pub detect_last: HashMap<(usize, usize), Instant>,
     pub detect_notify_last: HashMap<(usize, usize), Instant>,
+    /// Timestamp of the frame behind each camera's latest detections (the snapshot's picture).
+    pub detect_pts: Vec<Option<u64>>,
     /// Fixed objects the model keeps misreading (a sign as a person), per camera.
     pub static_filters: Vec<crate::domain::static_objects::StaticFilter>,
+    /// Where the learned fixed spots are kept across restarts (`None`: not kept).
+    pub static_spots_path: Option<std::path::PathBuf>,
     /// Cameras whose motion frames go to the model (`[detect] cameras`); all true by default.
     pub detect_on: Vec<bool>,
     /// `[detect] record`: record while a wanted class is seen (only when `on_motion` is off).
@@ -312,6 +316,8 @@ impl Engine {
             detect_notify_last: HashMap::new(),
             detect_on: vec![true; count],
             static_filters: vec![Default::default(); count],
+            static_spots_path: None,
+            detect_pts: vec![None; count],
             detect_recording: false,
             detect_snapshot: false,
             last_detection_at: vec![None; count],
@@ -643,8 +649,8 @@ impl Engine {
         let frame = self.bridges[i]
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .capture_detect_frame();
-        let Some((curr, width, height)) = frame else {
+            .capture_detect_frame_at();
+        let Some((curr, width, height, pts)) = frame else {
             return;
         };
         // Same allocation as last time = the branch has not produced a new frame
@@ -692,7 +698,7 @@ impl Engine {
         }
         self.motion_active[i] = result.motion_active;
         if result.motion_active {
-            self.submit_for_inference(i, &curr, width, height);
+            self.submit_for_inference(i, &curr, width, height, pts);
         } else {
             // Nothing moves: whatever was seen is stale, and nothing is submitted, so the model
             // (and the GPU) sits idle.
@@ -702,7 +708,14 @@ impl Engine {
 
     /// Hands the detection frame of a camera with motion to the inference thread, cropped to the
     /// bounding box of its active zones (the whole frame when none restricts it).
-    fn submit_for_inference(&self, i: usize, rgba: &bytes::Bytes, width: u32, height: u32) {
+    fn submit_for_inference(
+        &self,
+        i: usize,
+        rgba: &bytes::Bytes,
+        width: u32,
+        height: u32,
+        pts: Option<u64>,
+    ) {
         let Some(worker) = &self.inference else {
             return;
         };
@@ -723,6 +736,7 @@ impl Engine {
             width: w,
             height: h,
             region,
+            pts,
         });
     }
 
@@ -735,6 +749,48 @@ impl Engine {
     pub fn set_detect_policy(&mut self, labels: Vec<usize>, cooldown_secs: u64) {
         self.detect_labels = labels;
         self.detect_cooldown_secs = cooldown_secs;
+    }
+
+    /// Keeps the fixed spots the detection learns in `path` and starts from what is there, so a
+    /// restart does not let a sign raise its first few events all over again.
+    pub fn set_static_spots_file(&mut self, path: std::path::PathBuf) {
+        let saved = crate::infrastructure::static_state::load(&path);
+        for (i, name) in self.names.iter().enumerate() {
+            if let Some(spots) = saved.get(name) {
+                self.static_filters[i] =
+                    crate::domain::static_objects::StaticFilter::with_spots(spots);
+            }
+        }
+        self.static_spots_path = Some(path);
+    }
+
+    fn save_static_spots(&mut self) {
+        let mut changed = false;
+        for f in &mut self.static_filters {
+            changed |= f.take_changed();
+        }
+        let Some(path) = &self.static_spots_path else {
+            return;
+        };
+        if !changed {
+            return;
+        }
+        let spots: crate::infrastructure::static_state::StaticSpots = self
+            .names
+            .iter()
+            .zip(&self.static_filters)
+            .map(|(n, f)| (n.clone(), f.static_spots()))
+            .filter(|(_, s)| !s.is_empty())
+            .collect();
+        for (name, s) in &spots {
+            log::info!(
+                "[{name}] {} ponto(s) fixo(s) ignorado(s) na detecção",
+                s.len()
+            );
+        }
+        if let Err(e) = crate::infrastructure::static_state::save(path, &spots) {
+            log::warn!("pontos fixos: {e}");
+        }
     }
 
     /// Restricts the model to the cameras named in `[detect] cameras` (display name, case ignored);
@@ -831,8 +887,10 @@ impl Engine {
                 })
                 .collect();
             self.detections[r.camera] = kept.clone();
+            self.detect_pts[r.camera] = r.pts;
             self.raise_detection_events(r.camera, &kept);
         }
+        self.save_static_spots();
     }
 
     /// One event per class (its best box) unless that class already raised one on this camera
@@ -915,7 +973,7 @@ impl Engine {
         let source = self.bridges[camera]
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .snapshot_source();
+            .snapshot_source(self.detect_pts[camera]);
         let Some(source) = source else {
             log::debug!("[{name}] snapshot: ainda sem quadro");
             return;
@@ -1420,6 +1478,8 @@ mod tests {
             detect_notify_last: HashMap::new(),
             detect_on: vec![true; n],
             static_filters: vec![Default::default(); n],
+            static_spots_path: None,
+            detect_pts: vec![None; n],
             detect_recording: false,
             detect_snapshot: false,
             last_detection_at: vec![None; n],
@@ -1561,6 +1621,7 @@ mod tests {
                 rgba: bytes::Bytes::from(rgba),
                 width: 20,
                 height: 20,
+                pts: None,
             });
     }
 

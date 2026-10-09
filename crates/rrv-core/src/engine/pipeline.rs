@@ -183,6 +183,7 @@ fn insert_detect_branch(pipeline: &gst::Pipeline, bridge: &GStreamerBridge) -> R
                         rgba,
                         width: w,
                         height: h,
+                        pts: buffer.pts().map(|t| t.nseconds()),
                     });
                 Ok(gst::FlowSuccess::Ok)
             })
@@ -566,7 +567,9 @@ fn setup_appsink(pipeline: &gst::Pipeline, bridge: &mut GStreamerBridge) -> Resu
     let metrics = bridge.metrics.clone();
     let is_live = bridge.is_live.clone();
     let headless = bridge.headless;
-    let last_sample = bridge.keep_last_sample.then(|| bridge.last_sample.clone());
+    let recent_samples = bridge
+        .keep_last_sample
+        .then(|| bridge.recent_samples.clone());
     if headless && let Some(filter) = pipeline.by_name("filter") {
         // No RGBA conversion for a picture nobody shows: the decoder's own
         // format flows on to the recording and detection branches.
@@ -605,8 +608,12 @@ fn setup_appsink(pipeline: &gst::Pipeline, bridge: &mut GStreamerBridge) -> Resu
         // converted nor copied; it only proves flow.
         let (bytes, pixel_format) = if headless {
             // Only a reference: converted to a picture if a detection asks for a snapshot.
-            if let Some(slot) = &last_sample {
-                *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(sample.clone());
+            if let Some(ring) = &recent_samples
+                && let Some(pts) = gst_buffer.pts()
+            {
+                ring.lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(pts.nseconds(), sample.clone());
             }
             (Bytes::new(), PixelFormat::Rgba)
         } else {

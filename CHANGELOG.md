@@ -15,9 +15,13 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 - **Snapshot da detecção** (`[detect] snapshot = true`): um JPEG do quadro inteiro com as caixas desenhadas a cada evento de
   detecção, em `<gravações>/snapshots/<câmera>/<AAAA-MM-DD>/<HH-MM-SS>_<classe>.jpg`. O daemon guarda só uma referência ao
   último quadro decodificado e converte numa thread à parte.
-- **Objetos parados não são eventos**: uma caixa da mesma classe vista no mesmo lugar em 5 minutos diferentes dentro de
-  10 minutos (uma placa que o modelo lê como pessoa toda vez que outra coisa se mexe) deixa de gerar evento, gravação e
-  foto. As primeiras vezes ainda contam; alguém parado por segundos nunca vira "fixo".
+- **Objetos parados não são eventos**: uma caixa da mesma classe vista no mesmo lugar em 3 minutos diferentes dentro de
+  30 minutos, espalhados por 10 minutos ou mais (uma placa que o modelo lê como pessoa toda vez que outra coisa se mexe),
+  deixa de gerar evento, gravação e foto por 24 h. Os pontos fixos aprendidos sobrevivem a um reinício
+  (`static_spots.json`). As primeiras vezes ainda contam; alguém esperando alguns minutos no mesmo lugar não vira "fixo".
+- **A foto da detecção é o quadro que o modelo viu**, não o mais novo: o daemon guarda os últimos 4 s (referências, um
+  quadro a cada 200 ms) e escolhe pelo tempo do quadro. Antes, quem andava já tinha saído da caixa e a foto parecia um
+  falso positivo.
 - **Detecção só em algumas câmeras** (`[detect] cameras = ["Garagem"]`, pelo label ou name): as outras continuam com
   movimento e eventos, mas não ocupam o modelo (rios e árvores se mexem o tempo todo). `--check` avisa nome desconhecido.
 - **Gravações como pasta de rede (SMB)**: serviço `samba` no `compose.yaml` (imagem mínima própria, `docker/samba/`), só

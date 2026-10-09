@@ -34,6 +34,8 @@ pub struct InferenceInput {
     /// Where in the camera's picture `rgba` was cut from (travels back with the result so the host
     /// can map boxes to the whole picture); [`Region::FULL`] for an uncropped frame.
     pub region: Region,
+    /// The frame's timestamp (travels back too: the snapshot picks the full picture it matches).
+    pub pts: Option<u64>,
 }
 
 /// What came out of one frame.
@@ -43,6 +45,7 @@ pub struct InferenceResult {
     /// Boxes normalised to the *input* (the crop); see [`Detection::from_crop`].
     pub detections: Vec<Detection>,
     pub region: Region,
+    pub pts: Option<u64>,
     /// Time the network took.
     pub infer_ms: f32,
     /// Time the frame waited in the queue.
@@ -212,6 +215,7 @@ fn run(shared: &Shared, model: &mut impl Infer) {
             camera: job.input.camera,
             detections,
             region: job.input.region,
+            pts: job.input.pts,
             infer_ms,
             queued_ms,
             error,
@@ -264,6 +268,7 @@ mod tests {
             width: 2,
             height: 2,
             region: Region::FULL,
+            pts: None,
         }
     }
 
