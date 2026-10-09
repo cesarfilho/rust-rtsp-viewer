@@ -417,6 +417,27 @@ pub fn humanize_bytes_binary(bytes: u64) -> String {
     }
 }
 
+/// Where one recording segment goes, relative to the recordings dir:
+/// `<camera>/<YYYY-MM-DD>/<HH-MM-SS>-<NNN>.<ext>`, in local time, like the detection snapshots.
+/// One folder per camera and day keeps a network share browsable; `index` is `splitmuxsink`'s
+/// fragment number. `camera` must already be a safe file name (`recording_paths::safe_filename`);
+/// empty falls back to `camera`.
+pub fn segment_relative_path(
+    camera: &str,
+    at: chrono::NaiveDateTime,
+    index: u32,
+    container: Container,
+) -> std::path::PathBuf {
+    let camera = if camera.is_empty() { "camera" } else { camera };
+    std::path::Path::new(camera)
+        .join(at.format("%Y-%m-%d").to_string())
+        .join(format!(
+            "{}-{index:03}.{}",
+            at.format("%H-%M-%S"),
+            container.extension()
+        ))
+}
+
 /// Generate a recording-segment filename.
 /// Format: `rust-rtsp-viewer-YYYY-MM-DD-HHMMSS-NNN.{ext}`.
 /// `sequence` is the segment index (000, 001, ...).
@@ -851,6 +872,22 @@ mod tests {
         assert_eq!(humanize_bytes_binary(1536), "1.5 KiB");
         assert_eq!(humanize_bytes_binary(1024 * 1024), "1.0 MiB");
         assert_eq!(humanize_bytes_binary(1024 * 1024 * 1024), "1.0 GiB");
+    }
+
+    #[test]
+    fn a_segment_goes_to_its_camera_and_day() {
+        let at = chrono::NaiveDate::from_ymd_opt(2026, 10, 9)
+            .unwrap()
+            .and_hms_opt(16, 57, 9)
+            .unwrap();
+        assert_eq!(
+            segment_relative_path("garagem", at, 2, Container::Mkv),
+            std::path::Path::new("garagem/2026-10-09/16-57-09-002.mkv")
+        );
+        assert_eq!(
+            segment_relative_path("", at, 0, Container::Mp4),
+            std::path::Path::new("camera/2026-10-09/16-57-09-000.mp4")
+        );
     }
 
     // --- generate_filename ---

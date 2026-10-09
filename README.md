@@ -124,7 +124,7 @@ quality     = 92
 burst_count = 1
 
 [recording]
-dir                     = "~/Videos/rust-rtsp-viewer"
+dir                     = "~/Videos/rust-rtsp-viewer"   # <dir>/<câmera>/<AAAA-MM-DD>/<HH-MM-SS>-000.mkv
 max_segment_duration_secs = 600
 max_segment_size_bytes    = 1073741824
 container               = "mkv"

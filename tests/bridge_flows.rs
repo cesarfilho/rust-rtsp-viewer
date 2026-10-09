@@ -189,12 +189,18 @@ fn reconnecting_keeps_recording_into_a_fresh_segment() {
     std::thread::sleep(Duration::from_millis(RECORD_MS));
     bridge.stop();
 
-    let mut segments: Vec<_> = std::fs::read_dir(&rec_dir)
-        .unwrap()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "mkv"))
-        .collect();
+    // recordings live in `<camera>/<day>/`
+    let mut segments = Vec::new();
+    let mut todo = vec![rec_dir.clone()];
+    while let Some(d) = todo.pop() {
+        for p in std::fs::read_dir(&d).unwrap().flatten().map(|e| e.path()) {
+            if p.is_dir() {
+                todo.push(p);
+            } else if p.extension().is_some_and(|x| x == "mkv") {
+                segments.push(p);
+            }
+        }
+    }
     segments.sort();
     assert_eq!(segments.len(), 2, "expected 2 segments, got {segments:?}");
     for seg in &segments {

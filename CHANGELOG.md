@@ -26,6 +26,9 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 ### 🔧 Alterado
 
 - `compose.yaml`: o daemon usa `restart: always`.
+- **Gravações em pastas por câmera e dia**: `<gravações>/<câmera>/<AAAA-MM-DD>/<HH-MM-SS>-000.mkv` (hora local, como os
+  snapshots), em vez de todos os arquivos soltos na raiz com a hora em UTC. A pasta é escolhida a cada segmento: uma
+  gravação que passa da meia-noite continua na pasta do dia novo.
 
 ### 🐛 Corrigido
 

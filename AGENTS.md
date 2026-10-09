@@ -26,6 +26,12 @@ snapshots, segmented recording, and an info sidebar. Iced GUI frontend.
     `stop_recording_blocking` is the synchronous form. Skipping the EOS leaves
     an unplayable file.
   - `splitmuxsink` handles `max_segment_duration_secs` / `max_segment_size_bytes`.
+  - Files: `<dir>/<safe camera>/<YYYY-MM-DD>/<HH-MM-SS>-<NNN>.<ext>`, local time
+    (`domain::recording::segment_relative_path`). `pipeline::next_segment_path` is asked for
+    **every** segment from `splitmuxsink`'s `format-location` (always connected, not only with a
+    store), so a recording that crosses midnight moves to the new day's folder; it creates the
+    folders and adds `-2`, `-3` to a name already taken. Anything that lists recordings must walk
+    the tree (`testing::mkv_files` does).
 - **Audio**: standalone audio-only pipeline per camera, started on demand by
   `infrastructure::audio::build_audio_pipeline_for_url`.
 - **UI**: single `iced::application` with grid or flex layout. Grid density is

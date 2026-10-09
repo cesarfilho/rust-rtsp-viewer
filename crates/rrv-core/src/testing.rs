@@ -192,10 +192,24 @@ fn serve(mut conn: TcpStream, root: &Path) {
     }
 }
 
+/// Every `.mkv` below `dir` (recordings live in `<camera>/<day>/`), sorted.
 pub fn mkv_files(dir: &Path) -> Vec<PathBuf> {
-    let mut v: Vec<_> = std::fs::read_dir(dir)
-        .map(|d| d.flatten().map(|e| e.path()).collect())
-        .unwrap_or_default();
+    let mut v = Vec::new();
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        for p in std::fs::read_dir(&d)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+        {
+            if p.is_dir() {
+                todo.push(p);
+            } else {
+                v.push(p);
+            }
+        }
+    }
     v.retain(|p| p.extension().is_some_and(|x| x == "mkv"));
     v.sort();
     v

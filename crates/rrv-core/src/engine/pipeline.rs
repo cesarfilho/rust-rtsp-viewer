@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use crate::domain::codec;
 use crate::domain::metrics::{MAX_PENDING_DECODES, Metrics};
-use crate::domain::recording::{Container, generate_filename};
+use crate::domain::recording::Container;
 use crate::domain::redact::mask_credentials;
 use crate::domain::yuv::{YuvFormat, YuvMatrix};
 use crate::infrastructure::launch::quote_launch_value;
@@ -13,7 +13,7 @@ use crate::infrastructure::store::StoreCmd;
 
 use super::bridge::{
     EMA_ALPHA_X1000, GStreamerBridge, PixelFormat, RecordingBranch, SAMPLE_EVERY_N, ema_update,
-    now_unix_secs, sample_image_quality_nv12, sample_image_quality_rgba,
+    sample_image_quality_nv12, sample_image_quality_rgba,
 };
 
 use gstreamer as gst;
@@ -807,26 +807,39 @@ fn limit_decoder_threads(pipeline: &gst::Pipeline) {
     });
 }
 
-/// Turn `rust-rtsp-viewer-2026-08-10-143022-000.mkv` into
-/// `rust-rtsp-viewer-<camera>-2026-08-10-143022-%03d.mkv`, the pattern `splitmuxsink`
-/// expands with the fragment index.
-///
-/// The camera is part of the name on purpose: two cameras that start recording in the
-/// same second (motion in a room with several of them) would otherwise get the *same*
-/// file name and one would overwrite the other.
-fn segment_location_pattern(now_unix: u64, container: Container, camera: &str) -> String {
-    let name = generate_filename(now_unix, 0, container);
-    let suffix = format!("-000.{}", container.extension());
-    let stem = match name.strip_suffix(&suffix) {
-        Some(stem) => stem.to_string(),
-        None => return name,
-    };
+/// The file of segment `index` of a recording that is being written now:
+/// `<dir>/<camera>/<YYYY-MM-DD>/<HH-MM-SS>-<NNN>.<ext>` (`domain::recording::segment_relative_path`),
+/// with its folders created. Asked for each segment, so a recording that crosses midnight moves
+/// to the new day's folder. The camera folder keeps two cameras that start in the same second
+/// apart; a name already taken (stop and start again within one second) gets a `-2`, `-3`...
+fn next_segment_path(
+    dir: &std::path::Path,
+    camera: &str,
+    index: u32,
+    container: Container,
+) -> std::path::PathBuf {
     let camera = crate::infrastructure::recording_paths::safe_filename(camera);
-    let stem = match (camera.is_empty(), stem.strip_prefix("rust-rtsp-viewer-")) {
-        (false, Some(rest)) => format!("rust-rtsp-viewer-{camera}-{rest}"),
-        _ => stem,
-    };
-    format!("{stem}-%03d.{}", container.extension())
+    let rel = crate::domain::recording::segment_relative_path(
+        &camera,
+        chrono::Local::now().naive_local(),
+        index,
+        container,
+    );
+    let mut path = dir.join(rel);
+    if let Some(parent) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        log::warn!("Could not create {}: {e}", parent.display());
+    }
+    let stem = path.file_stem().map(|s| s.to_string_lossy().to_string());
+    let mut n = 2;
+    while path.exists()
+        && let Some(stem) = &stem
+    {
+        path.set_file_name(format!("{stem}-{n}.{}", container.extension()));
+        n += 1;
+    }
+    path
 }
 
 impl GStreamerBridge {
@@ -891,8 +904,9 @@ impl GStreamerBridge {
             .map_err(|e| format!("Failed to create recording dir: {e}"))?;
 
         let container = self.recording_config.container;
-        let pattern = segment_location_pattern(now_unix_secs(), container, &self.camera_label);
-        let location = self.recording_config.dir.join(&pattern);
+        let dir = self.recording_config.dir.clone();
+        let camera_label = self.camera_label.clone();
+        let location = next_segment_path(&dir, &camera_label, 0, container);
 
         let queue: gst::Element = match &ring_state {
             Some(r) => {
@@ -975,16 +989,29 @@ impl GStreamerBridge {
             .build()
             .map_err(|e| format!("Failed to create splitmuxsink: {e}"))?;
 
-        // Tell the history database about every segment as it opens and closes.
+        // Each segment gets its own camera/day folder, and the history database hears about every
+        // segment as it opens and closes.
         let current_segment = Arc::new(Mutex::new(None::<String>));
-        if let Some((store, camera)) = self.store.clone() {
+        {
+            let store = self.store.clone();
             let current = current_segment.clone();
             let mode = self.recording_mode.to_string();
-            let pattern = location.to_string_lossy().to_string();
+            let first = Mutex::new(Some(location.clone()));
             let preroll_ms = self.preroll_ms.clone();
             sink.connect("format-location", false, move |args| {
                 let id = args[1].get::<u32>().unwrap_or(0);
-                let path = pattern.replacen("%03d", &format!("{id:03}"), 1);
+                // The first file's name was already picked (and its folder made) at start.
+                let path = first
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take()
+                    .filter(|_| id == 0)
+                    .unwrap_or_else(|| next_segment_path(&dir, &camera_label, id, container))
+                    .to_string_lossy()
+                    .to_string();
+                let Some((store, camera)) = &store else {
+                    return Some(path.to_value());
+                };
                 let mut now = crate::engine::now_ms();
                 if id == 0 {
                     // The first file starts with the pre-roll: it begins that much
@@ -1633,32 +1660,44 @@ mod tests {
         assert_eq!(named_decoder("decodebin name=mine"), "decodebin name=mine");
     }
 
-    #[test]
-    fn segment_pattern_has_a_fragment_placeholder() {
-        let p = segment_location_pattern(1_755_000_000, Container::Mkv, "");
-        assert!(p.ends_with("-%03d.mkv"), "got {p}");
-        assert!(p.starts_with("rust-rtsp-viewer-"), "got {p}");
+    /// Every file below `dir` (recordings live in `<camera>/<day>/`), sorted.
+    fn files_under(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        let mut todo = vec![dir.to_path_buf()];
+        while let Some(d) = todo.pop() {
+            for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    todo.push(p);
+                } else {
+                    out.push(p);
+                }
+            }
+        }
+        out.sort();
+        out
     }
 
-    /// Two cameras starting in the same second must not share a file name.
+    /// Each camera has its own folder (two cameras starting in the same second never share a
+    /// file), a hostile name cannot leave the recordings dir, and a name already taken gets `-2`.
     #[test]
-    fn the_segment_name_carries_the_camera() {
-        let a = segment_location_pattern(1_755_000_000, Container::Mkv, "Garagem");
-        let b = segment_location_pattern(1_755_000_000, Container::Mkv, "Portão da frente");
-        assert_ne!(a, b);
-        assert!(a.starts_with("rust-rtsp-viewer-garagem-"), "got {a}");
-        assert!(b.starts_with("rust-rtsp-viewer-port"), "got {b}");
-        assert!(!b.contains(' ') && !b.contains('/'), "safe for a path: {b}");
-        // a hostile name cannot escape the recordings directory: no path separator survives
-        let evil = segment_location_pattern(1_755_000_000, Container::Mkv, "../../etc/x");
-        assert!(!evil.contains('/') && !evil.contains('\\'), "got {evil}");
-        assert!(evil.starts_with("rust-rtsp-viewer-"), "got {evil}");
-    }
-
-    #[test]
-    fn segment_pattern_follows_the_container_extension() {
-        let p = segment_location_pattern(1_755_000_000, Container::Mp4, "");
-        assert!(p.ends_with("-%03d.mp4"), "got {p}");
+    fn segments_go_to_camera_and_day_folders_without_clobbering() {
+        let dir = std::env::temp_dir().join(format!("rrv-segpath-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let a = next_segment_path(&dir, "Garagem", 0, Container::Mkv);
+        let b = next_segment_path(&dir, "Portão da frente", 0, Container::Mkv);
+        assert!(a.starts_with(dir.join("garagem")), "{a:?}");
+        assert!(a.parent().unwrap().is_dir(), "a pasta do dia é criada");
+        assert_ne!(a.parent(), b.parent());
+        let evil = next_segment_path(&dir, "../../etc/x", 0, Container::Mp4);
+        assert!(evil.starts_with(&dir), "{evil:?}");
+        assert_eq!(evil.extension().unwrap(), "mp4");
+        std::fs::write(&a, b"x").unwrap();
+        let again = next_segment_path(&dir, "Garagem", 0, Container::Mkv);
+        if again.parent() == a.parent() && again.file_name() != a.file_name() {
+            assert!(again.to_string_lossy().ends_with("-000-2.mkv"), "{again:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A frame reaching the appsink flips `is_live` true even if a stale bus
@@ -1803,10 +1842,8 @@ mod tests {
             .expect("recording should stop cleanly");
         assert!(!bridge.is_recording());
 
-        let segments: Vec<_> = std::fs::read_dir(&dir)
-            .expect("recording dir should exist")
-            .flatten()
-            .map(|e| e.path())
+        let segments: Vec<_> = files_under(&dir)
+            .into_iter()
             .filter(|p| p.extension().is_some_and(|x| x == "mkv"))
             .collect();
         assert_eq!(segments.len(), 1, "expected one segment, got {segments:?}");
@@ -1868,10 +1905,8 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(3500));
         bridge.stop_recording_blocking().unwrap();
 
-        let segments: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .flatten()
-            .map(|e| e.path())
+        let segments: Vec<_> = files_under(&dir)
+            .into_iter()
             .filter(|p| p.extension().is_some_and(|x| x == "mkv"))
             .collect();
         assert_eq!(segments.len(), 1, "expected one segment, got {segments:?}");
@@ -1945,10 +1980,8 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(1500));
         bridge.stop_recording_blocking().unwrap();
 
-        let segments: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .flatten()
-            .map(|e| e.path())
+        let segments: Vec<_> = files_under(&dir)
+            .into_iter()
             .filter(|p| p.extension().is_some_and(|x| x == "mkv"))
             .collect();
         assert_eq!(segments.len(), 1, "{segments:?}");
@@ -2065,10 +2098,8 @@ mod tests {
         bridge.stop_recording_blocking().unwrap();
 
         let ext = container.extension();
-        let segments: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .flatten()
-            .map(|e| e.path())
+        let segments: Vec<_> = files_under(&dir)
+            .into_iter()
             .filter(|p| p.extension().is_some_and(|x| x == ext))
             .collect();
         assert_eq!(segments.len(), 1, "{tag}: {segments:?}");
@@ -2208,12 +2239,7 @@ mod tests {
         assert!(pipeline.by_name("recording_audio_src_1").is_none());
         std::thread::sleep(std::time::Duration::from_millis(1000));
         bridge.stop_recording_blocking().unwrap();
-        let f = std::fs::read_dir(&dir)
-            .unwrap()
-            .flatten()
-            .next()
-            .unwrap()
-            .path();
+        let f = files_under(&dir).into_iter().next().unwrap();
         let kinds = file_track_kinds(&f);
         assert!(!kinds.iter().any(|k| k.starts_with("audio")), "{kinds:?}");
         bridge.stop();
@@ -2259,10 +2285,8 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(1100));
         }
 
-        let segments: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .flatten()
-            .map(|e| e.path())
+        let segments: Vec<_> = files_under(&dir)
+            .into_iter()
             .filter(|p| p.extension().is_some_and(|x| x == "mkv"))
             .collect();
         assert_eq!(segments.len(), 2, "expected two segments, got {segments:?}");
@@ -2307,10 +2331,8 @@ mod tests {
         bridge.stop_recording().unwrap();
         bridge.stop(); // immediately, while the worker is still draining
 
-        let segments: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .flatten()
-            .map(|e| e.path())
+        let segments: Vec<_> = files_under(&dir)
+            .into_iter()
             .filter(|p| p.extension().is_some_and(|x| x == "mkv"))
             .collect();
         assert_eq!(segments.len(), 1, "got {segments:?}");
