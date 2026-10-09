@@ -140,6 +140,8 @@ pub struct Engine {
     /// When each `(camera, class)` last raised an event, and last notified.
     pub detect_last: HashMap<(usize, usize), Instant>,
     pub detect_notify_last: HashMap<(usize, usize), Instant>,
+    /// Fixed objects the model keeps misreading (a sign as a person), per camera.
+    pub static_filters: Vec<crate::domain::static_objects::StaticFilter>,
     /// Cameras whose motion frames go to the model (`[detect] cameras`); all true by default.
     pub detect_on: Vec<bool>,
     /// `[detect] record`: record while a wanted class is seen (only when `on_motion` is off).
@@ -309,6 +311,7 @@ impl Engine {
             detect_last: HashMap::new(),
             detect_notify_last: HashMap::new(),
             detect_on: vec![true; count],
+            static_filters: vec![Default::default(); count],
             detect_recording: false,
             detect_snapshot: false,
             last_detection_at: vec![None; count],
@@ -806,6 +809,25 @@ impl Engine {
                             y: f64::from(y),
                         })
                     })
+                })
+                .collect();
+            // A box that sits in the same spot for minutes is a sign or a banner, not a visitor.
+            let now = now_ms();
+            let filter = &mut self.static_filters[r.camera];
+            let kept: Vec<Detection> = kept
+                .into_iter()
+                .filter(|d| {
+                    let fixed = filter.is_static(now, d);
+                    if fixed {
+                        log::debug!(
+                            "camera {}: {} parado em ({:.2}, {:.2}), ignorado",
+                            r.camera,
+                            d.label(),
+                            d.x,
+                            d.y
+                        );
+                    }
+                    !fixed
                 })
                 .collect();
             self.detections[r.camera] = kept.clone();
@@ -1397,6 +1419,7 @@ mod tests {
             detect_last: HashMap::new(),
             detect_notify_last: HashMap::new(),
             detect_on: vec![true; n],
+            static_filters: vec![Default::default(); n],
             detect_recording: false,
             detect_snapshot: false,
             last_detection_at: vec![None; n],

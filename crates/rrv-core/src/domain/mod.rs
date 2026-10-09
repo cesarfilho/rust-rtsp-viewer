@@ -21,6 +21,7 @@ pub mod recording;
 pub mod redact;
 pub mod retention;
 pub mod snapshot;
+pub mod static_objects;
 pub mod timeline;
 pub mod timeline_view;
 pub mod view;
