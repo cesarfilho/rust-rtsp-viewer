@@ -366,6 +366,7 @@ pub fn toolbar(app: &App) -> Element<'_, Message> {
     );
 
     let right = iced::widget::row![
+        detection_button(app, wide),
         super::daemon::chip(app, !wide),
         health_chip,
         rec_badge,
@@ -387,6 +388,43 @@ pub fn toolbar(app: &App) -> Element<'_, Message> {
 }
 
 const TOOLBAR_H: f32 = 40.0;
+
+/// Iniciar / parar a detecção de objetos do daemon (grava e fotografa só quando ela está armada).
+/// Um botão só: "Iniciar" vira "Parar" depois que o daemon confirma; enquanto espera, fica sem ação.
+/// Some quando a janela não está ligada a um daemon que detecta.
+fn detection_button(app: &App, wide: bool) -> Element<'_, Message> {
+    let Some(armed) = app.daemon.detection() else {
+        return iced::widget::space::horizontal().width(0).into();
+    };
+    let theme = app.theme;
+    let waiting = app
+        .pending
+        .values()
+        .any(|p| matches!(p, super::super::daemon::PendingRequest::SetDetection { .. }));
+    let (glyph, label, intent) = if armed {
+        ("\u{25A0}", t("Parar detecção"), Intent::Danger)
+    } else {
+        ("\u{25B6}", t("Iniciar detecção"), Intent::Primary)
+    };
+    let mut content = iced::widget::row![
+        iced::widget::text(glyph)
+            .font(crate::ui::icons::FONT)
+            .size(Theme::TEXT_CAPTION)
+    ]
+    .spacing(6)
+    .align_y(iced::Alignment::Center);
+    if wide {
+        content = content.push(iced::widget::text(label).size(Theme::TEXT_BODY));
+    }
+    let button = iced::widget::button(content)
+        .padding([5, 10])
+        .style(style::pill(theme, intent));
+    if waiting {
+        button.into()
+    } else {
+        button.on_press(Message::ToggleDetection).into()
+    }
+}
 
 /// The compact control strip that slides in over immersive / spotlight video.
 pub fn chrome_rail(app: &App) -> Element<'_, Message> {

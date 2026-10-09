@@ -251,6 +251,10 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ToggleRecording => update_recording(app),
+        Message::ToggleDetection => {
+            toggle_detection(app);
+            Task::none()
+        }
         Message::ToggleAudio => update_audio(app),
         Message::VolumeUp => update_volume(app, true),
         Message::VolumeDown => update_volume(app, false),
@@ -950,6 +954,26 @@ pub(super) fn send_to_daemon(
     true
 }
 
+/// Arma ou desarma a detecção do daemon. Nada muda na janela até ele confirmar, e um segundo
+/// clique enquanto espera não manda outro pedido.
+fn toggle_detection(app: &mut App) {
+    let Some(armed) = app.daemon.detection() else {
+        return;
+    };
+    if app
+        .pending
+        .values()
+        .any(|p| matches!(p, PendingRequest::SetDetection { .. }))
+    {
+        return;
+    }
+    send_to_daemon(
+        app,
+        crate::ipc::protocol::Request::SetDetection { armed: !armed },
+        PendingRequest::SetDetection { armed: !armed },
+    );
+}
+
 /// The daemon's index for a camera of this window, found by name.
 fn daemon_index(app: &mut App, name: &str) -> Option<usize> {
     let found = app.daemon.info_for(name).map(|c| c.index);
@@ -992,6 +1016,22 @@ fn handle_reply(app: &mut App, token: u64, result: Result<crate::ipc::protocol::
             }
         }
         (PendingRequest::SetEnabled { .. }, None) => {}
+        (PendingRequest::SetDetection { .. }, None) => {
+            if let Ok(Response::Detection { armed }) = result {
+                app.daemon.set_detection_armed(armed);
+                toast(
+                    app,
+                    if armed {
+                        t("Detecção iniciada: grava e fotografa quando aparecer alguém")
+                    } else {
+                        t("Detecção parada")
+                    },
+                );
+            }
+        }
+        (PendingRequest::SetDetection { .. }, Some(why)) => {
+            toast(app, tf("A detecção não mudou: {}", &[&why]));
+        }
         (PendingRequest::SetZones { camera, zones }, None) => {
             if let Some(cfg) = app.engine.zones.get_mut(camera) {
                 cfg.zones = zones;
@@ -2127,6 +2167,48 @@ mod tests {
                 .contains("Falha na gravação")
         );
         assert!(!app.is_recording, "nunca REC sem confirmação");
+    }
+
+    #[test]
+    fn the_detection_button_changes_only_after_the_daemon_confirms() {
+        let mut app = test_app();
+        connected(&mut app, false);
+        // um daemon sem detecção: sem botão
+        assert_eq!(app.daemon.detection(), None);
+        let _ = update(&mut app, Message::ToggleDetection);
+        assert!(app.pending.is_empty());
+
+        app.daemon.cameras[0].detect_available = true;
+        assert_eq!(app.daemon.detection(), Some(false), "botão Iniciar");
+        let _ = update(&mut app, Message::ToggleDetection);
+        assert!(matches!(
+            app.pending.values().next(),
+            Some(PendingRequest::SetDetection { armed: true })
+        ));
+        let _ = update(&mut app, Message::ToggleDetection);
+        assert_eq!(app.pending.len(), 1, "um pedido por vez");
+        assert_eq!(
+            app.daemon.detection(),
+            Some(false),
+            "nada muda antes da resposta"
+        );
+
+        let token = *app.pending.keys().next().unwrap();
+        handle_reply(&mut app, token, Ok(Response::Detection { armed: true }));
+        assert_eq!(app.daemon.detection(), Some(true), "agora o botão é Parar");
+
+        // um erro não muda o botão
+        let _ = update(&mut app, Message::ToggleDetection);
+        let token = *app.pending.keys().next().unwrap();
+        handle_reply(
+            &mut app,
+            token,
+            Ok(Response::Error {
+                message: "x".into(),
+            }),
+        );
+        assert_eq!(app.daemon.detection(), Some(true));
+        assert!(app.toasts.last().unwrap().message.contains("x"));
     }
 
     #[test]

@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod detect_state;
 #[cfg(feature = "detect")]
 pub mod detector;
 pub mod disk;

@@ -58,6 +58,9 @@ pub enum Request {
     },
     /// Protege (ou solta) um segmento: a retenção nunca apaga um protegido.
     SetProtected { segment_id: i64, protected: bool },
+    /// Arma ou desarma a detecção de objetos (com ela desarmada o modelo não roda: nada de evento
+    /// de objeto, gravação nem foto por detecção). O daemon lembra a escolha.
+    SetDetection { armed: bool },
 }
 
 /// Resposta do daemon a um pedido.
@@ -74,6 +77,10 @@ pub enum Response {
     Recording {
         camera: usize,
         recording: bool,
+    },
+    /// A detecção como ficou depois de `SetDetection`.
+    Detection {
+        armed: bool,
     },
     Zones {
         camera: usize,
@@ -204,6 +211,14 @@ pub struct CameraInfo {
     /// não há nenhum. Aditivo: um cliente antigo ignora o campo.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub detections: Vec<WireBox>,
+    /// Esta câmera vai ao modelo de detecção quando ele está armado (daemon com `[detect]` e a
+    /// câmera em `[detect] cameras`). Aditivo, como os de cima.
+    #[serde(default)]
+    pub detect_available: bool,
+    /// A detecção está armada (vale para todas as câmeras; repetido em cada uma para o `Status`
+    /// continuar sendo só a lista de câmeras).
+    #[serde(default)]
+    pub detect_armed: bool,
 }
 
 /// Um evento do motor, no formato do fio.
@@ -265,6 +280,7 @@ mod tests {
                 camera: 1,
                 zones: vec![],
             },
+            Request::SetDetection { armed: true },
         ];
         for r in reqs {
             let line = encode_line(&r);
@@ -287,6 +303,10 @@ mod tests {
         assert_eq!(
             encode_line(&ServerMessage::Response(Response::Ok)),
             "{\"type\":\"response\",\"kind\":\"ok\"}\n"
+        );
+        assert_eq!(
+            encode_line(&Request::SetDetection { armed: false }),
+            "{\"cmd\":\"set_detection\",\"armed\":false}\n"
         );
     }
 
@@ -317,6 +337,7 @@ mod tests {
         let info: CameraInfo = serde_json::from_str(old).unwrap();
         assert_eq!(info.decoder, None);
         assert!(!info.decoder_hw);
+        assert!(!info.detect_available && !info.detect_armed);
     }
 
     #[test]

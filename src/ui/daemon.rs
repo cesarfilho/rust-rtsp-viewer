@@ -134,6 +134,8 @@ pub enum PendingRequest {
     Export,
     /// Proteger / soltar um segmento (a janela só aplica quando o daemon confirma).
     Protect { segment_id: i64, protected: bool },
+    /// Armar / desarmar a detecção (o botão só muda quando o daemon confirma).
+    SetDetection { armed: bool },
 }
 
 #[derive(Debug, Clone)]
@@ -276,6 +278,22 @@ impl DaemonState {
     }
 
     /// Quantas câmeras o daemon diz que estão gravando.
+    /// O botão da detecção: `Some(armada)` quando conectado a um daemon que detecta objetos em
+    /// alguma câmera; `None` esconde o botão.
+    pub fn detection(&self) -> Option<bool> {
+        if !self.is_connected() || !self.cameras.iter().any(|c| c.detect_available) {
+            return None;
+        }
+        Some(self.cameras.iter().any(|c| c.detect_armed))
+    }
+
+    /// O que o daemon confirmou, já, sem esperar o próximo `Status`.
+    pub fn set_detection_armed(&mut self, armed: bool) {
+        for c in &mut self.cameras {
+            c.detect_armed = armed;
+        }
+    }
+
     pub fn recording_count(&self) -> usize {
         self.cameras.iter().filter(|c| c.recording).count()
     }

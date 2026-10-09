@@ -396,6 +396,17 @@ pub const EN: &[(&str, &str)] = &[
         "Recording stopped on the daemon",
     ),
     ("Zona salva no daemon", "Zone saved on the daemon"),
+    ("Iniciar detecção", "Start detection"),
+    ("Parar detecção", "Stop detection"),
+    (
+        "Detecção iniciada: grava e fotografa quando aparecer alguém",
+        "Detection started: records and takes pictures when someone shows up",
+    ),
+    ("Detecção parada", "Detection stopped"),
+    (
+        "A detecção não mudou: {}",
+        "The detection did not change: {}",
+    ),
     (
         "Não foi possível salvar a zona: {}",
         "Could not save the zone: {}",

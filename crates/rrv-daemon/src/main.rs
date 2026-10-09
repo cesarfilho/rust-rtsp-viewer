@@ -449,6 +449,15 @@ fn start_detection(engine: &mut Engine, cfg: rrv_core::domain::detect::DetectCon
             }
             engine.set_detect_actions(cfg.record, cfg.snapshot);
             engine.set_static_spots_file(rrv_core::infrastructure::static_state::path());
+            engine.set_detect_armed_file(rrv_core::infrastructure::detect_state::path());
+            log::info!(
+                "detecção {} (arme/desarme pela janela ou `rrvctl detect on|off`)",
+                if engine.detect_armed {
+                    "armada"
+                } else {
+                    "desarmada"
+                }
+            );
             if engine.detect_recording {
                 log::info!("detecção: grava enquanto o objeto aparece");
             } else if cfg.record {

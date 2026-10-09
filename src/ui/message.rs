@@ -41,6 +41,8 @@ pub enum Message {
     WindowResized(iced::Size),
     Snapshot,
     ToggleRecording,
+    /// Armar / desarmar a detecção de objetos do daemon (botão do toolbar).
+    ToggleDetection,
     ToggleAudio,
     VolumeUp,
     VolumeDown,

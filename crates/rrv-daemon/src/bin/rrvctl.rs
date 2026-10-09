@@ -54,6 +54,11 @@ enum Command {
     Disable { camera: String },
     /// Zonas de movimento de uma câmera
     Zones { camera: String },
+    /// Arma (`on`) ou desarma (`off`) a detecção de objetos; sem argumento, mostra o estado
+    Detect {
+        #[arg(value_parser = ["on", "off"])]
+        state: Option<String>,
+    },
     /// Acompanha os eventos (movimento, gravação, online/offline)
     Events,
     /// Senhas no chaveiro do sistema (Secret Service), que a janela e o daemon leem por `${NOME}`
@@ -386,6 +391,37 @@ fn run(cli: &Cli) -> Result<(), String> {
                             "parou de gravar"
                         }
                     );
+                    Ok(())
+                }
+                Response::Error { message } => Err(message),
+                other => Err(format!("resposta inesperada: {other:?}")),
+            }
+        }
+        Command::Detect { state } => {
+            let Some(state) = state else {
+                let all = cameras(&mut c)?;
+                let on: Vec<&str> = all
+                    .iter()
+                    .filter(|c| c.detect_available)
+                    .map(|c| c.name.as_str())
+                    .collect();
+                if on.is_empty() {
+                    println!("detecção de objetos desligada neste daemon ([detect] enabled)");
+                } else {
+                    let armed = all.iter().any(|c| c.detect_armed);
+                    println!(
+                        "detecção {} em: {}",
+                        if armed { "armada" } else { "desarmada" },
+                        on.join(", ")
+                    );
+                }
+                return Ok(());
+            };
+            match c.request(&Request::SetDetection {
+                armed: state == "on",
+            })? {
+                Response::Detection { armed } => {
+                    println!("detecção {}", if armed { "armada" } else { "desarmada" });
                     Ok(())
                 }
                 Response::Error { message } => Err(message),

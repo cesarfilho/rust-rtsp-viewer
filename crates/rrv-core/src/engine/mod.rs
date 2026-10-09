@@ -140,6 +140,11 @@ pub struct Engine {
     /// When each `(camera, class)` last raised an event, and last notified.
     pub detect_last: HashMap<(usize, usize), Instant>,
     pub detect_notify_last: HashMap<(usize, usize), Instant>,
+    /// The detection is armed (started from the window / `rrvctl detect on`). Disarmed, the model
+    /// does not run: no object events, no detection recordings, no snapshots. Motion still works.
+    pub detect_armed: bool,
+    /// Where the armed state is kept across restarts (`None`: not kept).
+    pub detect_armed_path: Option<std::path::PathBuf>,
     /// Timestamp of the frame behind each camera's latest detections (the snapshot's picture).
     pub detect_pts: Vec<Option<u64>>,
     /// Fixed objects the model keeps misreading (a sign as a person), per camera.
@@ -318,6 +323,8 @@ impl Engine {
             static_filters: vec![Default::default(); count],
             static_spots_path: None,
             detect_pts: vec![None; count],
+            detect_armed: true,
+            detect_armed_path: None,
             detect_recording: false,
             detect_snapshot: false,
             last_detection_at: vec![None; count],
@@ -719,7 +726,7 @@ impl Engine {
         let Some(worker) = &self.inference else {
             return;
         };
-        if !self.detect_on.get(i).copied().unwrap_or(false) {
+        if !self.detect_armed || !self.detect_on.get(i).copied().unwrap_or(false) {
             return;
         }
         let wanted = self.zones.get(i).and_then(Region::of_zones);
@@ -749,6 +756,34 @@ impl Engine {
     pub fn set_detect_policy(&mut self, labels: Vec<usize>, cooldown_secs: u64) {
         self.detect_labels = labels;
         self.detect_cooldown_secs = cooldown_secs;
+    }
+
+    /// Arms or disarms the detection and remembers it (when a file was given). Disarming drops the
+    /// objects seen so far, so a recording the detection started runs out its post-roll and stops.
+    pub fn set_detect_armed(&mut self, armed: bool) {
+        self.detect_armed = armed;
+        if !armed {
+            for d in &mut self.detections {
+                d.clear();
+            }
+        }
+        if let Some(path) = &self.detect_armed_path
+            && let Err(e) = crate::infrastructure::detect_state::save(path, armed)
+        {
+            log::warn!("estado da detecção: {e}");
+        }
+        log::info!("detecção {}", if armed { "armada" } else { "desarmada" });
+    }
+
+    /// Reads the armed state saved in `path` (disarmed without one) and keeps it there from now on.
+    pub fn set_detect_armed_file(&mut self, path: std::path::PathBuf) {
+        self.detect_armed = crate::infrastructure::detect_state::load(&path);
+        self.detect_armed_path = Some(path);
+    }
+
+    /// Whether this daemon can detect at all (a model is loaded).
+    pub fn detection_available(&self) -> bool {
+        self.inference.is_some()
     }
 
     /// Keeps the fixed spots the detection learns in `path` and starts from what is there, so a
@@ -844,7 +879,8 @@ impl Engine {
             None => return,
         };
         for r in results {
-            if r.camera >= self.detections.len() {
+            // An answer to a frame sent before the detection was disarmed.
+            if r.camera >= self.detections.len() || !self.detect_armed {
                 continue;
             }
             if let Some(e) = &r.error {
@@ -1480,6 +1516,8 @@ mod tests {
             static_filters: vec![Default::default(); n],
             static_spots_path: None,
             detect_pts: vec![None; n],
+            detect_armed: true,
+            detect_armed_path: None,
             detect_recording: false,
             detect_snapshot: false,
             last_detection_at: vec![None; n],
@@ -1723,6 +1761,37 @@ mod tests {
         e.detect_motion(0);
         assert!(e.detections[0].is_empty());
         std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn disarmed_the_model_never_runs_and_old_boxes_are_dropped() {
+        let (mut e, seen) = spied_engine();
+        e.detections[0] = vec![Detection {
+            class: 0,
+            score: 0.9,
+            x: 0.1,
+            y: 0.1,
+            w: 0.2,
+            h: 0.2,
+        }];
+        e.set_detect_armed(false);
+        assert!(e.detections[0].is_empty(), "o que se via some ao desarmar");
+        feed(&e, 0, frame(0));
+        e.detect_motion(0);
+        feed(&e, 0, frame(4));
+        e.detect_motion(0);
+        assert!(e.motion_active[0], "o movimento continua");
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "o modelo não roda desarmado"
+        );
+        // armada de novo: volta a analisar
+        e.set_detect_armed(true);
+        feed(&e, 0, frame(0));
+        e.detect_motion(0);
+        wait_for_results(&e, 1);
         assert_eq!(seen.lock().unwrap().len(), 1);
     }
 

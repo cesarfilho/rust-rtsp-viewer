@@ -111,6 +111,9 @@ pub fn camera_infos(engine: &Engine) -> Vec<CameraInfo> {
                             .collect()
                     })
                     .unwrap_or_default(),
+                detect_available: engine.detection_available()
+                    && engine.detect_on.get(i).copied().unwrap_or(false),
+                detect_armed: engine.detect_armed,
             }
         })
         .collect()
@@ -138,6 +141,17 @@ pub fn apply(host: &mut Host<'_>, request: &Request) -> Response {
         Request::Status => Response::Status {
             cameras: camera_infos(host.engine),
         },
+        Request::SetDetection { armed } => {
+            if !host.engine.detection_available() {
+                return error(
+                    "a detecção de objetos não está ligada neste daemon ([detect] enabled)",
+                );
+            }
+            host.engine.set_detect_armed(*armed);
+            Response::Detection {
+                armed: host.engine.detect_armed,
+            }
+        }
         Request::ToggleRecording { camera } => {
             if let Err(e) = check(*camera) {
                 return e;
@@ -391,6 +405,48 @@ mod tests {
             ],
             enabled: Some(true),
         }
+    }
+
+    struct SeesNothing;
+    impl crate::engine::inference::Infer for SeesNothing {
+        fn infer(
+            &mut self,
+            _: &[u8],
+            _: u32,
+            _: u32,
+        ) -> Result<Vec<crate::domain::detect::Detection>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn detection_is_armed_and_disarmed_and_shows_in_the_status() {
+        let mut e = engine(2);
+        let mut z = ZonesFile::default();
+        // sem modelo: não há o que armar
+        assert!(matches!(
+            run(&mut e, &mut z, &Request::SetDetection { armed: true }),
+            Response::Error { .. }
+        ));
+        e.set_inference(crate::engine::inference::InferenceWorker::start(
+            SeesNothing,
+            2,
+        ));
+        e.set_detect_cameras(&["cam1".into()]);
+        e.set_detect_armed(false);
+        let Response::Status { cameras } = run(&mut e, &mut z, &Request::Status) else {
+            panic!("esperava Status");
+        };
+        assert!(!cameras[0].detect_available && cameras[1].detect_available);
+        assert!(!cameras[1].detect_armed);
+        assert_eq!(
+            run(&mut e, &mut z, &Request::SetDetection { armed: true }),
+            Response::Detection { armed: true }
+        );
+        let Response::Status { cameras } = run(&mut e, &mut z, &Request::Status) else {
+            panic!("esperava Status");
+        };
+        assert!(cameras.iter().all(|c| c.detect_armed));
     }
 
     #[test]
