@@ -6,6 +6,30 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 
 ## [Não lançado]
 
+### ✨ Adicionado
+
+- **Gravar só quando há um objeto** (`[detect] record = true`): a gravação começa quando uma classe de `[detect] labels`
+  aparece (dentro das zonas) e para `motion_post_roll_secs` depois da última vez que foi vista, com o pré-roll de
+  `[recording]`. Sombra, folha e chuva movem a cena mas não gravam. Vale com `on_motion = false`; a retenção a trata como
+  gravação de evento (modo `detection`, mesmos dias da de movimento).
+- **Snapshot da detecção** (`[detect] snapshot = true`): um JPEG do quadro inteiro com as caixas desenhadas a cada evento de
+  detecção, em `<gravações>/snapshots/<câmera>/<AAAA-MM-DD>/<HH-MM-SS>_<classe>.jpg`. O daemon guarda só uma referência ao
+  último quadro decodificado e converte numa thread à parte.
+- **Detecção só em algumas câmeras** (`[detect] cameras = ["Garagem"]`, pelo label ou name): as outras continuam com
+  movimento e eventos, mas não ocupam o modelo (rios e árvores se mexem o tempo todo). `--check` avisa nome desconhecido.
+- **Gravações como pasta de rede (SMB)**: serviço `samba` no `compose.yaml` (imagem mínima própria, `docker/samba/`), só
+  leitura, SMB2/3, sem convidado; usuário `rrv` e senha em `secrets/smb_password`. `\\<host>\gravacoes`.
+
+### 🔧 Alterado
+
+- `compose.yaml`: o daemon usa `restart: always`.
+
+### 🐛 Corrigido
+
+- **O daemon do Docker reiniciava sem parar depois de um reboot**: o contêiner sobe antes do login, o Docker criava
+  `$XDG_RUNTIME_DIR/rrv` como root e o socket não abria. O socket agora fica em `~/.local/state/rust-rtsp-viewer/run/`
+  (no disco), e a janela / `rrvctl` o acham sozinhos quando não há um daemon nativo.
+
 ## [0.11.0] - 2026-10-06
 
 ### ✨ Adicionado

@@ -313,7 +313,7 @@ nativa).
 
 ```bash
 cp config.docker.toml.example config.docker.toml   # edite as câmeras (o arquivo é ignorado pelo git)
-mkdir -p recordings state secrets "$XDG_RUNTIME_DIR/rrv"
+mkdir -p recordings state secrets ~/.local/state/rust-rtsp-viewer/run
 printf '%s' 'a-senha-da-camera' > secrets/cam_portao_password && chmod 600 secrets/cam_portao_password
 docker compose up -d --build
 docker compose logs -f rrv
@@ -341,8 +341,9 @@ docker compose logs -f rrv
   (Home Assistant, n8n, Node-RED: `camera`, `event`, `detail`, `title`, `message`, `time_unix`) ou
   `"ntfy"` (celular). A URL, que costuma levar o token, **nunca** aparece no log. Um destino fora do
   ar não atrapalha o daemon nem o desligamento. Usa o `curl`, que a imagem já traz.
-- **Controle pelo socket:** o daemon abre `$XDG_RUNTIME_DIR/rrv/rrv.sock` (modo `0600`; no contêiner,
-  `/run/rrv/rrv.sock` num volume compartilhado). A janela e o `rrvctl` falam com ele por aí:
+- **Controle pelo socket:** o daemon abre `$XDG_RUNTIME_DIR/rrv/rrv.sock` (modo `0600`); o do contêiner
+  aparece no host em `~/.local/state/rust-rtsp-viewer/run/rrv.sock` (no disco: o contêiner sobe no boot,
+  antes de existir `/run/user/<uid>`). A janela e o `rrvctl` falam com ele por aí:
   `rrvctl status`, `rrvctl record "Portão"`, `rrvctl enable|disable 2`, `rrvctl zones "Portão"`,
   `rrvctl events`. Dentro do contêiner: `docker exec rrv rrvctl status`.
 - Fora do Docker: `cargo run -p rrv-daemon -- config.toml` (mesmos `--check` e `--health`).
@@ -358,7 +359,8 @@ docker compose logs -f rrv
 
 ### A janela com o daemon
 
-Ao abrir, a janela procura o socket do daemon (`$XDG_RUNTIME_DIR/rrv/rrv.sock`). **Sem socket, usa o
+Ao abrir, a janela procura o socket do daemon (`$XDG_RUNTIME_DIR/rrv/rrv.sock`, senão o do Docker em
+`~/.local/state/rust-rtsp-viewer/run/rrv.sock`). **Sem socket, usa o
 motor local** e funciona como sempre. Com socket, conecta, e **só mostra**: quem grava, detecta
 movimento e avisa é o daemon (senão tudo sairia em dobro). O **chip** à esquerda do medidor de saúde
 diz em que modo está; clique nele para o menu.

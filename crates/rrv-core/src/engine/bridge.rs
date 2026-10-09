@@ -165,6 +165,12 @@ pub struct GStreamerBridge {
     pub store: Option<(crate::infrastructure::store::StoreHandle, String)>,
     /// Most recent detection frame, `None` until the first one arrives.
     pub(crate) detect_frame: Arc<Mutex<Option<DetectFrame>>>,
+    /// Keep the latest decoded sample even when headless (`[detect] snapshot`): a detection
+    /// snapshot needs the whole picture, which the daemon otherwise never converts nor copies.
+    /// Set before the pipeline starts.
+    pub keep_last_sample: bool,
+    /// That sample (a reference, not a copy; converted only when a snapshot is taken).
+    pub(crate) last_sample: Arc<Mutex<Option<gst::Sample>>>,
     pub(crate) recording: Option<RecordingBranch>,
     /// Bumped on every `start_recording` so each recording branch gets uniquely
     /// named elements. Without this, a reconnect that stops then immediately
@@ -239,6 +245,8 @@ impl GStreamerBridge {
             preroll_ms: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             store: None,
             detect_frame: Arc::new(Mutex::new(None)),
+            keep_last_sample: false,
+            last_sample: Arc::new(Mutex::new(None)),
             recording: None,
             recording_seq: 0,
             finalisers: Vec::new(),
@@ -632,6 +640,8 @@ impl GStreamerBridge {
         for handle in self.finalisers.drain(..) {
             let _ = handle.join();
         }
+        // A picture of a camera that is gone must not end up in a later snapshot.
+        *self.last_sample.lock().unwrap_or_else(|e| e.into_inner()) = None;
         if let Some(pipeline) = self.pipeline.take() {
             self.camera_log("INFO", "pipeline → Null (stop)");
             let _ = pipeline.set_state(gst::State::Null);
@@ -726,6 +736,18 @@ impl GStreamerBridge {
         let (frame, w, h, _) = self.read_frame();
         let rgba = frame?.to_rgba()?;
         Some((rgba, w, h))
+    }
+
+    /// What a detection snapshot is made from: the frame the window already holds, or (headless)
+    /// the latest decoded sample. Cheap (references only); the conversion to RGBA is
+    /// [`SnapshotSource::into_rgba`], meant for a worker thread.
+    pub fn snapshot_source(&self) -> Option<SnapshotSource> {
+        if self.headless {
+            let sample = self.last_sample.lock().unwrap_or_else(|e| e.into_inner());
+            return sample.clone().map(SnapshotSource::Sample);
+        }
+        let (frame, w, h, _) = self.read_frame();
+        Some(SnapshotSource::Frame(frame?, w, h))
     }
 
     /// Most recent frame of the reduced detection branch (RGBA, ~320 px wide).
@@ -980,6 +1002,43 @@ fn sample_image_quality(
     metrics
         .last_sample_unix_secs
         .store(now_unix, Ordering::Relaxed);
+}
+
+/// A frame to save as a picture, not converted yet (see [`GStreamerBridge::snapshot_source`]).
+pub enum SnapshotSource {
+    Frame(VideoFrame, u32, u32),
+    Sample(gst::Sample),
+}
+
+impl SnapshotSource {
+    /// The picture as tightly packed RGBA. Slow (a full-frame colour conversion): never on the
+    /// engine's loop.
+    pub fn into_rgba(self) -> Option<(Vec<u8>, u32, u32)> {
+        match self {
+            Self::Frame(frame, w, h) => Some((frame.to_rgba()?.to_vec(), w, h)),
+            Self::Sample(sample) => {
+                let caps = gst::Caps::builder("video/x-raw")
+                    .field("format", "RGBA")
+                    .build();
+                let rgba = gstreamer_video::convert_sample(
+                    &sample,
+                    &caps,
+                    Some(gst::ClockTime::from_seconds(5)),
+                )
+                .ok()?;
+                let info = gstreamer_video::VideoInfo::from_caps(rgba.caps()?).ok()?;
+                let (w, h) = (info.width(), info.height());
+                let map = rgba.buffer()?.map_readable().ok()?;
+                let stride = info.stride()[0] as usize;
+                let row = w as usize * 4;
+                let mut out = Vec::with_capacity(row * h as usize);
+                for y in 0..h as usize {
+                    out.extend_from_slice(map.get(y * stride..y * stride + row)?);
+                }
+                Some((out, w, h))
+            }
+        }
+    }
 }
 
 #[cfg(test)]

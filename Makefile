@@ -2,26 +2,26 @@
 #
 # Variáveis que valem a pena conhecer (passe na linha: `make status SOCKET=/tmp/rrv-a8/run/rrv.sock`):
 #   CONFIG   config.toml da janela / do daemon local        (padrão: config.toml)
-#   SOCKET   socket do daemon que o rrvctl e a janela usam  (padrão: o do compose.yaml)
+#   SOCKET   socket do daemon que o rrvctl e a janela usam  (padrão: o nativo ou o do compose.yaml, o que existir)
 #   CAM      nome da câmera para `make record|clip`
 #   HORAS    janela do `make history`                       (padrão: 24)
 #   DE       início do `make clip` (ex.: -30m, -2h)       (padrão: -5m)
 
 .DEFAULT_GOAL := help
-.PHONY: _docker-ready help all build release bin run-daemon-detect run run-embedded run-daemon-local run-with-daemon check ci fmt fmt-check lint test test-lib \
+.PHONY: _docker-ready help all build release bin run-daemon-detect up-detect run run-embedded run-daemon-local run-with-daemon check ci fmt fmt-check lint test test-lib \
         deny clean watch config-check install uninstall \
         docker-build up up-vaapi up-nvidia down restart logs ps init-docker \
         status history record enable disable clip events \
         gpu-check a8 a8-window a8-embedded a8-stop stress baseline
 
 CONFIG ?= config.toml
-SOCKET ?= $(or $(XDG_RUNTIME_DIR),/run/user/$(shell id -u))/rrv/rrv.sock
+SOCKET ?=
 HORAS  ?= 24
 DE     ?= -5m
 COMPOSE ?= docker compose
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 IMAGE   ?= rust-rtsp-viewer/rrv-daemon
-RRVCTL   = cargo run -q --release -p rrv-daemon --bin rrvctl -- --socket $(SOCKET)
+RRVCTL   = cargo run -q --release -p rrv-daemon --bin rrvctl -- $(if $(SOCKET),--socket $(SOCKET))
 
 # XDG user prefix: sem root. Troque com `make install PREFIX=/usr/local`.
 PREFIX ?= $(HOME)/.local
@@ -95,12 +95,13 @@ run-daemon-detect: ## Daemon com detecção de objetos (precisa de `make bin FEA
 	ORT_DYLIB_PATH=$(CURDIR)/models/onnxruntime/lib/libonnxruntime.so ./bin/rrv-daemon $(CONFIG)
 
 run-with-daemon: ## Abre a janela ligada ao daemon em o socket do daemon (a vista Gravações, tecla t)
-	RRV_SOCKET=$(SOCKET) cargo run --release -- $(CONFIG)
+	$(if $(SOCKET),RRV_SOCKET=$(SOCKET)) cargo run --release -- $(CONFIG)
 
 ##@ Docker (o daemon que grava com a janela fechada)
 init-docker: ## Cria as pastas e o config.docker.toml a partir do exemplo (só se faltarem)
-	mkdir -p recordings state secrets "$${XDG_RUNTIME_DIR:-/run/user/$$(id -u)}/rrv"
+	mkdir -p recordings state secrets "$${RRV_RUN_DIR:-$$HOME/.local/state/rust-rtsp-viewer/run}"
 	@[ -f config.docker.toml ] || { cp config.docker.toml.example config.docker.toml; echo "criado config.docker.toml: edite as câmeras"; }
+	@[ -s secrets/smb_password ] || { (umask 077; head -c 18 /dev/urandom | base64 | tr -d '/+=' > secrets/smb_password); echo "criada a senha da pasta de rede (usuário rrv): cat secrets/smb_password"; }
 	@echo "Senhas: um arquivo por câmera em ./secrets com o nome que o config usa entre chaves, ex.: printf '%s' 'senha' > secrets/cam_portao_password && chmod 600 secrets/cam_portao_password"
 
 _docker-ready:
@@ -112,6 +113,9 @@ docker-build: ## Constrói a imagem (tags :local e :a versão)
 
 up: _docker-ready ## Sobe o daemon
 	$(COMPOSE) up -d
+
+up-detect: _docker-ready ## Sobe o daemon com detecção de objetos na CPU (modelo em ./models: scripts/fetch-model.sh)
+	$(COMPOSE) -f compose.yaml -f compose.detect.yaml up -d --build
 
 up-vaapi: _docker-ready ## Sobe o daemon decodificando na iGPU Intel (VA-API)
 	$(COMPOSE) -f compose.yaml -f compose.vaapi.yaml up -d

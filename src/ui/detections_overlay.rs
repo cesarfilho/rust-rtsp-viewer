@@ -25,22 +25,11 @@ pub fn chip_text(b: &WireBox) -> String {
     format!("{} {:.0}%", label_pt(&b.label), b.score * 100.0)
 }
 
-const PALETTE: [(f32, f32, f32); 6] = [
-    (0.20, 0.85, 0.40), // verde
-    (1.00, 0.70, 0.10), // âmbar
-    (0.30, 0.65, 1.00), // azul
-    (1.00, 0.35, 0.40), // vermelho
-    (0.80, 0.50, 1.00), // violeta
-    (0.20, 0.90, 0.90), // ciano
-];
-
-/// A mesma classe sempre tem a mesma cor (o índice vem do nome, não da ordem em que aparecem).
+/// A mesma cor do JPEG das detecções (`domain::detection_snapshot::box_colour`): a classe decide, não a
+/// ordem em que os objetos aparecem.
 pub fn color_for(label: &str) -> Color {
-    let h = label
-        .bytes()
-        .fold(7u32, |a, b| a.wrapping_mul(31).wrapping_add(u32::from(b)));
-    let (r, g, b) = PALETTE[(h as usize) % PALETTE.len()];
-    Color::from_rgb(r, g, b)
+    let [r, g, b] = crate::domain::detection_snapshot::box_colour(label);
+    Color::from_rgb8(r, g, b)
 }
 
 pub struct DetectionsProgram {
@@ -161,9 +150,9 @@ mod tests {
 
     #[test]
     fn the_black_label_text_is_readable_on_every_palette_colour() {
-        for (r, g, b) in PALETTE {
+        for [r, g, b] in crate::domain::detection_snapshot::BOX_PALETTE {
             let c =
-                super::super::theme::Theme::contrast_ratio(Color::from_rgb(r, g, b), Color::BLACK);
+                super::super::theme::Theme::contrast_ratio(Color::from_rgb8(r, g, b), Color::BLACK);
             assert!(c >= 4.5, "({r},{g},{b}) só tem {c:.1}:1 com texto preto");
         }
     }

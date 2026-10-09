@@ -241,6 +241,100 @@ fn object_detection_runs_only_while_the_scene_moves() {
     assert!(e.detections[0].is_empty(), "caixas velhas sobraram");
 }
 
+/// Um "modelo" que vê uma pessoa só enquanto o teste manda.
+struct SeesWhenTold(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl rrv_core::engine::inference::Infer for SeesWhenTold {
+    fn infer(
+        &mut self,
+        rgba: &[u8],
+        w: u32,
+        h: u32,
+    ) -> Result<Vec<rrv_core::domain::detect::Detection>, String> {
+        if self.0.load(std::sync::atomic::Ordering::Relaxed) {
+            SeesAPerson.infer(rgba, w, h)
+        } else {
+            Ok(Vec::new())
+        }
+    }
+}
+
+/// `[detect] record` + `snapshot`: a cena se mexendo sem objeto não grava nada; a pessoa aparece,
+/// a gravação começa (modo `detection`) e sai um JPEG com o quadro inteiro; a pessoa some (a cena
+/// continua mexendo) e a gravação para pelo pós-roll, contado da última vez que foi vista.
+#[test]
+fn a_detection_records_a_clip_and_saves_a_snapshot_but_bare_motion_does_not() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let tmp = TempDir::new("detect-record");
+    let cam = LiveCamera::start(&tmp.0);
+    let rec = tmp.path("rec");
+    let mut e = engine(&cam.url(), &rec, 3);
+    // só a detecção grava
+    e.motion_recording = false;
+    e.configured.motion_recording = false;
+    let person = Arc::new(AtomicBool::new(false));
+    e.set_detect_policy(vec![0], 5);
+    e.set_inference(rrv_core::engine::inference::InferenceWorker::start(
+        SeesWhenTold(person.clone()),
+        2,
+    ));
+    e.set_detect_actions(true, true);
+    assert!(e.detect_recording);
+    let inferred = |e: &Engine| e.inference.as_ref().unwrap().stats().inferred;
+
+    let mut events = Vec::new();
+    // movimento sem objeto: o modelo roda, mas nada é gravado
+    assert!(
+        run(&mut e, 60, &mut events, |e, _| inferred(e) >= 3),
+        "o modelo nunca rodou: {}",
+        describe(&e)
+    );
+    assert!(
+        !kinds(&events).contains(&EventType::RecordingStart),
+        "gravou sem objeto"
+    );
+
+    person.store(true, Ordering::Relaxed);
+    assert!(
+        run(&mut e, 30, &mut events, |_, ev| kinds(ev)
+            .contains(&EventType::RecordingStart)),
+        "a pessoa não iniciou a gravação: {:?}",
+        kinds(&events)
+    );
+    assert_eq!(e.bridges[0].lock().unwrap().recording_mode, "detection");
+
+    person.store(false, Ordering::Relaxed);
+    let stopped = run(&mut e, 30, &mut events, |_, ev| {
+        kinds(ev).contains(&EventType::RecordingStop)
+    });
+    e.shutdown();
+    assert!(stopped, "a gravação não parou: {:?}", kinds(&events));
+    let files = mkv_files(&rec);
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert!(is_playable(&files[0]), "{} não toca", files[0].display());
+
+    // o snapshot: rec/snapshots/cam/<dia>/<hora>_person.jpg, no tamanho do vídeo
+    let day = std::fs::read_dir(rec.join("snapshots/cam"))
+        .expect("sem pasta de snapshots")
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let jpgs: Vec<_> = std::fs::read_dir(&day)
+        .unwrap()
+        .map(|f| f.unwrap().path())
+        .collect();
+    assert!(!jpgs.is_empty(), "nenhum JPEG em {}", day.display());
+    assert!(
+        jpgs[0].to_string_lossy().ends_with("_person.jpg"),
+        "{jpgs:?}"
+    );
+    let img = image::open(&jpgs[0]).unwrap();
+    assert!(img.width() >= 320, "{}x{}", img.width(), img.height());
+}
+
 /// O histórico (plano 3.2): a gravação por movimento deixa no banco um segmento
 /// fechado, com tamanho, e o evento de movimento ligado a ele.
 #[test]

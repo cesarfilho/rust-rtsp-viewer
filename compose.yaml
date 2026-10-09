@@ -13,7 +13,7 @@ services:
     build: .
     image: rust-rtsp-viewer/rrv-daemon:local
     container_name: rrv
-    restart: unless-stopped
+    restart: always
 
     # RTP/UDP de volta das câmeras não atravessa bem a NAT do bridge; o modo host
     # é o mais simples. Alternativa: `protocols=tcp` nas câmeras e rede bridge.
@@ -37,10 +37,37 @@ services:
       # config lê. A pasta inteira (e não um segredo por câmera) para o compose não falhar por um
       # arquivo que ainda não existe, e para qualquer câmera nova só precisar de um arquivo.
       - ./secrets:/run/secrets:ro
-      # O socket de controle: a janela (nativa) o encontra em $XDG_RUNTIME_DIR/rrv/rrv.sock.
-      # Crie o diretório antes (`mkdir -p "$XDG_RUNTIME_DIR/rrv"`); senão o Docker o cria
-      # como root e o daemon não consegue abrir o socket.
-      - ${XDG_RUNTIME_DIR:-/tmp}/rrv:/run/rrv
+      # O socket de controle, numa pasta do disco (a janela e o rrvctl a acham sozinhos). Não em
+      # $XDG_RUNTIME_DIR: o contêiner sobe no boot, antes do login, quando /run/user/<uid> não existe,
+      # e o Docker criava a pasta como root (o daemon reiniciava sem parar). `make init-docker` a cria.
+      - ${RRV_RUN_DIR:-${HOME}/.local/state/rust-rtsp-viewer/run}:/run/rrv
 
     # Decodificação por GPU Intel (VA-API) é a tarefa 2.5.10:
     # devices: ["/dev/dri:/dev/dri"]
+
+  # As gravações (e os snapshots das detecções) como pasta de rede SMB, só leitura:
+  #   Windows  \\192.168.1.146\gravacoes      macOS / Linux  smb://192.168.1.146/gravacoes
+  # A senha do usuário (`SMB_USER`, padrão `rrv`) fica no segredo `smb_password`:
+  #   printf '%s' 'uma-senha-forte' > secrets/smb_password && chmod 600 secrets/smb_password
+  # O tráfego SMB3 sai assinado, mas use só na LAN: não abra a porta 445 para a internet.
+  samba:
+    build: docker/samba
+    image: rust-rtsp-viewer/samba:local
+    container_name: rrv-samba
+    restart: always
+    ports:
+      - "445:445"
+    environment:
+      TZ: "${TZ:-America/Sao_Paulo}"
+      SMB_USER: "${SMB_USER:-rrv}"
+      SMB_UID: "${RRV_UID:-1000}"
+      SMB_GID: "${RRV_GID:-1000}"
+    volumes:
+      - ${RRV_RECORDINGS:-./recordings}:/share:ro
+    # Só este segredo (não a pasta ./secrets inteira, que tem as senhas das câmeras).
+    secrets:
+      - smb_password
+
+secrets:
+  smb_password:
+    file: ./secrets/smb_password

@@ -182,6 +182,12 @@ label = "Rio Jardim Sofia"
 # iou = 0.45                          # 0.1–0.9 (supressão de caixas sobrepostas)
 # labels = ["person", "car"]          # só estas classes (nomes COCO em inglês); vazio = todas
 # cooldown_secs = 30                  # 5–3600: um evento por câmera e classe a cada 30 s
+# record = false                      # grava SÓ enquanto uma dessas classes aparece (pré e pós-roll de
+#                                     # [recording]); sombra e folha não gravam. Deixe on_motion = false
+# cameras = ["Garagem"]               # só estas câmeras (label, senão name) vão ao modelo; vazio = todas.
+#                                     # Tire as de cena sempre em movimento (água, árvores, trânsito)
+# snapshot = false                    # um JPEG do quadro inteiro, com as caixas, a cada evento:
+#                                     # <dir de gravação>/snapshots/<câmera>/<AAAA-MM-DD>/<HH-MM-SS>_person.jpg
 # (cada detecção vira um evento "detection" no histórico: rótulo, confiança, caixa e zona;
 #  `rrvctl history --label person` filtra; avisos e webhook seguem [notifications]/[webhook])
 

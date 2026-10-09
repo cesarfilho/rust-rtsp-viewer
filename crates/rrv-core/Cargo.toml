@@ -27,7 +27,7 @@ serde_json = "1"
 serde_ignored = "0.1.14"
 thiserror = "1"
 chrono = { version = "0.4", features = ["clock"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 libc = "0.2.190"
 # ONVIF: SOAP é lido com roxmltree; a senha vai como WS-UsernameToken (digest SHA-1).

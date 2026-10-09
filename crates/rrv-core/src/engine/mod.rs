@@ -140,6 +140,18 @@ pub struct Engine {
     /// When each `(camera, class)` last raised an event, and last notified.
     pub detect_last: HashMap<(usize, usize), Instant>,
     pub detect_notify_last: HashMap<(usize, usize), Instant>,
+    /// Cameras whose motion frames go to the model (`[detect] cameras`); all true by default.
+    pub detect_on: Vec<bool>,
+    /// `[detect] record`: record while a wanted class is seen (only when `on_motion` is off).
+    pub detect_recording: bool,
+    /// `[detect] snapshot`: a JPEG per detection event.
+    pub detect_snapshot: bool,
+    /// Last instant a wanted object was seen per camera (drives the detection post-roll).
+    pub last_detection_at: Vec<Option<Instant>>,
+    /// `[recording] motion_pre_roll_secs`, kept for the detection trigger, which is armed later.
+    pub event_preroll_secs: u32,
+    /// Where detection snapshots go: `<recording dir>/snapshots`.
+    pub snapshot_dir: std::path::PathBuf,
     /// Motion zones per camera (empty = the whole frame counts).
     pub zones: Vec<ZoneConfig>,
     /// Desktop-notification policy.
@@ -296,6 +308,12 @@ impl Engine {
             detect_cooldown_secs: 30,
             detect_last: HashMap::new(),
             detect_notify_last: HashMap::new(),
+            detect_on: vec![true; count],
+            detect_recording: false,
+            detect_snapshot: false,
+            last_detection_at: vec![None; count],
+            event_preroll_secs: recording.motion_pre_roll_secs,
+            snapshot_dir: recording.dir.join("snapshots"),
             zones: zone_configs,
             notify,
             notify_last: HashMap::new(),
@@ -333,7 +351,7 @@ impl Engine {
         !self.pause_hidden
             || crate::domain::motion::needs_background_watch(
                 self.motion_config.enabled,
-                self.motion_recording,
+                self.motion_recording || self.detect_recording,
                 self.notify.enabled,
             )
     }
@@ -575,7 +593,7 @@ impl Engine {
     }
 
     /// Like [`Engine::toggle_recording`], saying why a recording that starts does
-    /// (`"motion"` or `"manual"`): retention treats them differently.
+    /// (`"motion"`, `"detection"` or `"manual"`): retention treats them differently.
     fn toggle_recording_as(&mut self, i: usize, mode: &'static str) -> Result<bool, String> {
         if self.display_only {
             return Err("a gravação é feita pelo daemon".into());
@@ -685,6 +703,9 @@ impl Engine {
         let Some(worker) = &self.inference else {
             return;
         };
+        if !self.detect_on.get(i).copied().unwrap_or(false) {
+            return;
+        }
         let wanted = self.zones.get(i).and_then(Region::of_zones);
         let (pixels, w, h, region) = match wanted {
             Some(r) => match r.crop_rgba(rgba, width, height) {
@@ -711,6 +732,48 @@ impl Engine {
     pub fn set_detect_policy(&mut self, labels: Vec<usize>, cooldown_secs: u64) {
         self.detect_labels = labels;
         self.detect_cooldown_secs = cooldown_secs;
+    }
+
+    /// Restricts the model to the cameras named in `[detect] cameras` (display name, case ignored);
+    /// an empty list means every camera. Returns the names that matched no camera.
+    pub fn set_detect_cameras(&mut self, wanted: &[String]) -> Vec<String> {
+        let norm = |s: &str| s.trim().to_lowercase();
+        if wanted.is_empty() {
+            self.detect_on = vec![true; self.names.len()];
+            return Vec::new();
+        }
+        let wanted_norm: Vec<String> = wanted.iter().map(|w| norm(w)).collect();
+        self.detect_on = self
+            .names
+            .iter()
+            .map(|n| wanted_norm.contains(&norm(n)))
+            .collect();
+        wanted
+            .iter()
+            .filter(|w| !self.names.iter().any(|n| norm(n) == norm(w)))
+            .cloned()
+            .collect()
+    }
+
+    /// What the daemon does with a detection besides the event: record a clip while the object is
+    /// seen (`record`) and/or save a JPEG of it (`snapshot`). Call before the pipelines start: the
+    /// recording's pre-roll needs the ring of encoded video, which is built with the pipeline.
+    pub fn set_detect_actions(&mut self, record: bool, snapshot: bool) {
+        // `on_motion` already records every motion; a second trigger would fight over the file.
+        self.detect_recording = record && !self.motion_recording;
+        self.detect_snapshot = snapshot;
+        if self.detect_recording && self.configured.preroll_secs == 0 {
+            self.configured.preroll_secs = self.event_preroll_secs;
+            if !self.display_only {
+                for b in &self.bridges {
+                    b.lock().unwrap_or_else(|e| e.into_inner()).preroll_secs =
+                        self.event_preroll_secs;
+                }
+            }
+        }
+        for b in &self.bridges {
+            b.lock().unwrap_or_else(|e| e.into_inner()).keep_last_sample = snapshot;
+        }
     }
 
     /// Collects what the inference thread finished: boxes are mapped from the crop back to the whole
@@ -811,6 +874,9 @@ impl Engine {
             Some(z) => format!("{} {percent}% · {z}", d.label()),
             None => format!("{} {percent}%", d.label()),
         };
+        if self.detect_snapshot {
+            self.save_detection_snapshot(camera, &name, d.label());
+        }
         let notification = self.detection_notification(camera, d, &name, percent, zone.as_deref());
         self.events.push(EngineEvent {
             camera,
@@ -818,6 +884,44 @@ impl Engine {
             detail: Some(detail),
             notification,
         });
+    }
+
+    /// Saves the whole picture with this camera's boxes as a JPEG, on a thread of its own (the
+    /// conversion and the encoding take tens of milliseconds at 1080p). The frame is the latest
+    /// one, a few hundred milliseconds newer than the one the model saw.
+    fn save_detection_snapshot(&self, camera: usize, name: &str, label: &str) {
+        let source = self.bridges[camera]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .snapshot_source();
+        let Some(source) = source else {
+            log::debug!("[{name}] snapshot: ainda sem quadro");
+            return;
+        };
+        let path = crate::domain::detection_snapshot::path_for(
+            &self.snapshot_dir,
+            &crate::infrastructure::recording_paths::safe_filename(name),
+            chrono::Local::now().naive_local(),
+            label,
+        );
+        let found = self.detections[camera].clone();
+        let name = name.to_string();
+        let spawned = std::thread::Builder::new()
+            .name("rrv-snapshot".into())
+            .spawn(move || {
+                let Some((mut rgba, w, h)) = source.into_rgba() else {
+                    log::warn!("[{name}] snapshot: não consegui converter o quadro");
+                    return;
+                };
+                crate::domain::detection_snapshot::draw_boxes(&mut rgba, w, h, &found);
+                match crate::infrastructure::jpeg::write(&path, &rgba, w, h) {
+                    Ok(()) => log::info!("[{name}] snapshot: {}", path.display()),
+                    Err(e) => log::warn!("[{name}] snapshot: {e}"),
+                }
+            });
+        if let Err(e) = spawned {
+            log::warn!("snapshot: {e}");
+        }
     }
 
     /// Same cooldown as the event itself, but also bounded by `[notifications] cooldown_secs`.
@@ -885,6 +989,49 @@ impl Engine {
             crate::domain::recording::MotionRecAction::Stop => {
                 if let Err(e) = self.toggle_recording(i) {
                     log::warn!("Motion recording could not stop on camera {i}: {e}");
+                }
+                self.auto_recording[i] = false;
+            }
+        }
+    }
+
+    /// Like [`Engine::drive_motion_recording`], but the trigger is a wanted object in the picture
+    /// (`detections`, already filtered by class and zone), so shadows and leaves record nothing.
+    /// The post-roll counts from the last frame where the object was seen.
+    pub fn drive_detection_recording(&mut self, i: usize) {
+        if !self.detect_recording || self.display_only {
+            return;
+        }
+        let is_recording = self.bridges[i]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_recording();
+        if !is_recording {
+            self.auto_recording[i] = false;
+        }
+        let seen = !self.detections[i].is_empty();
+        if seen {
+            self.last_detection_at[i] = Some(Instant::now());
+        }
+        let quiet = self.last_detection_at[i].map_or(u64::MAX, |t| t.elapsed().as_secs());
+        let action = crate::domain::recording::motion_recording_action(
+            is_recording,
+            self.auto_recording[i],
+            seen,
+            quiet,
+            self.motion_post_roll_secs,
+        );
+        match action {
+            crate::domain::recording::MotionRecAction::None => {}
+            crate::domain::recording::MotionRecAction::Start => {
+                match self.toggle_recording_as(i, "detection") {
+                    Ok(_) => self.auto_recording[i] = true,
+                    Err(e) => log::warn!("Detection recording could not start on camera {i}: {e}"),
+                }
+            }
+            crate::domain::recording::MotionRecAction::Stop => {
+                if let Err(e) = self.toggle_recording(i) {
+                    log::warn!("Detection recording could not stop on camera {i}: {e}");
                 }
                 self.auto_recording[i] = false;
             }
@@ -1025,11 +1172,12 @@ impl Engine {
         }
     }
 
-    /// Motion detection and the motion-triggered recording, run at ~2 Hz.
+    /// Motion detection and the motion- / detection-triggered recording, run at ~2 Hz.
     pub fn tick_motion(&mut self, i: usize) {
         self.poll_inference();
         self.detect_motion(i);
         self.drive_motion_recording(i);
+        self.drive_detection_recording(i);
     }
 
     /// Switch a camera on or off. Off: stop its pipeline and show `Disabled`.
@@ -1248,6 +1396,12 @@ mod tests {
             detect_cooldown_secs: 30,
             detect_last: HashMap::new(),
             detect_notify_last: HashMap::new(),
+            detect_on: vec![true; n],
+            detect_recording: false,
+            detect_snapshot: false,
+            last_detection_at: vec![None; n],
+            event_preroll_secs: 5,
+            snapshot_dir: std::path::PathBuf::from("snapshots"),
             zones: vec![ZoneConfig::default(); n],
             notify: NotifyConfig {
                 enabled: false,
@@ -1486,6 +1640,30 @@ mod tests {
         assert!(e.detections[0].is_empty());
         std::thread::sleep(Duration::from_millis(50));
         assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn only_the_listed_cameras_reach_the_model() {
+        let (mut e, seen) = spied_engine();
+        // nome de outra câmera: esta fica de fora, e o nome que não casa volta para o aviso
+        assert_eq!(
+            e.set_detect_cameras(&["Rio".into(), " CAM0 ".into()]),
+            ["Rio"]
+        );
+        assert!(e.detect_on[0], "o nome casa sem diferenciar maiúsculas");
+        assert!(e.set_detect_cameras(&["Rio".into()]) == ["Rio"] && !e.detect_on[0]);
+        feed(&e, 0, frame(0));
+        e.detect_motion(0);
+        feed(&e, 0, frame(4));
+        e.detect_motion(0);
+        assert!(e.motion_active[0], "o movimento continua sendo visto");
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "o modelo não devia ver esta câmera"
+        );
+        // lista vazia = todas
+        assert!(e.set_detect_cameras(&[]).is_empty() && e.detect_on[0]);
     }
 
     #[test]

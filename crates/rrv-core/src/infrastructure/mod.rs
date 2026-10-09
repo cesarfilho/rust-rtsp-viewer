@@ -2,6 +2,7 @@ pub mod audio;
 #[cfg(feature = "detect")]
 pub mod detector;
 pub mod disk;
+pub mod jpeg;
 pub mod launch;
 pub mod notify;
 pub mod reconnect;

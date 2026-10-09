@@ -21,6 +21,9 @@ enabled = true
 # model = "/models/yolo11n-640.onnx"
 # backend = "auto"            # "cpu", "cuda" ou "auto"
 # labels = ["person", "car"]
+# cameras = ["Portão"]        # só estas câmeras vão ao modelo (vazio = todas)
+# record = true               # grava só enquanto uma dessas classes aparece (com [recording] on_motion = false)
+# snapshot = true             # JPEG com as caixas em recordings/snapshots/<câmera>/<dia>/
 
 # A janela em outra máquina (ou neste desktop, pelo IP): TCP com token. O tráfego NÃO é criptografado
 # (só numa LAN de confiança). Crie o token: `openssl rand -hex 24 > secrets/rrv_token && chmod 600 secrets/rrv_token`.

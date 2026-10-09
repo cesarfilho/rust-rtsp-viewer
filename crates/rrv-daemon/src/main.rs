@@ -437,6 +437,27 @@ fn start_detection(engine: &mut Engine, cfg: rrv_core::domain::detect::DetectCon
             let d = d.with_thresholds(cfg.min_score, cfg.iou);
             engine.set_detect_policy(cfg.labels.clone(), cfg.cooldown_secs);
             engine.set_inference(InferenceWorker::start(d, engine.camera_count().max(2)));
+            for unknown in engine.set_detect_cameras(&cfg.cameras) {
+                log::warn!("[detect] cameras: \"{unknown}\" não é nenhuma câmera");
+            }
+            if !cfg.cameras.is_empty() {
+                let on: Vec<&str> = (0..engine.camera_count())
+                    .filter(|&i| engine.detect_on[i])
+                    .map(|i| engine.names[i].as_str())
+                    .collect();
+                log::info!("detecção só em: {}", on.join(", "));
+            }
+            engine.set_detect_actions(cfg.record, cfg.snapshot);
+            if engine.detect_recording {
+                log::info!("detecção: grava enquanto o objeto aparece");
+            } else if cfg.record {
+                log::warn!(
+                    "[detect] record ignorado: [recording] on_motion já grava todo movimento"
+                );
+            }
+            if cfg.snapshot {
+                log::info!("detecção: snapshots em {}", engine.snapshot_dir.display());
+            }
         }
         Err(e) => log::warn!("detecção desligada: {e}"),
     }

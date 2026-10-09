@@ -9,6 +9,7 @@ pub mod audio;
 pub mod camera_status;
 pub mod codec;
 pub mod detect;
+pub mod detection_snapshot;
 pub mod diagnostics;
 pub mod groups;
 pub mod metrics;

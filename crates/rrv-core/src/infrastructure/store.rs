@@ -40,7 +40,8 @@ pub struct Segment {
     pub has_motion: bool,
     pub protected: bool,
     pub closed: bool,
-    /// `"motion"` (disparada por movimento) ou `"manual"` (pedida pela pessoa).
+    /// `"motion"` (disparada por movimento), `"detection"` (por um objeto reconhecido) ou
+    /// `"manual"` (pedida pela pessoa).
     pub mode: String,
 }
 
@@ -257,7 +258,7 @@ impl Store {
                 zone
             ],
         )?;
-        if let (Some(id), "motion") = (segment, kind) {
+        if let (Some(id), "motion" | "detection") = (segment, kind) {
             self.conn
                 .execute("UPDATE segments SET has_motion = 1 WHERE id = ?1", [id])?;
         }

@@ -104,7 +104,7 @@ pub struct Candidate {
     pub id: i64,
     pub ts_start: i64,
     pub bytes: u64,
-    /// `"motion"` ou `"manual"`.
+    /// `"motion"`, `"detection"` (gravações de evento) ou `"manual"`.
     pub mode: String,
 }
 
@@ -120,7 +120,7 @@ pub fn plan(
     let mut picked = vec![false; candidates.len()];
     let mut freed: u64 = 0;
     for (i, c) in candidates.iter().enumerate() {
-        let days = if c.mode == "motion" {
+        let days = if matches!(c.mode.as_str(), "motion" | "detection") {
             cfg.motion_days
         } else {
             cfg.manual_days
@@ -171,8 +171,10 @@ mod tests {
             seg(1, 10, 1, "motion"),
             seg(2, 10, 1, "manual"),
             seg(3, 3, 1, "motion"),
+            seg(4, 10, 1, "detection"),
         ];
-        assert_eq!(plan(&c, NOW, &RetentionConfig::default(), None), [1]);
+        // gravação por detecção é de evento: vence junto com a de movimento
+        assert_eq!(plan(&c, NOW, &RetentionConfig::default(), None), [1, 4]);
     }
 
     #[test]

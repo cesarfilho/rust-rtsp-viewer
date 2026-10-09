@@ -18,17 +18,46 @@ pub mod server;
 
 use std::path::PathBuf;
 
-/// Onde fica o socket: `RRV_SOCKET`, senão `$XDG_RUNTIME_DIR/rrv/rrv.sock`,
-/// senão `/tmp/rrv/rrv.sock`. No Docker, `RRV_SOCKET=/run/rrv/rrv.sock` e esse
-/// diretório é um volume compartilhado com o host.
+/// Onde fica o socket: `RRV_SOCKET`; senão o primeiro que existir entre
+/// `$XDG_RUNTIME_DIR/rrv/rrv.sock` (daemon nativo) e [`docker_socket_path`] (o do compose.yaml);
+/// sem nenhum, o primeiro. No contêiner, `RRV_SOCKET=/run/rrv/rrv.sock`.
 pub fn default_socket_path() -> PathBuf {
-    if let Some(p) = std::env::var_os("RRV_SOCKET") {
-        return PathBuf::from(p);
-    }
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
-    base.join("rrv").join("rrv.sock")
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("rrv")
+        .join("rrv.sock");
+    pick_socket(
+        std::env::var_os("RRV_SOCKET").map(PathBuf::from),
+        [runtime, docker_socket_path()],
+        |p| p.exists(),
+    )
+}
+
+/// O socket do daemon do Docker visto do host: `~/.local/state/rust-rtsp-viewer/run/rrv.sock`.
+/// Fica no disco, não em `$XDG_RUNTIME_DIR`: o contêiner sobe no boot, antes do login, quando
+/// `/run/user/<uid>` ainda não existe, e o Docker criava a pasta como root (o daemon não abria
+/// o socket e reiniciava sem parar).
+pub fn docker_socket_path() -> PathBuf {
+    crate::infrastructure::view_state::state_dir()
+        .join("run")
+        .join("rrv.sock")
+}
+
+fn pick_socket(
+    forced: Option<PathBuf>,
+    candidates: [PathBuf; 2],
+    exists: impl Fn(&std::path::Path) -> bool,
+) -> PathBuf {
+    if let Some(p) = forced {
+        return p;
+    }
+    let [first, second] = candidates;
+    if !exists(&first) && exists(&second) {
+        second
+    } else {
+        first
+    }
 }
 
 /// O token do canal pela rede para quem se conecta: a variável `RRV_TOKEN`, senão o segredo `rrv_token`
@@ -68,5 +97,39 @@ mod tests {
         let long = format!("/tmp/{}/rrv.sock", "x".repeat(120));
         let err = check_socket_path(std::path::Path::new(&long)).unwrap_err();
         assert!(err.contains("limite do Unix"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod socket_tests {
+    use super::pick_socket;
+    use std::path::PathBuf;
+
+    #[test]
+    fn the_socket_is_the_forced_one_else_the_first_that_exists() {
+        let (a, b) = (
+            PathBuf::from("/run/u/rrv/rrv.sock"),
+            PathBuf::from("/h/run/rrv.sock"),
+        );
+        let only = |x: &'static str| move |p: &std::path::Path| p == std::path::Path::new(x);
+        let forced = Some(PathBuf::from("/x.sock"));
+        assert_eq!(
+            pick_socket(forced, [a.clone(), b.clone()], |_| true),
+            PathBuf::from("/x.sock")
+        );
+        assert_eq!(
+            pick_socket(None, [a.clone(), b.clone()], only("/h/run/rrv.sock")),
+            b
+        );
+        assert_eq!(
+            pick_socket(None, [a.clone(), b.clone()], |_| true),
+            a,
+            "os dois: o nativo"
+        );
+        assert_eq!(
+            pick_socket(None, [a.clone(), b], |_| false),
+            a,
+            "nenhum: o nativo"
+        );
     }
 }

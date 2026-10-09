@@ -200,6 +200,15 @@ pub struct DetectFile {
     pub labels: Option<Vec<String>>,
     /// Minimum seconds between two events of one class on one camera (5–3600). Default: 30.
     pub cooldown_secs: Option<u64>,
+    /// Record a clip while a wanted class is seen (pre-roll and post-roll from `[recording]`),
+    /// instead of on every motion. Default: false.
+    pub record: Option<bool>,
+    /// Save a JPEG of the whole picture, with the boxes drawn, on every detection event
+    /// (`<recording dir>/snapshots/<camera>/<date>/`). Default: false.
+    pub snapshot: Option<bool>,
+    /// Only these cameras (by `label`, else `name`; case ignored) go to the model. Default: all.
+    /// A camera whose scene never stops moving (water, trees, traffic) would keep it busy.
+    pub cameras: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -219,6 +228,12 @@ pub struct DetectConfig {
     /// Class ids that raise events; empty = every class.
     pub labels: Vec<usize>,
     pub cooldown_secs: u64,
+    /// Record while a wanted class is seen.
+    pub record: bool,
+    /// A JPEG per detection event.
+    pub snapshot: bool,
+    /// Camera names the model looks at; empty = every camera.
+    pub cameras: Vec<String>,
 }
 
 impl Default for DetectConfig {
@@ -231,6 +246,9 @@ impl Default for DetectConfig {
             iou: 0.45,
             labels: Vec::new(),
             cooldown_secs: 30,
+            record: false,
+            snapshot: false,
+            cameras: Vec::new(),
         }
     }
 }
@@ -278,6 +296,9 @@ impl DetectFile {
             backend,
             min_score,
             iou,
+            record: self.record.unwrap_or(false),
+            snapshot: self.snapshot.unwrap_or(false),
+            cameras: self.cameras.unwrap_or_default(),
         })
     }
 }
@@ -774,6 +795,10 @@ mod tests {
         assert!(f("min_score = 0.0").is_err());
         assert!(f("min_score = 1.5").is_err());
         assert!(f("iou = 0.95").is_err());
+        assert!(!c.record && !c.snapshot);
+        let c = f("record = true\nsnapshot = true\ncameras = [\"Garagem\"]").unwrap();
+        assert!(c.record && c.snapshot);
+        assert_eq!(c.cameras, ["Garagem"]);
     }
 
     #[test]

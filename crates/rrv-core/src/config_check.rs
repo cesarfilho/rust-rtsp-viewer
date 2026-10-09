@@ -292,7 +292,40 @@ pub fn validate(config: &Config) -> Vec<Issue> {
                         "a detecção só roda onde há movimento: ligue [motion] enabled".to_string(),
                     ));
                 }
+                let names: Vec<String> = config
+                    .cameras
+                    .iter()
+                    .flatten()
+                    .filter_map(|cam| cam.label.clone().or_else(|| cam.name.clone()))
+                    .map(|n| n.trim().to_lowercase())
+                    .collect();
+                for wanted in &c.cameras {
+                    if !names.contains(&wanted.trim().to_lowercase()) {
+                        issues.push(Issue::warning(
+                            "detect.cameras",
+                            format!("\"{wanted}\" não é o label (nem o name) de nenhuma câmera"),
+                        ));
+                    }
+                }
+                if c.record
+                    && config
+                        .recording
+                        .as_ref()
+                        .is_some_and(|r| r.on_motion == Some(true))
+                {
+                    issues.push(Issue::warning(
+                        "detect.record",
+                        "[recording] on_motion já grava todo movimento; para gravar só nas \
+                         detecções, deixe on_motion = false"
+                            .to_string(),
+                    ));
+                }
             }
+            Ok(c) if c.record || c.snapshot => issues.push(Issue::warning(
+                "detect.enabled",
+                "record / snapshot não fazem nada com a detecção desligada (enabled = false)"
+                    .to_string(),
+            )),
             Ok(_) => {}
         }
     }
@@ -504,6 +537,34 @@ mod tests {
             "[daemon]\nlisten = \"127.0.0.1:7878\"\ntoken = \"0123456789abcdef0123\"\n",
         );
         assert!(good.is_empty(), "{good:?}");
+    }
+
+    #[test]
+    fn detection_recording_warns_when_it_would_do_nothing() {
+        let detect = |extra: &str| {
+            let (_, issues) = check(&one_camera(extra)).unwrap();
+            issues
+        };
+        // desligada: record / snapshot são letra morta
+        let off = detect("[detect]\nrecord = true\n");
+        assert_eq!(paths(&off), ["detect.enabled"]);
+        // on_motion já grava todo movimento
+        let both = detect(
+            "[motion]\nenabled = true\n[recording]\non_motion = true\n\
+             [detect]\nenabled = true\nmodel = \"Cargo.toml\"\nrecord = true\n",
+        );
+        assert_eq!(paths(&both), ["detect.record"]);
+        let fine = detect(
+            "[motion]\nenabled = true\n[detect]\nenabled = true\nmodel = \"Cargo.toml\"\n\
+             record = true\nsnapshot = true\n",
+        );
+        assert!(fine.is_empty(), "{fine:?}");
+        let unknown = detect(
+            "label = \"Garagem\"\n[motion]\nenabled = true\n[detect]\nenabled = true\n\
+             model = \"Cargo.toml\"\ncameras = [\"garagem\", \"Quintal\"]\n",
+        );
+        assert_eq!(paths(&unknown), ["detect.cameras"]);
+        assert!(unknown[0].message.contains("Quintal"));
     }
 
     #[test]
