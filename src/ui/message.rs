@@ -41,8 +41,8 @@ pub enum Message {
     WindowResized(iced::Size),
     Snapshot,
     ToggleRecording,
-    /// Armar / desarmar a detecção de objetos do daemon (botão do toolbar).
-    ToggleDetection,
+    /// Ligar / desligar a gravação por detecção da câmera (índice local), no daemon.
+    ToggleDetection(usize),
     ToggleAudio,
     VolumeUp,
     VolumeDown,

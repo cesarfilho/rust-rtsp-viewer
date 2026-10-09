@@ -450,12 +450,16 @@ fn start_detection(engine: &mut Engine, cfg: rrv_core::domain::detect::DetectCon
             engine.set_detect_actions(cfg.record, cfg.snapshot);
             engine.set_static_spots_file(rrv_core::infrastructure::static_state::path());
             engine.set_detect_armed_file(rrv_core::infrastructure::detect_state::path());
+            let on: Vec<&str> = (0..engine.camera_count())
+                .filter(|&i| engine.detect_armed[i] && engine.detect_on[i])
+                .map(|i| engine.names[i].as_str())
+                .collect();
             log::info!(
-                "detecção {} (arme/desarme pela janela ou `rrvctl detect on|off`)",
-                if engine.detect_armed {
-                    "armada"
+                "gravação por detecção ligada em: {} (menu da câmera na janela ou `rrvctl detect CÂMERA on|off`)",
+                if on.is_empty() {
+                    "nenhuma".to_string()
                 } else {
-                    "desarmada"
+                    on.join(", ")
                 }
             );
             if engine.detect_recording {

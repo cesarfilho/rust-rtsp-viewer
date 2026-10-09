@@ -310,7 +310,7 @@ mod tests {
     fn a_newer_frame_of_the_same_camera_replaces_the_waiting_one() {
         let w = InferenceWorker::start(slow(100), 8);
         w.submit(frame(0, 10)); // o worker pega este e fica ocupado
-        std::thread::sleep(Duration::from_millis(20));
+        assert!(wait_until(|| w.stats().queue_len == 0));
         w.submit(frame(1, 20));
         w.submit(frame(1, 30)); // substitui o 20
         w.submit(frame(1, 40)); // substitui o 30
@@ -333,7 +333,9 @@ mod tests {
     fn when_full_the_oldest_camera_is_evicted() {
         let w = InferenceWorker::start(slow(100), 2);
         w.submit(frame(0, 1)); // ocupa o worker
-        std::thread::sleep(Duration::from_millis(20));
+        // espera o worker de fato tirá-lo da fila (um `sleep` fixo perdia a corrida sob carga, e a
+        // câmera 0 era a despejada)
+        assert!(wait_until(|| w.stats().queue_len == 0));
         w.submit(frame(1, 2));
         w.submit(frame(2, 3));
         w.submit(frame(3, 4)); // cheia: sai a câmera 1

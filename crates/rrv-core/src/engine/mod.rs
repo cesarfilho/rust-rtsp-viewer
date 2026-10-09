@@ -140,9 +140,10 @@ pub struct Engine {
     /// When each `(camera, class)` last raised an event, and last notified.
     pub detect_last: HashMap<(usize, usize), Instant>,
     pub detect_notify_last: HashMap<(usize, usize), Instant>,
-    /// The detection is armed (started from the window / `rrvctl detect on`). Disarmed, the model
-    /// does not run: no object events, no detection recordings, no snapshots. Motion still works.
-    pub detect_armed: bool,
+    /// Per camera: recording by detection is on (switched from the camera's menu in the window /
+    /// `rrvctl detect CAMERA on`). Off, the model does not look at that camera: no object events,
+    /// no detection recordings, no snapshots. Motion still works.
+    pub detect_armed: Vec<bool>,
     /// Where the armed state is kept across restarts (`None`: not kept).
     pub detect_armed_path: Option<std::path::PathBuf>,
     /// Timestamp of the frame behind each camera's latest detections (the snapshot's picture).
@@ -323,7 +324,7 @@ impl Engine {
             static_filters: vec![Default::default(); count],
             static_spots_path: None,
             detect_pts: vec![None; count],
-            detect_armed: true,
+            detect_armed: vec![true; count],
             detect_armed_path: None,
             detect_recording: false,
             detect_snapshot: false,
@@ -726,7 +727,9 @@ impl Engine {
         let Some(worker) = &self.inference else {
             return;
         };
-        if !self.detect_armed || !self.detect_on.get(i).copied().unwrap_or(false) {
+        if !self.detect_armed.get(i).copied().unwrap_or(false)
+            || !self.detect_on.get(i).copied().unwrap_or(false)
+        {
             return;
         }
         let wanted = self.zones.get(i).and_then(Region::of_zones);
@@ -758,26 +761,41 @@ impl Engine {
         self.detect_cooldown_secs = cooldown_secs;
     }
 
-    /// Arms or disarms the detection and remembers it (when a file was given). Disarming drops the
-    /// objects seen so far, so a recording the detection started runs out its post-roll and stops.
-    pub fn set_detect_armed(&mut self, armed: bool) {
-        self.detect_armed = armed;
+    /// Switches recording by detection on or off for camera `i` and remembers it (when a file was
+    /// given). Switching off drops what was seen there, so a recording the detection started runs out
+    /// its post-roll and stops.
+    pub fn set_detect_armed(&mut self, i: usize, armed: bool) {
+        let Some(slot) = self.detect_armed.get_mut(i) else {
+            return;
+        };
+        *slot = armed;
         if !armed {
-            for d in &mut self.detections {
-                d.clear();
+            self.detections[i].clear();
+        }
+        if let Some(path) = &self.detect_armed_path {
+            let names: Vec<String> = self
+                .names
+                .iter()
+                .zip(&self.detect_armed)
+                .filter(|(_, on)| **on)
+                .map(|(n, _)| n.clone())
+                .collect();
+            if let Err(e) = crate::infrastructure::detect_state::save(path, &names) {
+                log::warn!("estado da detecção: {e}");
             }
         }
-        if let Some(path) = &self.detect_armed_path
-            && let Err(e) = crate::infrastructure::detect_state::save(path, armed)
-        {
-            log::warn!("estado da detecção: {e}");
-        }
-        log::info!("detecção {}", if armed { "armada" } else { "desarmada" });
+        log::info!(
+            "[{}] gravação por detecção {}",
+            self.names[i],
+            if armed { "ativada" } else { "desativada" }
+        );
     }
 
-    /// Reads the armed state saved in `path` (disarmed without one) and keeps it there from now on.
+    /// Reads which cameras had recording by detection on (by name; none without a file) and keeps
+    /// the choice there from now on.
     pub fn set_detect_armed_file(&mut self, path: std::path::PathBuf) {
-        self.detect_armed = crate::infrastructure::detect_state::load(&path);
+        let on = crate::infrastructure::detect_state::load(&path);
+        self.detect_armed = self.names.iter().map(|n| on.contains(n)).collect();
         self.detect_armed_path = Some(path);
     }
 
@@ -880,7 +898,7 @@ impl Engine {
         };
         for r in results {
             // An answer to a frame sent before the detection was disarmed.
-            if r.camera >= self.detections.len() || !self.detect_armed {
+            if r.camera >= self.detections.len() || !self.detect_armed[r.camera] {
                 continue;
             }
             if let Some(e) = &r.error {
@@ -1516,7 +1534,7 @@ mod tests {
             static_filters: vec![Default::default(); n],
             static_spots_path: None,
             detect_pts: vec![None; n],
-            detect_armed: true,
+            detect_armed: vec![true; n],
             detect_armed_path: None,
             detect_recording: false,
             detect_snapshot: false,
@@ -1775,7 +1793,7 @@ mod tests {
             w: 0.2,
             h: 0.2,
         }];
-        e.set_detect_armed(false);
+        e.set_detect_armed(0, false);
         assert!(e.detections[0].is_empty(), "o que se via some ao desarmar");
         feed(&e, 0, frame(0));
         e.detect_motion(0);
@@ -1788,7 +1806,7 @@ mod tests {
             "o modelo não roda desarmado"
         );
         // armada de novo: volta a analisar
-        e.set_detect_armed(true);
+        e.set_detect_armed(0, true);
         feed(&e, 0, frame(0));
         e.detect_motion(0);
         wait_for_results(&e, 1);

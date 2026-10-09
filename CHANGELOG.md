@@ -15,9 +15,10 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 - **Snapshot da detecção** (`[detect] snapshot = true`): um JPEG do quadro inteiro com as caixas desenhadas a cada evento de
   detecção, em `<gravações>/snapshots/<câmera>/<AAAA-MM-DD>/<HH-MM-SS>_<classe>.jpg`. O daemon guarda só uma referência ao
   último quadro decodificado e converte numa thread à parte.
-- **Botão Iniciar / Parar detecção** na janela (com um daemon que detecta objetos): a gravação e as fotos por detecção
-  só acontecem com ela iniciada. O botão vira "Parar" quando o daemon confirma. O daemon começa com a detecção parada e
-  lembra a escolha depois de reiniciar. Também `rrvctl detect on|off`.
+- **Gravação por detecção ligada por câmera, pela janela**: no menu da câmera (botão direito ou `⋯`), *Ligar / Desligar
+  gravação por detecção*; a câmera ligada mostra um ◎ ao lado do nome. A detecção só roda nas câmeras ligadas (as outras
+  não ocupam o modelo nem gravam). O item muda quando o daemon confirma. O daemon começa com todas desligadas e lembra
+  quais estavam ligadas depois de reiniciar. Também `rrvctl detect CÂMERA on|off` (e `rrvctl detect` lista).
 - **Objetos parados não são eventos**: uma caixa da mesma classe vista no mesmo lugar em 3 minutos diferentes dentro de
   30 minutos, espalhados por 10 minutos ou mais (uma placa que o modelo lê como pessoa toda vez que outra coisa se mexe),
   deixa de gerar evento, gravação e foto por 24 h. Os pontos fixos aprendidos sobrevivem a um reinício

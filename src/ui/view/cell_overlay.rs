@@ -269,6 +269,7 @@ pub fn name_chip(
     pip_color: iced::Color,
     fps: Option<f64>,
     selected: bool,
+    detecting: bool,
 ) -> Element<'static, Message> {
     let name_color = if selected {
         iced::Color::from_rgb(0.6, 0.78, 1.0)
@@ -281,6 +282,15 @@ pub fn name_chip(
     ]
     .spacing(6)
     .align_y(iced::Alignment::Center);
+    if detecting {
+        // Gravação por detecção ligada: um alvo (forma, não só cor) ao lado do nome.
+        r = r.push(
+            text("\u{25CE}")
+                .font(crate::ui::icons::FONT)
+                .size(Theme::TEXT_CAPTION)
+                .color(iced::Color::from_rgb(1.0, 0.45, 0.45)),
+        );
+    }
     if let Some(f) = fps {
         r = r.push(
             text(format!("· {:.0} fps", f))

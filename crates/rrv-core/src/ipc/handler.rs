@@ -113,7 +113,7 @@ pub fn camera_infos(engine: &Engine) -> Vec<CameraInfo> {
                     .unwrap_or_default(),
                 detect_available: engine.detection_available()
                     && engine.detect_on.get(i).copied().unwrap_or(false),
-                detect_armed: engine.detect_armed,
+                detect_armed: engine.detect_armed.get(i).copied().unwrap_or(false),
             }
         })
         .collect()
@@ -141,15 +141,25 @@ pub fn apply(host: &mut Host<'_>, request: &Request) -> Response {
         Request::Status => Response::Status {
             cameras: camera_infos(host.engine),
         },
-        Request::SetDetection { armed } => {
+        Request::SetDetection { camera, armed } => {
+            if let Err(e) = check(*camera) {
+                return e;
+            }
             if !host.engine.detection_available() {
                 return error(
                     "a detecção de objetos não está ligada neste daemon ([detect] enabled)",
                 );
             }
-            host.engine.set_detect_armed(*armed);
+            if !host.engine.detect_on[*camera] {
+                return error(format!(
+                    "a câmera '{}' não está em [detect] cameras",
+                    host.engine.names[*camera]
+                ));
+            }
+            host.engine.set_detect_armed(*camera, *armed);
             Response::Detection {
-                armed: host.engine.detect_armed,
+                camera: *camera,
+                armed: host.engine.detect_armed[*camera],
             }
         }
         Request::ToggleRecording { camera } => {
@@ -420,12 +430,13 @@ mod tests {
     }
 
     #[test]
-    fn detection_is_armed_and_disarmed_and_shows_in_the_status() {
+    fn detection_recording_is_switched_per_camera_and_shows_in_the_status() {
         let mut e = engine(2);
         let mut z = ZonesFile::default();
-        // sem modelo: não há o que armar
+        let set = |camera, armed| Request::SetDetection { camera, armed };
+        // sem modelo: não há o que ligar
         assert!(matches!(
-            run(&mut e, &mut z, &Request::SetDetection { armed: true }),
+            run(&mut e, &mut z, &set(1, true)),
             Response::Error { .. }
         ));
         e.set_inference(crate::engine::inference::InferenceWorker::start(
@@ -433,20 +444,32 @@ mod tests {
             2,
         ));
         e.set_detect_cameras(&["cam1".into()]);
-        e.set_detect_armed(false);
+        e.set_detect_armed(1, false);
         let Response::Status { cameras } = run(&mut e, &mut z, &Request::Status) else {
             panic!("esperava Status");
         };
         assert!(!cameras[0].detect_available && cameras[1].detect_available);
         assert!(!cameras[1].detect_armed);
+        // câmera fora de [detect] cameras e índice inexistente: erro
+        assert!(matches!(
+            run(&mut e, &mut z, &set(0, true)),
+            Response::Error { .. }
+        ));
+        assert!(matches!(
+            run(&mut e, &mut z, &set(9, true)),
+            Response::Error { .. }
+        ));
         assert_eq!(
-            run(&mut e, &mut z, &Request::SetDetection { armed: true }),
-            Response::Detection { armed: true }
+            run(&mut e, &mut z, &set(1, true)),
+            Response::Detection {
+                camera: 1,
+                armed: true
+            }
         );
         let Response::Status { cameras } = run(&mut e, &mut z, &Request::Status) else {
             panic!("esperava Status");
         };
-        assert!(cameras.iter().all(|c| c.detect_armed));
+        assert!(cameras[1].detect_armed);
     }
 
     #[test]

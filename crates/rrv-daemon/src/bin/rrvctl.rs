@@ -54,8 +54,9 @@ enum Command {
     Disable { camera: String },
     /// Zonas de movimento de uma câmera
     Zones { camera: String },
-    /// Arma (`on`) ou desarma (`off`) a detecção de objetos; sem argumento, mostra o estado
+    /// Liga (`on`) ou desliga (`off`) a gravação por detecção de uma câmera; sem argumentos, lista
     Detect {
+        camera: Option<String>,
         #[arg(value_parser = ["on", "off"])]
         state: Option<String>,
     },
@@ -397,31 +398,39 @@ fn run(cli: &Cli) -> Result<(), String> {
                 other => Err(format!("resposta inesperada: {other:?}")),
             }
         }
-        Command::Detect { state } => {
-            let Some(state) = state else {
+        Command::Detect { camera, state } => {
+            let (Some(camera), Some(state)) = (camera, state) else {
+                if camera.is_some() {
+                    return Err("diga on ou off: rrvctl detect CÂMERA on|off".into());
+                }
                 let all = cameras(&mut c)?;
-                let on: Vec<&str> = all
-                    .iter()
-                    .filter(|c| c.detect_available)
-                    .map(|c| c.name.as_str())
-                    .collect();
-                if on.is_empty() {
+                let avail: Vec<_> = all.iter().filter(|c| c.detect_available).collect();
+                if avail.is_empty() {
                     println!("detecção de objetos desligada neste daemon ([detect] enabled)");
-                } else {
-                    let armed = all.iter().any(|c| c.detect_armed);
+                }
+                for cam in avail {
                     println!(
-                        "detecção {} em: {}",
-                        if armed { "armada" } else { "desarmada" },
-                        on.join(", ")
+                        "{:<24} gravação por detecção {}",
+                        cam.name,
+                        if cam.detect_armed {
+                            "ligada"
+                        } else {
+                            "desligada"
+                        }
                     );
                 }
                 return Ok(());
             };
+            let i = resolve(&mut c, camera)?;
             match c.request(&Request::SetDetection {
+                camera: i,
                 armed: state == "on",
             })? {
-                Response::Detection { armed } => {
-                    println!("detecção {}", if armed { "armada" } else { "desarmada" });
+                Response::Detection { armed, .. } => {
+                    println!(
+                        "gravação por detecção {}",
+                        if armed { "ligada" } else { "desligada" }
+                    );
                     Ok(())
                 }
                 Response::Error { message } => Err(message),

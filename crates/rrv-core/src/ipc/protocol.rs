@@ -58,9 +58,9 @@ pub enum Request {
     },
     /// Protege (ou solta) um segmento: a retenção nunca apaga um protegido.
     SetProtected { segment_id: i64, protected: bool },
-    /// Arma ou desarma a detecção de objetos (com ela desarmada o modelo não roda: nada de evento
-    /// de objeto, gravação nem foto por detecção). O daemon lembra a escolha.
-    SetDetection { armed: bool },
+    /// Liga ou desliga a gravação por detecção de uma câmera: desligada, o modelo não olha para ela
+    /// (nada de evento de objeto, gravação nem foto por detecção). O daemon lembra a escolha.
+    SetDetection { camera: usize, armed: bool },
 }
 
 /// Resposta do daemon a um pedido.
@@ -78,8 +78,9 @@ pub enum Response {
         camera: usize,
         recording: bool,
     },
-    /// A detecção como ficou depois de `SetDetection`.
+    /// A gravação por detecção da câmera como ficou depois de `SetDetection`.
     Detection {
+        camera: usize,
         armed: bool,
     },
     Zones {
@@ -215,8 +216,7 @@ pub struct CameraInfo {
     /// câmera em `[detect] cameras`). Aditivo, como os de cima.
     #[serde(default)]
     pub detect_available: bool,
-    /// A detecção está armada (vale para todas as câmeras; repetido em cada uma para o `Status`
-    /// continuar sendo só a lista de câmeras).
+    /// A gravação por detecção está ligada nesta câmera.
     #[serde(default)]
     pub detect_armed: bool,
 }
@@ -280,7 +280,10 @@ mod tests {
                 camera: 1,
                 zones: vec![],
             },
-            Request::SetDetection { armed: true },
+            Request::SetDetection {
+                camera: 0,
+                armed: true,
+            },
         ];
         for r in reqs {
             let line = encode_line(&r);
@@ -305,8 +308,11 @@ mod tests {
             "{\"type\":\"response\",\"kind\":\"ok\"}\n"
         );
         assert_eq!(
-            encode_line(&Request::SetDetection { armed: false }),
-            "{\"cmd\":\"set_detection\",\"armed\":false}\n"
+            encode_line(&Request::SetDetection {
+                camera: 2,
+                armed: false
+            }),
+            "{\"cmd\":\"set_detection\",\"camera\":2,\"armed\":false}\n"
         );
     }
 

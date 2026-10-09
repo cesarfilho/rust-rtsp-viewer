@@ -204,6 +204,32 @@ fn hairline(theme: Theme) -> Element<'static, Message> {
 
 /// Build the shared command menu. `ctx` is the camera the right-click landed
 /// on; when `None` the camera section falls back to the current selection.
+/// Ligar / desligar a gravação por detecção da câmera (só com um daemon que detecta objetos nela):
+/// a detecção roda só nas câmeras com ela ligada. Enquanto o daemon não confirma, o item espera.
+fn detection_row<'a>(app: &'a App, idx: usize, name: &str) -> Element<'a, Message> {
+    let Some(armed) = app.daemon.detection_for(name) else {
+        return column![].into();
+    };
+    let waiting = app.pending.values().any(|p| {
+        matches!(p, crate::ui::daemon::PendingRequest::SetDetection { camera, .. } if camera == name)
+    });
+    let label = if waiting {
+        t("Aguardando o daemon…")
+    } else if armed {
+        t("Desligar gravação por detecção")
+    } else {
+        t("Ligar gravação por detecção")
+    };
+    menu_row(
+        app.theme,
+        "\u{25CE}",
+        label,
+        None,
+        Message::ToggleDetection(idx),
+        armed,
+    )
+}
+
 pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
     let theme = app.theme;
     let immersive = !app.focus.is_normal();
@@ -285,6 +311,7 @@ pub fn command_menu(app: &App, ctx: Option<usize>) -> Element<'_, Message> {
                     Message::ToggleAudio,
                     false,
                 ))
+                .push(detection_row(app, idx, &cam.name))
                 .push(menu_row(
                     theme,
                     "\u{2B21}",

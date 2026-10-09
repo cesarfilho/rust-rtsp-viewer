@@ -210,7 +210,13 @@ pub fn grid_layout(app: &App, sidebar_width: f32, available_height: f32) -> Elem
                 };
                 let pip = cell_overlay::status_pip_color(colors, &status);
                 stack = stack.push(super::pinned(
-                    cell_overlay::name_chip(name.clone(), pip, show_fps, is_selected),
+                    cell_overlay::name_chip(
+                        name.clone(),
+                        pip,
+                        show_fps,
+                        is_selected,
+                        app.daemon.detection_for(&name) == Some(true),
+                    ),
                     Horizontal::Left,
                     Vertical::Bottom,
                     6.0,

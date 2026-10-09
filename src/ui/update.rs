@@ -251,8 +251,8 @@ fn update_inner(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ToggleRecording => update_recording(app),
-        Message::ToggleDetection => {
-            toggle_detection(app);
+        Message::ToggleDetection(idx) => {
+            toggle_detection(app, idx);
             Task::none()
         }
         Message::ToggleAudio => update_audio(app),
@@ -954,23 +954,36 @@ pub(super) fn send_to_daemon(
     true
 }
 
-/// Arma ou desarma a detecção do daemon. Nada muda na janela até ele confirmar, e um segundo
-/// clique enquanto espera não manda outro pedido.
-fn toggle_detection(app: &mut App) {
-    let Some(armed) = app.daemon.detection() else {
+/// Liga ou desliga a gravação por detecção da câmera `idx` no daemon (a detecção só roda nas
+/// câmeras com ela ligada). Nada muda na janela até ele confirmar, e um segundo clique enquanto
+/// espera não manda outro pedido.
+fn toggle_detection(app: &mut App, idx: usize) {
+    let Some(name) = app.sidebar.cameras.get(idx).map(|c| c.name.clone()) else {
+        return;
+    };
+    let Some(armed) = app.daemon.detection_for(&name) else {
         return;
     };
     if app
         .pending
         .values()
-        .any(|p| matches!(p, PendingRequest::SetDetection { .. }))
+        .any(|p| matches!(p, PendingRequest::SetDetection { camera, .. } if *camera == name))
     {
         return;
     }
+    let Some(index) = daemon_index(app, &name) else {
+        return;
+    };
     send_to_daemon(
         app,
-        crate::ipc::protocol::Request::SetDetection { armed: !armed },
-        PendingRequest::SetDetection { armed: !armed },
+        crate::ipc::protocol::Request::SetDetection {
+            camera: index,
+            armed: !armed,
+        },
+        PendingRequest::SetDetection {
+            camera: name,
+            armed: !armed,
+        },
     );
 }
 
@@ -1016,21 +1029,30 @@ fn handle_reply(app: &mut App, token: u64, result: Result<crate::ipc::protocol::
             }
         }
         (PendingRequest::SetEnabled { .. }, None) => {}
-        (PendingRequest::SetDetection { .. }, None) => {
-            if let Ok(Response::Detection { armed }) = result {
-                app.daemon.set_detection_armed(armed);
+        (PendingRequest::SetDetection { camera, .. }, None) => {
+            if let Ok(Response::Detection { armed, .. }) = result {
+                app.daemon.set_detection_armed(&camera, armed);
                 toast(
                     app,
                     if armed {
-                        t("Detecção iniciada: grava e fotografa quando aparecer alguém")
+                        tf(
+                            "Gravação por detecção ligada em '{}': grava e fotografa quando aparecer alguém",
+                            &[&camera],
+                        )
                     } else {
-                        t("Detecção parada")
+                        tf("Gravação por detecção desligada em '{}'", &[&camera])
                     },
                 );
             }
         }
-        (PendingRequest::SetDetection { .. }, Some(why)) => {
-            toast(app, tf("A detecção não mudou: {}", &[&why]));
+        (PendingRequest::SetDetection { camera, .. }, Some(why)) => {
+            toast(
+                app,
+                tf(
+                    "A gravação por detecção de '{}' não mudou: {}",
+                    &[&camera, &why],
+                ),
+            );
         }
         (PendingRequest::SetZones { camera, zones }, None) => {
             if let Some(cfg) = app.engine.zones.get_mut(camera) {
@@ -2170,35 +2192,50 @@ mod tests {
     }
 
     #[test]
-    fn the_detection_button_changes_only_after_the_daemon_confirms() {
+    fn detection_recording_changes_per_camera_only_after_the_daemon_confirms() {
         let mut app = test_app();
         connected(&mut app, false);
-        // um daemon sem detecção: sem botão
-        assert_eq!(app.daemon.detection(), None);
-        let _ = update(&mut app, Message::ToggleDetection);
+        // a câmera não está na detecção do daemon: sem item no menu, nada sai
+        assert_eq!(app.daemon.detection_for("Portão"), None);
+        let _ = update(&mut app, Message::ToggleDetection(0));
         assert!(app.pending.is_empty());
 
         app.daemon.cameras[0].detect_available = true;
-        assert_eq!(app.daemon.detection(), Some(false), "botão Iniciar");
-        let _ = update(&mut app, Message::ToggleDetection);
+        assert_eq!(
+            app.daemon.detection_for("Portão"),
+            Some(false),
+            "item Ligar"
+        );
+        let _ = update(&mut app, Message::ToggleDetection(0));
         assert!(matches!(
             app.pending.values().next(),
-            Some(PendingRequest::SetDetection { armed: true })
+            Some(PendingRequest::SetDetection { camera, armed: true }) if camera == "Portão"
         ));
-        let _ = update(&mut app, Message::ToggleDetection);
+        let _ = update(&mut app, Message::ToggleDetection(0));
         assert_eq!(app.pending.len(), 1, "um pedido por vez");
         assert_eq!(
-            app.daemon.detection(),
+            app.daemon.detection_for("Portão"),
             Some(false),
             "nada muda antes da resposta"
         );
 
         let token = *app.pending.keys().next().unwrap();
-        handle_reply(&mut app, token, Ok(Response::Detection { armed: true }));
-        assert_eq!(app.daemon.detection(), Some(true), "agora o botão é Parar");
+        handle_reply(
+            &mut app,
+            token,
+            Ok(Response::Detection {
+                camera: 0,
+                armed: true,
+            }),
+        );
+        assert_eq!(
+            app.daemon.detection_for("Portão"),
+            Some(true),
+            "agora é Desligar"
+        );
 
-        // um erro não muda o botão
-        let _ = update(&mut app, Message::ToggleDetection);
+        // um erro não muda o estado
+        let _ = update(&mut app, Message::ToggleDetection(0));
         let token = *app.pending.keys().next().unwrap();
         handle_reply(
             &mut app,
@@ -2207,7 +2244,7 @@ mod tests {
                 message: "x".into(),
             }),
         );
-        assert_eq!(app.daemon.detection(), Some(true));
+        assert_eq!(app.daemon.detection_for("Portão"), Some(true));
         assert!(app.toasts.last().unwrap().message.contains("x"));
     }
 
