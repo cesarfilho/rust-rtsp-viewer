@@ -6,6 +6,11 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 
 ## [Não lançado]
 
+## [0.12.0] - 2026-10-10
+
+Gravação e fotos só quando há uma pessoa, ligadas por câmera na janela; gravações organizadas por câmera e dia e
+compartilhadas na rede (SMB).
+
 ### ✨ Adicionado
 
 - **Gravar só quando há um objeto** (`[detect] record = true`): a gravação começa quando uma classe de `[detect] labels`
